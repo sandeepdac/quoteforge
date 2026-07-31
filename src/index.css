@@ -1,0 +1,92 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-fg);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-fg);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-fg);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-fg);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-fg);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-fg);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-lg: 8px;
+  --radius-md: 6px;
+  --radius-sm: 4px;
+}
+
+@layer base {
+  :root {
+    --bg: #fafaf9;
+    --fg: #0a0a0a;
+    --card: #ffffff;
+    --card-fg: #0a0a0a;
+    --primary: #2563eb;
+    --primary-fg: #ffffff;
+    --secondary: #fafaf9;
+    --secondary-fg: #0a0a0a;
+    --muted: #fafaf9;
+    --muted-fg: #71717a;
+    --accent: #2563eb1a; /* 10% primary */
+    --accent-fg: #2563eb;
+    --destructive: #dc2626;
+    --destructive-fg: #fafafa;
+    --border: #e5e5e5;
+    --input: #e5e5e5;
+    --ring: #2563eb;
+  }
+
+  .dark {
+    --bg: #0c0c0b;
+    --fg: #fafafa;
+    --card: #171716;
+    --card-fg: #fafafa;
+    --primary: #3b82f6;
+    --primary-fg: #ffffff;
+    --secondary: #27272a;
+    --secondary-fg: #fafafa;
+    --muted: #27272a;
+    --muted-fg: #a1a1aa;
+    --accent: #27272a;
+    --accent-fg: #fafafa;
+    --destructive: #991b1b;
+    --destructive-fg: #fafafa;
+    --border: #262626;
+    --input: #262626;
+    --ring: #3b82f6;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* Recharts customization */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: var(--border);
+}
+
+.recharts-text {
+  fill: var(--muted-fg);
+  font-size: 12px;
+}

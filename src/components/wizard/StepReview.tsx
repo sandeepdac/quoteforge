@@ -1,0 +1,253 @@
+import React, { useState, useMemo } from 'react';
+import { 
+  Send, 
+  Download, 
+  Save, 
+  MapPin, 
+  Calendar, 
+  Hammer,
+  Zap,
+  Info,
+  ChevronRight
+} from 'lucide-react';
+import { useQuotes } from '../../context/QuoteContext';
+import { useSettings } from '../../context/SettingsContext';
+import { calculateQuoteCosts, calculateWinProbability } from '../../utils/estimator';
+import { PartFeatures } from '../../types';
+import { cn } from '../../utils/cn';
+
+interface StepReviewProps {
+  data: any;
+  onSend: () => void;
+  onSaveDraft: () => void;
+  onBack: () => void;
+}
+
+export default function StepReview({ data, onSend, onSaveDraft, onBack }: StepReviewProps) {
+  const { customers, materials } = useQuotes();
+  const { settings } = useSettings();
+  const [margin, setMargin] = useState(settings.defaultMargin);
+
+  const customer = customers.find(c => c.id === data.config.customerId);
+  const material = materials.find(m => m.id === data.features.materialId) || materials[0];
+
+  const costs = useMemo(() => {
+    return calculateQuoteCosts(
+      data.features as PartFeatures,
+      data.config.quantity,
+      data.config.isRush,
+      margin,
+      material.pricePerKg,
+      settings
+    );
+  }, [data, settings, material, margin]);
+
+  const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
+  const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
+  const winProb = calculateWinProbability(margin, data.config.leadTimeDays);
+
+  const getWinProbColor = (prob: number) => {
+    if (prob > 80) return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
+    if (prob > 60) return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
+    if (prob > 40) return "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400";
+    return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+  };
+
+  const quoteNumber = "Q-2026-0248";
+  const validUntil = new Date();
+  validUntil.setDate(validUntil.getDate() + 30);
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-8 animate-in zoom-in-95 duration-500">
+      <div className="flex flex-col md:flex-row justify-between gap-6 pb-6 border-b border-border">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <h2 className="text-2xl font-bold">{quoteNumber}</h2>
+            <span className="bg-muted text-muted-foreground px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest">Draft</span>
+          </div>
+          <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+            <div className="flex items-center gap-1"><Calendar size={14} /> Created: {new Date().toLocaleDateString()}</div>
+            <div className="flex items-center gap-1"><Calendar size={14} /> Valid Until: {validUntil.toLocaleDateString()}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={onSaveDraft} className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium border border-border hover:bg-accent transition-colors">
+            <Save size={16} /> Save Draft
+          </button>
+          <button className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium border border-border hover:bg-accent transition-colors">
+            <Download size={16} /> PDF
+          </button>
+          <button onClick={onSend} className="flex items-center gap-2 px-6 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-shadow shadow">
+            <Send size={16} /> Send to Customer
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-8">
+          {/* Customer & Part Info */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-card border border-border p-5 rounded-lg space-y-4">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 border-b border-border pb-3">
+                <MapPin size={14} /> Customer Details
+              </h3>
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-semibold">{customer?.name}</p>
+                  <p className="text-xs text-muted-foreground">{customer?.contactName}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">{customer?.email}</p>
+                  <p className="text-xs text-muted-foreground">{customer?.address}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-card border border-border p-5 rounded-lg space-y-4">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 border-b border-border pb-3">
+                <Hammer size={14} /> Part Summary
+              </h3>
+              <div className="flex gap-4">
+                <div className="w-16 h-16 bg-muted rounded border border-border overflow-hidden">
+                  <img src="https://picsum.photos/seed/quote/200/200" alt="Part" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold">Custom Fabricated Part</p>
+                  <p className="text-xs text-muted-foreground">{material.name} {material.thicknessMm}mm</p>
+                  <p className="text-xs text-muted-foreground">{data.features.lengthMm} x {data.features.widthMm} x {data.features.heightMm} mm</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Cost breakdown table */}
+          <div className="bg-card border border-border rounded-lg overflow-hidden">
+            <div className="p-4 bg-muted/30 border-b border-border">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Detailed Cost Breakdown</h3>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                  <th className="px-4 py-3 font-medium">Operation / Item</th>
+                  <th className="px-4 py-3 font-medium text-right">Details</th>
+                  <th className="px-4 py-3 font-medium text-right">Ext. Price</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                <tr>
+                  <td className="px-4 py-3">Material Cost</td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.weightKg.toFixed(2)}kg @ ${material.pricePerKg.toFixed(2)}/kg</td>
+                  <td className="px-4 py-3 text-right font-medium">${costs.materialCost.toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3">Laser Cutting</td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.perimeterMm}mm perimeter, {data.features.pierceCount} pierces</td>
+                  <td className="px-4 py-3 text-right font-medium">${costs.laserCost.toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3">Bending & Forming</td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.bendCount} bends, {data.features.isSimpleBending ? 'Simple' : 'Compound'}</td>
+                  <td className="px-4 py-3 text-right font-medium">${costs.bendCost.toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3">Welding & Assembly</td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.weldLengthMm}mm welding, {data.features.holeCount} holes</td>
+                  <td className="px-4 py-3 text-right font-medium">${(costs.weldCost + costs.assemblyCost).toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3">Finishing (Applied)</td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.surfaceAreaM2.toFixed(3)}m² surface area</td>
+                  <td className="px-4 py-3 text-right font-medium">${costs.finishCost.toFixed(2)}</td>
+                </tr>
+                <tr className="bg-muted/10 font-semibold">
+                  <td className="px-4 py-3" colSpan={2}>Factory Subtotal (incl. {settings.overheadPercent*100}% overhead)</td>
+                  <td className="px-4 py-3 text-right">${(costs.subtotal + costs.overhead).toFixed(2)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="space-y-3">
+            <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Notes for customer</label>
+            <textarea 
+              placeholder="Add any specific assumptions or notes for this quote..." 
+              className="w-full bg-background border border-border rounded-md p-4 text-sm min-h-[100px] focus:outline-none focus:ring-1 focus:ring-primary"
+            ></textarea>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          {/* Pricing Controls */}
+          <div className="bg-card border border-border p-6 rounded-xl shadow-sm space-y-6">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Margin Adjuster</h3>
+                <span className="text-xl font-bold text-primary">{(margin * 100).toFixed(0)}%</span>
+              </div>
+              <input 
+                type="range" 
+                min="0.05" 
+                max="0.5" 
+                step="0.01" 
+                className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+                value={margin}
+                onChange={(e) => setMargin(Number(e.target.value))}
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground font-bold font-mono">
+                <span>5% MIN</span>
+                <span>50% MAX</span>
+              </div>
+            </div>
+
+            <div className="space-y-4 pt-6 border-t border-border">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Unit Cost</span>
+                <span className="font-medium font-mono">${(costs.subtotal + costs.overhead).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Unit Margin</span>
+                <span className="font-medium font-mono">${costs.marginAmount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center py-2 px-3 bg-accent/50 rounded-lg">
+                <span className="text-sm font-bold">Total Unit Price</span>
+                <span className="text-lg font-black text-foreground">${unitPrice.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center pt-2 border-t border-border border-dashed">
+                <span className="text-sm text-muted-foreground">Quantity x {data.config.quantity}</span>
+                <span className="text-sm font-medium">${(unitPrice * data.config.quantity).toFixed(2)}</span>
+              </div>
+              {costs.rushPremium > 0 && (
+                <div className="flex justify-between items-center text-orange-500 font-medium">
+                  <span className="text-xs uppercase tracking-wider font-bold italic flex items-center gap-1"><Zap size={10} fill="currentColor" /> Rush Premium</span>
+                  <span className="text-sm font-bold">+${costs.rushPremium.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center pt-2">
+                <span className="text-base font-bold">Grand Total</span>
+                <span className="text-2xl font-black text-primary">${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className={cn("p-6 rounded-xl border flex flex-col items-center text-center space-y-4", getWinProbColor(winProb))}>
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-widest">Win Probability</h3>
+              <Info size={14} className="opacity-50" />
+            </div>
+            <div className="text-4xl font-black">{winProb}%</div>
+            <p className="text-xs font-medium leading-relaxed opacity-80">
+              Based on historical data for {customer?.name} and current material market volatility.
+            </p>
+          </div>
+
+          <button 
+            onClick={onBack}
+            className="w-full flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors group"
+          >
+            Something looks wrong? Back to edit <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

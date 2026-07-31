@@ -1,0 +1,8 @@
+{
+  "name": "QuoteForge",
+  "description": "AI-driven quoting and estimating tool for sheet metal and structural fabrication shops.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

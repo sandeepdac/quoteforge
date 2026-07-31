@@ -1,0 +1,292 @@
+import React from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { 
+  ArrowLeft, 
+  Send, 
+  Download, 
+  Trash2, 
+  ChevronRight,
+  MapPin,
+  Calendar,
+  Hammer,
+  FileText,
+  CheckCircle,
+  XCircle,
+  History,
+  Info,
+  Copy
+} from 'lucide-react';
+import { useQuotes } from '../context/QuoteContext';
+import StatusPill from '../components/common/StatusPill';
+import { cn } from '../utils/cn';
+import { downloadQuotePDF } from '../utils/pdfGenerator';
+
+export default function QuoteDetailPage() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const { getQuoteById, getCustomerById, getPartById, getMaterialById, deleteQuote, updateQuote } = useQuotes();
+
+  const quote = getQuoteById(id || '');
+  if (!quote) {
+    return (
+      <div className="text-center py-20">
+        <h2 className="text-2xl font-bold">Quote not found</h2>
+        <Link to="/quotes" className="text-primary hover:underline mt-4 inline-block">Back to quotes</Link>
+      </div>
+    );
+  }
+
+  const customer = getCustomerById(quote.customerId);
+  const part = getPartById(quote.partId);
+  const material = part ? getMaterialById(part.materialId) : undefined;
+
+  const handleDelete = () => {
+    if (confirm('Are you sure you want to delete this quote?')) {
+      deleteQuote(quote.id);
+      navigate('/quotes');
+    }
+  };
+
+  const setStatus = (status: any) => {
+    updateQuote({ ...quote, status });
+  };
+
+  const handleClone = () => {
+    navigate('/quotes/new', { state: { cloneData: quote, partData: part } });
+  };
+
+  const handleDownload = () => {
+    downloadQuotePDF(quote, customer, part);
+  };
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex items-center gap-4">
+        <button onClick={() => navigate(-1)} className="p-2 hover:bg-accent rounded-full transition-colors">
+          <ArrowLeft size={20} />
+        </button>
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold">{quote.quoteNumber}</h1>
+            <StatusPill status={quote.status} />
+          </div>
+          <p className="text-sm text-muted-foreground">Created for {customer?.name} on {new Date(quote.createdDate).toLocaleDateString()}</p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-3 pb-6 border-b border-border">
+        {quote.status === 'draft' && (
+          <>
+            <button onClick={() => setStatus('sent')} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-all">
+              <Send size={16} /> Send Quote
+            </button>
+            <button className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
+              Edit
+            </button>
+          </>
+        )}
+        {quote.status === 'sent' && (
+          <>
+            <button onClick={() => setStatus('won')} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md text-sm font-medium hover:bg-green-700 transition-all">
+              <CheckCircle size={16} /> Mark as Won
+            </button>
+            <button onClick={() => setStatus('lost')} className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700 transition-all">
+              <XCircle size={16} /> Mark as Lost
+            </button>
+          </>
+        )}
+        <button onClick={handleClone} className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
+          <Copy size={16} /> Clone Quote
+        </button>
+        <button onClick={handleDownload} className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
+          <Download size={16} /> Download PDF
+        </button>
+        <div className="flex-1"></div>
+        <button onClick={handleDelete} className="flex items-center gap-2 px-4 py-2 bg-destructive/10 text-destructive border border-destructive/20 rounded-md text-sm font-medium hover:bg-destructive/20 transition-all">
+          <Trash2 size={16} /> Delete
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-card border border-border p-5 rounded-lg space-y-4">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 border-b border-border pb-3">
+                <MapPin size={14} /> Customer
+              </h3>
+              <div className="space-y-1">
+                <Link to={`/customers/${customer?.id}`} className="text-sm font-semibold text-primary hover:underline">{customer?.name}</Link>
+                <p className="text-xs text-muted-foreground">{customer?.contactName}</p>
+                <p className="text-xs text-muted-foreground mt-2">{customer?.email}</p>
+                <p className="text-xs text-muted-foreground">{customer?.phone}</p>
+              </div>
+            </div>
+
+            <div className="bg-card border border-border p-5 rounded-lg space-y-4">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 border-b border-border pb-3">
+                <FileText size={14} /> Quote Info
+              </h3>
+              <div className="grid grid-cols-2 gap-y-3">
+                <div>
+                  <p className="text-[10px] text-muted-foreground font-bold uppercase">Quantity</p>
+                  <p className="text-sm font-medium">{quote.quantity}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground font-bold uppercase">Lead Time</p>
+                  <p className="text-sm font-medium">{quote.leadTimeDays} Days</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground font-bold uppercase">Valid Until</p>
+                  <p className="text-sm font-medium">{new Date(quote.validUntilDate).toLocaleDateString()}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground font-bold uppercase">Rush Order</p>
+                  <p className={cn("text-sm font-medium", quote.isRushOrder ? "text-orange-500" : "")}>
+                    {quote.isRushOrder ? 'YES' : 'NO'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-card border border-border p-6 rounded-lg space-y-6">
+            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 border-b border-border pb-3">
+              <Hammer size={14} /> Part & Features
+            </h3>
+            <div className="flex flex-col md:flex-row gap-8">
+              <div className="w-full md:w-48 aspect-square bg-muted rounded-lg overflow-hidden border border-border shrink-0">
+                <img src={part?.thumbnail} alt={part?.name} className="w-full h-full object-cover" />
+              </div>
+              <div className="flex-1 space-y-6">
+                <div>
+                  <Link to={`/parts/${part?.id}`} className="text-lg font-semibold text-primary hover:underline">{part?.name}</Link>
+                  <p className="text-sm text-muted-foreground">{material?.name} {material?.thicknessMm}mm</p>
+                </div>
+                
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
+                  <div>
+                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Perimeter</p>
+                    <p className="text-sm font-medium">{part?.features.perimeterMm} mm</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Bends</p>
+                    <p className="text-sm font-medium">{part?.features.bendCount}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Pierces</p>
+                    <p className="text-sm font-medium">{part?.features.pierceCount}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Welding</p>
+                    <p className="text-sm font-medium">{part?.features.weldLengthMm} mm</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Holes</p>
+                    <p className="text-sm font-medium">{part?.features.holeCount}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Weight</p>
+                    <p className="text-sm font-medium">{part?.features.weightKg.toFixed(2)} kg</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-card border border-border rounded-lg overflow-hidden">
+            <div className="p-4 bg-muted/30 border-b border-border">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Pricing History & Notes</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="space-y-2">
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Internal Notes</p>
+                <div className="p-4 bg-muted/20 border border-border rounded-md text-sm italic">
+                  {quote.notes || 'No specific notes for this quote.'}
+                </div>
+              </div>
+              <div className="space-y-3 pt-4">
+                 <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2">
+                   <History size={14} /> Version History
+                 </p>
+                 <div className="space-y-4 border-l-2 border-border ml-2 pl-4 py-2">
+                   <div className="relative">
+                      <div className="absolute -left-[24px] top-1.5 w-3 h-3 rounded-full bg-primary ring-4 ring-background"></div>
+                      <p className="text-xs font-bold">Today, 10:24 AM</p>
+                      <p className="text-xs text-muted-foreground">Quote created by AI extraction</p>
+                   </div>
+                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="bg-card border border-border p-6 rounded-xl shadow-sm border-t-4 border-t-primary space-y-6">
+             <div className="space-y-4">
+               <div>
+                  <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Grand Total</p>
+                  <p className="text-3xl font-black text-foreground">${quote.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+               </div>
+               <div className="pt-4 space-y-3 border-t border-border">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Unit Price</span>
+                    <span className="font-bold">${quote.totalUnitPrice.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Quantity</span>
+                    <span className="font-bold">{quote.quantity}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Margin</span>
+                    <span className="font-medium">{(quote.marginPercent * 100).toFixed(0)}%</span>
+                  </div>
+               </div>
+             </div>
+             
+             <div className="pt-4 space-y-4">
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Cost Breakdown</h4>
+                <div className="space-y-2">
+                  <BreakdownRow label="Material" value={quote.costs.materialCost} />
+                  <BreakdownRow label="Laser Processing" value={quote.costs.laserCost} />
+                  <BreakdownRow label="Fabrication/Bending" value={quote.costs.bendCost + quote.costs.weldCost} />
+                  <BreakdownRow label="Assembly & Finish" value={quote.costs.assemblyCost + quote.costs.finishCost} />
+                  <BreakdownRow label="Overhead" value={quote.costs.overhead} />
+                </div>
+             </div>
+          </div>
+
+          <div className="p-6 rounded-xl border border-border bg-card flex flex-col items-center text-center space-y-3">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+              Win Probability
+            </div>
+            <div className="text-4xl font-black text-primary">{quote.winProbability}%</div>
+            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-primary" style={{ width: `${quote.winProbability}%` }}></div>
+            </div>
+            <p className="text-[10px] text-muted-foreground uppercase font-bold">Confidence: Medium</p>
+          </div>
+          
+          {quote.status === 'lost' && (
+            <div className="p-5 bg-red-100/30 border border-red-200 dark:bg-red-900/10 dark:border-red-900/30 rounded-lg space-y-3">
+              <div className="flex items-center gap-2 text-red-700 dark:text-red-400 font-bold text-xs uppercase tracking-widest">
+                <Info size={14} /> AI Loss Analysis
+              </div>
+              <p className="text-xs text-red-700/80 dark:text-red-400/80 leading-relaxed">
+                Quote was likely lost due to price being 15% above market average for Aluminum 5052 chassis components.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BreakdownRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex justify-between text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-mono text-foreground font-medium">${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+    </div>
+  );
+}
