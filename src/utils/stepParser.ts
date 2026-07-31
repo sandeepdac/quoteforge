@@ -200,11 +200,13 @@ export function parseStepFile(fileContent: string, fileName: string = 'part.step
   const weldCount = solidCount > 1 ? solidCount * 2 : 0;
   const weldLengthMm = weldCount > 0 ? Math.round(weldCount * Math.min(lengthMm, widthMm) * 0.2) : 0;
 
-  // Material extraction. Only scan human-authored text (header + comment blocks),
-  // never the raw geometry — bare alloy digits like "304" collide with coordinate
-  // values and produce false positives across the whole DATA section.
+  // Material extraction. Only scan human-authored text — the HEADER section and
+  // any /* */ comment blocks — never the raw DATA geometry, where bare alloy digits
+  // like "304" collide with coordinate values and produce false positives.
+  const headerSectionMatch = fileContent.match(/HEADER;([\s\S]*?)ENDSEC;/i);
+  const headerSection = headerSectionMatch ? headerSectionMatch[1] : '';
   const commentBlocks = (fileContent.match(/\/\*[\s\S]*?\*\//g) || []).join('\n');
-  const materialText = headerText + '\n' + commentBlocks;
+  const materialText = headerSection + '\n' + commentBlocks;
   let estimatedMaterialName: string | undefined = undefined;
   if (/STAINLESS|INOX|\b304\b|\b316\b/i.test(materialText)) {
     estimatedMaterialName = 'Stainless Steel 304';

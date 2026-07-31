@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, ReactNode } from 'react';
 import { ShopSettings } from '../types';
 import { DEFAULT_SHOP_SETTINGS } from '../constants';
+import { usePersistentState } from '../hooks/usePersistentState';
 
 interface SettingsContextType {
   settings: ShopSettings;
@@ -10,7 +11,7 @@ interface SettingsContextType {
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
 export const SettingsProvider = ({ children }: { children: ReactNode }) => {
-  const [settings, setSettings] = useState<ShopSettings>(DEFAULT_SHOP_SETTINGS);
+  const [settings, setSettings] = usePersistentState<ShopSettings>('settings', DEFAULT_SHOP_SETTINGS);
 
   const updateSettings = (newSettings: Partial<ShopSettings>) => {
     setSettings((prev) => ({

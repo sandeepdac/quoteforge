@@ -9,16 +9,27 @@ import {
   Mail,
   Save,
   Moon,
-  Sun
+  Sun,
+  RotateCcw
 } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
+import { clearAllState } from '../utils/storage';
 
 export default function SettingsPage() {
   const { settings, updateSettings } = useSettings();
   const { theme, toggleTheme } = useTheme();
   const [activeTab, setActiveTab] = useState('shop');
+
+  const handleResetDemoData = () => {
+    const confirmed = window.confirm(
+      'Reset all quotes, parts, customers, materials and shop settings back to the demo defaults? This clears locally saved data and cannot be undone.'
+    );
+    if (!confirmed) return;
+    clearAllState();
+    window.location.reload();
+  };
 
   const tabs = [
     { id: 'shop', name: 'Shop Info', icon: Building },
@@ -186,6 +197,24 @@ export default function SettingsPage() {
                   </div>
                 </div>
               </div>
+              <div className="flex items-center justify-between p-4 bg-muted/20 border border-border rounded-lg">
+                <div className="flex items-center gap-4">
+                  <div className="p-2 bg-accent rounded-lg text-foreground">
+                    <RotateCcw size={20} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold">Reset Demo Data</p>
+                    <p className="text-xs text-muted-foreground">Restore quotes, parts, customers &amp; settings to defaults</p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleResetDemoData}
+                  className="px-4 py-2 border border-destructive/40 text-destructive rounded-md text-xs font-bold uppercase tracking-widest hover:bg-destructive/10 transition-colors"
+                >
+                  Reset
+                </button>
+              </div>
+
               <div className="pt-6 border-t border-border mt-12 flex items-center justify-between">
                 <button className="text-xs font-bold text-destructive hover:underline">Delete Account</button>
                 <div className="text-[10px] text-muted-foreground font-mono">v4.1.2-stable (Forge Edition)</div>

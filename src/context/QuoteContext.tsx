@@ -1,9 +1,10 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, ReactNode } from 'react';
 import { Quote, Part, Customer, Material } from '../types';
 import { mockQuotes } from '../data/mockQuotes';
 import { mockParts } from '../data/mockParts';
 import { mockCustomers } from '../data/mockCustomers';
 import { mockMaterials } from '../data/mockMaterials';
+import { usePersistentState } from '../hooks/usePersistentState';
 
 interface QuoteContextType {
   quotes: Quote[];
@@ -23,10 +24,10 @@ interface QuoteContextType {
 const QuoteContext = createContext<QuoteContextType | undefined>(undefined);
 
 export const QuoteProvider = ({ children }: { children: ReactNode }) => {
-  const [quotes, setQuotes] = useState<Quote[]>(mockQuotes);
-  const [parts, setParts] = useState<Part[]>(mockParts);
-  const [customers, setCustomers] = useState<Customer[]>(mockCustomers);
-  const [materials, setMaterials] = useState<Material[]>(mockMaterials);
+  const [quotes, setQuotes] = usePersistentState<Quote[]>('quotes', mockQuotes);
+  const [parts, setParts] = usePersistentState<Part[]>('parts', mockParts);
+  const [customers, setCustomers] = usePersistentState<Customer[]>('customers', mockCustomers);
+  const [materials, setMaterials] = usePersistentState<Material[]>('materials', mockMaterials);
 
   const addQuote = (quote: Quote) => setQuotes([quote, ...quotes]);
   
