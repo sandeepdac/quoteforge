@@ -22,6 +22,8 @@ declare module 'occt-import-js' {
 
   export interface OcctModule {
     ReadStepFile(buffer: Uint8Array, params: unknown): OcctReadResult;
+    ReadIgesFile(buffer: Uint8Array, params: unknown): OcctReadResult;
+    ReadBrepFile(buffer: Uint8Array, params: unknown): OcctReadResult;
   }
 }
 

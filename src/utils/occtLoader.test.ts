@@ -1,5 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { measureMesh, TessellatedMesh } from './occtLoader';
+import { measureMesh, solidFormatFor, TessellatedMesh } from './occtLoader';
+
+describe('solidFormatFor', () => {
+  it('maps 3D solid extensions to OCCT formats', () => {
+    expect(solidFormatFor('part.step')).toBe('step');
+    expect(solidFormatFor('part.STP')).toBe('step');
+    expect(solidFormatFor('part.iges')).toBe('iges');
+    expect(solidFormatFor('part.IGS')).toBe('iges');
+    expect(solidFormatFor('part.brep')).toBe('brep');
+  });
+
+  it('returns null for non-solid inputs', () => {
+    expect(solidFormatFor('drawing.pdf')).toBeNull();
+    expect(solidFormatFor('photo.png')).toBeNull();
+    expect(solidFormatFor('layout.dxf')).toBeNull();
+  });
+});
 
 /** Builds a solid axis-aligned cube of the given size at the origin, outward-wound. */
 function cubeMesh(size: number): TessellatedMesh {

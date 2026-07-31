@@ -1,6 +1,15 @@
 import { StepParseResult, parseStepFile } from './stepParser';
-import { SAMPLE_CAD_PDF_METADATA, P5_ROUND_TOP_FLAG_PDF, CadPdfMetadata } from './sampleCadFiles';
-import { tessellateStep, measureMesh, TessellatedMesh } from './occtLoader';
+import { P5_ROUND_TOP_FLAG_PDF, CadPdfMetadata } from './sampleCadFiles';
+import {
+  tessellateCad,
+  measureMesh,
+  solidFormatFor,
+  TessellatedMesh,
+  MeshMeasurements,
+} from './occtLoader';
+import { analyzeDrawingWithAI, AiDrawingData } from './aiExtractor';
+
+export type MeasurementSource = 'solid' | 'estimated' | 'ai-drawing' | 'manual';
 
 export interface ExtractedCadAnalysis {
   partName: string;
@@ -27,92 +36,143 @@ export interface ExtractedCadAnalysis {
   confidenceScore: number;
   stepData?: StepParseResult;
   stepMesh?: TessellatedMesh; // Tessellated B-Rep for the 3D viewer (reused, not re-computed)
-  /** Whether dimensions/volume/weight were measured from the solid mesh or estimated. */
-  measurementSource?: 'solid' | 'estimated';
+  /** How dimensions/volume/weight were obtained. */
+  measurementSource: MeasurementSource;
   pdfData?: CadPdfMetadata;
-  pdfUrl?: string; // Object URL / static path to the actual PDF for inline rendering
+  pdfUrl?: string; // Object URL / static path to the actual PDF/image for inline rendering
+}
+
+export interface CadFileInput {
+  name: string;
+  content?: string;
+  buffer?: ArrayBuffer;
+  base64?: string;
+  mimeType?: string;
+  fileType?: string;
+  pdfUrl?: string;
+}
+
+const round = (v: number, d: number) => {
+  const f = 10 ** d;
+  return Math.round(v * f) / f;
+};
+
+const baseName = (fileName: string) => fileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' ');
+
+function densityFor(materialName: string): number {
+  if (/STAINLESS|INOX|\b304\b|\b316\b/i.test(materialName)) return 8.0;
+  if (/ALUMINI?UM|\b6061\b|\b5052\b/i.test(materialName)) return 2.7;
+  return 7.85; // steel default
 }
 
 /**
- * High-performance production-grade CAD Analysis dispatcher
+ * Main dispatcher. Routes any input to the most accurate path available:
+ *   • 3D solids (STEP/IGES/BREP) → tessellate + measure exact geometry
+ *   • 2D drawings (PDF/PNG/JPG)  → read dimensions with AI vision
+ *   • anything else / failures   → honest manual-entry state (never fabricated data)
  */
-export async function analyzeCadFile(
-  file: { name: string; content?: string; buffer?: ArrayBuffer; base64?: string; fileType?: string; pdfUrl?: string }
-): Promise<ExtractedCadAnalysis> {
-  const fileName = file.name || 'drawing.step';
-  const isStep = /\.step$|\.stp$/i.test(fileName) || file.fileType === 'STEP';
+export async function analyzeCadFile(file: CadFileInput): Promise<ExtractedCadAnalysis> {
+  const fileName = file.name || 'part.step';
+  const solidFormat = solidFormatFor(fileName) ?? (file.fileType === 'STEP' ? 'step' : null);
   const isPdf = /\.pdf$/i.test(fileName) || file.fileType === 'PDF';
+  const isImage = /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(fileName) || file.fileType === 'IMAGE';
 
-  if (isStep) {
-    // 1. Parse STEP File Text / ASCII
-    let textContent = file.content || '';
-    if (!textContent && file.buffer) {
-      const decoder = new TextDecoder('utf-8');
-      textContent = decoder.decode(file.buffer);
+  if (solidFormat) {
+    return analyzeSolid(file, fileName, solidFormat);
+  }
+
+  if (isPdf || isImage) {
+    return analyzeDrawing(file, fileName, isPdf ? 'PDF' : 'IMAGE');
+  }
+
+  // DXF / unknown — we can't reliably measure this here; ask the user to confirm.
+  return manualAnalysis(fileName, 'DXF', file.pdfUrl);
+}
+
+// ---------------------------------------------------------------------------
+// 3D solids: STEP / IGES / BREP
+// ---------------------------------------------------------------------------
+
+async function analyzeSolid(
+  file: CadFileInput,
+  fileName: string,
+  format: 'step' | 'iges' | 'brep'
+): Promise<ExtractedCadAnalysis> {
+  // STEP is ASCII, so we can also mine topology (holes/bends/material) from the text.
+  let stepResult: StepParseResult | null = null;
+  if (format === 'step') {
+    let text = file.content || '';
+    if (!text && file.buffer) text = new TextDecoder('utf-8').decode(file.buffer);
+    stepResult = parseStepFile(text, fileName);
+  }
+
+  const materialName = stepResult?.estimatedMaterialName || 'Mild Steel 3.0mm';
+  const density = densityFor(materialName);
+
+  // Measure exact geometry from the tessellated solid when we have the bytes.
+  let mesh: TessellatedMesh | undefined;
+  let meas: MeshMeasurements | undefined;
+  if (file.buffer) {
+    const tessellated = await tessellateCad(file.buffer, format);
+    if (tessellated) {
+      mesh = tessellated;
+      meas = measureMesh(tessellated);
     }
+  }
 
-    const stepResult = parseStepFile(textContent, fileName);
-
-    // Default steel density: ~7.85 g/cm3
-    let densityGcm3 = 7.85;
-    let matchedMaterialName = stepResult.estimatedMaterialName || 'Mild Steel 3.0mm';
-
-    if (/STAINLESS|304|316/i.test(matchedMaterialName)) densityGcm3 = 8.0;
-    if (/ALUMINUM|6061|5052/i.test(matchedMaterialName)) densityGcm3 = 2.7;
-
-    // Start from the text-parser estimates, then upgrade to exact values measured
-    // from the tessellated solid when we can read the raw STEP bytes.
-    let lengthMm = stepResult.lengthMm;
-    let widthMm = stepResult.widthMm;
-    let heightMm = stepResult.heightMm;
-    let volumeCm3 = stepResult.volumeCm3;
-    let surfaceAreaCm2 = stepResult.surfaceAreaCm2;
-    let stepMesh: TessellatedMesh | undefined;
-    let measurementSource: 'solid' | 'estimated' = 'estimated';
-
-    if (file.buffer) {
-      const mesh = await tessellateStep(file.buffer);
-      if (mesh) {
-        const m = measureMesh(mesh);
-        lengthMm = m.lengthMm;
-        widthMm = m.widthMm;
-        heightMm = m.heightMm;
-        volumeCm3 = m.volumeCm3;
-        surfaceAreaCm2 = m.surfaceAreaCm2;
-        stepMesh = mesh;
-        measurementSource = 'solid';
-        // Reflect measured geometry back so the 3D viewer overlays match.
-        stepResult.lengthMm = lengthMm;
-        stepResult.widthMm = widthMm;
-        stepResult.heightMm = heightMm;
-        stepResult.volumeCm3 = volumeCm3;
-        stepResult.surfaceAreaCm2 = surfaceAreaCm2;
-      }
-    }
-
-    const weightKg = Math.round((volumeCm3 * densityGcm3 / 1000) * 100) / 100 || 1.85;
-    const surfaceAreaM2 = Math.round((surfaceAreaCm2 / 10000) * 1000) / 1000 || 0.18;
-
-    const measuredNotes = [
-      `Measured directly from the solid model — bounding box ${lengthMm} × ${widthMm} × ${heightMm} mm.`,
-      `Enclosed volume ${volumeCm3} cm³ → weight ${weightKg} kg in ${matchedMaterialName} (density ${densityGcm3} g/cm³).`,
-      `Wetted surface area ${surfaceAreaM2} m² sets the finishing cost; ${stepResult.holeCount} holes and ${stepResult.bendCount} bends detected from B-Rep topology.`
-    ];
-    const estimatedNotes = [
-      `Estimated bounding box from B-Rep control points: ${lengthMm} × ${widthMm} × ${heightMm} mm.`,
-      `Approximate volume ${volumeCm3} cm³ → weight ${weightKg} kg based on ${matchedMaterialName} density.`,
-      `Identified ${stepResult.holeCount} cylindrical holes and ${stepResult.bendCount} sheet-metal bend faces.`
-    ];
+  if (meas && mesh) {
+    const weightKg = round((meas.volumeCm3 * density) / 1000, 2) || 0;
+    const surfaceAreaM2 = round(meas.surfaceAreaCm2 / 10000, 3) || 0;
+    const stepData = solidStepData(fileName, meas, stepResult);
 
     return {
-      partName: fileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' '),
+      partName: baseName(fileName),
       fileType: 'STEP',
       fileName,
-      materialName: matchedMaterialName,
-      thicknessMm: heightMm < 12 ? Math.max(1.5, heightMm) : 3.0,
-      lengthMm,
-      widthMm,
-      heightMm,
+      materialName,
+      thicknessMm: meas.heightMm < 12 ? Math.max(1.5, meas.heightMm) : 3.0,
+      lengthMm: meas.lengthMm,
+      widthMm: meas.widthMm,
+      heightMm: meas.heightMm,
+      perimeterMm: stepData.perimeterMm,
+      pierceCount: stepData.pierceCount,
+      bendCount: stepData.bendCount,
+      isSimpleBending: stepData.isSimpleBending,
+      holeCount: stepData.holeCount,
+      holeDetails: stepData.holeDetails,
+      weldLengthMm: stepData.weldLengthMm,
+      weldCount: stepData.weldCount,
+      weightKg,
+      surfaceAreaM2,
+      finishCallout: 'Deburr & De-grease',
+      tolerances: 'Standard ISO 2768-m (±0.2mm)',
+      aiNotes: [
+        `Measured directly from the solid model — bounding box ${meas.lengthMm} × ${meas.widthMm} × ${meas.heightMm} mm.`,
+        `Enclosed volume ${meas.volumeCm3} cm³ → weight ${weightKg} kg in ${materialName} (density ${density} g/cm³).`,
+        stepResult
+          ? `Wetted surface area ${surfaceAreaM2} m² sets finishing cost; ${stepData.holeCount} holes and ${stepData.bendCount} bends from B-Rep topology.`
+          : `Wetted surface area ${surfaceAreaM2} m² sets finishing cost. Confirm holes/bends on the right — topology isn't available for ${format.toUpperCase()}.`,
+      ],
+      confidenceScore: 98,
+      stepData,
+      stepMesh: mesh,
+      measurementSource: 'solid',
+    };
+  }
+
+  // Couldn't tessellate. STEP text still gives a usable estimate; other formats can't.
+  if (stepResult) {
+    const weightKg = round((stepResult.volumeCm3 * density) / 1000, 2) || 1.85;
+    const surfaceAreaM2 = round(stepResult.surfaceAreaCm2 / 10000, 3) || 0.18;
+    return {
+      partName: baseName(fileName),
+      fileType: 'STEP',
+      fileName,
+      materialName,
+      thicknessMm: stepResult.heightMm < 12 ? Math.max(1.5, stepResult.heightMm) : 3.0,
+      lengthMm: stepResult.lengthMm,
+      widthMm: stepResult.widthMm,
+      heightMm: stepResult.heightMm,
       perimeterMm: stepResult.perimeterMm,
       pierceCount: stepResult.pierceCount,
       bendCount: stepResult.bendCount,
@@ -125,71 +185,197 @@ export async function analyzeCadFile(
       surfaceAreaM2,
       finishCallout: 'Deburr & De-grease',
       tolerances: 'Standard ISO 2768-m (±0.2mm)',
-      aiNotes: measurementSource === 'solid' ? measuredNotes : estimatedNotes,
-      confidenceScore: measurementSource === 'solid' ? 98 : 90,
+      aiNotes: [
+        `Estimated bounding box from B-Rep control points: ${stepResult.lengthMm} × ${stepResult.widthMm} × ${stepResult.heightMm} mm.`,
+        `Approximate volume ${stepResult.volumeCm3} cm³ → weight ${weightKg} kg. Verify before quoting.`,
+        `Identified ${stepResult.holeCount} holes and ${stepResult.bendCount} bends from topology.`,
+      ],
+      confidenceScore: 90,
       stepData: stepResult,
-      stepMesh,
-      measurementSource
+      measurementSource: 'estimated',
     };
   }
 
-  // 2. Handle CAD PDF Drawings
-  if (isPdf) {
-    // Match the bundled P5 Round Top Flag drawing by name; otherwise use the generic sample.
-    const isP5Flag = /flag|fgc.?p5|round.?top|\bp5\b/i.test(fileName);
-    const pdfMeta = isP5Flag ? P5_ROUND_TOP_FLAG_PDF : SAMPLE_CAD_PDF_METADATA;
+  return manualAnalysis(fileName, 'STEP', file.pdfUrl);
+}
 
-    return {
-      partName: pdfMeta.title,
-      fileType: 'PDF',
-      fileName,
-      pdfUrl: file.pdfUrl,
-      materialName: pdfMeta.material,
-      thicknessMm: 3.0,
-      lengthMm: pdfMeta.dimensions.lengthMm,
-      widthMm: pdfMeta.dimensions.widthMm,
-      heightMm: pdfMeta.dimensions.heightMm,
-      perimeterMm: pdfMeta.features.perimeterMm,
-      pierceCount: pdfMeta.features.pierceCount,
-      bendCount: pdfMeta.features.bendCount,
-      isSimpleBending: pdfMeta.features.isSimpleBending,
-      holeCount: pdfMeta.features.holeCount,
-      holeDetails: pdfMeta.features.holeDetails,
-      weldLengthMm: pdfMeta.features.weldLengthMm,
-      weldCount: pdfMeta.features.weldCount,
-      weightKg: pdfMeta.features.weightKg,
-      surfaceAreaM2: pdfMeta.features.surfaceAreaM2,
-      finishCallout: pdfMeta.finish,
-      tolerances: pdfMeta.tolerances,
-      aiNotes: pdfMeta.notes,
-      confidenceScore: 92,
-      pdfData: pdfMeta
-    };
-  }
-
-  // Default fallback for images / DXF
+/** Builds a StepParseResult-shaped object from measurements (+ optional real topology). */
+function solidStepData(
+  fileName: string,
+  meas: MeshMeasurements,
+  base: StepParseResult | null
+): StepParseResult {
   return {
-    partName: fileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' '),
-    fileType: 'DXF',
+    fileName,
+    schema: base?.schema ?? 'AP214',
+    originatingSystem: base?.originatingSystem ?? 'CAD',
+    author: base?.author ?? 'Unknown',
+    timestamp: base?.timestamp ?? '',
+    unit: 'mm',
+    unitScale: 1,
+    lengthMm: meas.lengthMm,
+    widthMm: meas.widthMm,
+    heightMm: meas.heightMm,
+    volumeCm3: meas.volumeCm3,
+    surfaceAreaCm2: meas.surfaceAreaCm2,
+    cartesianPointCount: base?.cartesianPointCount ?? 0,
+    faceCount: base?.faceCount ?? 0,
+    planeCount: base?.planeCount ?? 0,
+    cylindricalSurfaceCount: base?.cylindricalSurfaceCount ?? 0,
+    holeCount: base?.holeCount ?? 0,
+    holeDetails: base?.holeDetails ?? [],
+    bendCount: base?.bendCount ?? 0,
+    isSimpleBending: base?.isSimpleBending ?? true,
+    perimeterMm: base?.perimeterMm ?? Math.round(2 * (meas.lengthMm + meas.widthMm)),
+    pierceCount: base?.pierceCount ?? 0,
+    weldLengthMm: base?.weldLengthMm ?? 0,
+    weldCount: base?.weldCount ?? 0,
+    estimatedMaterialName: base?.estimatedMaterialName,
+    meshPoints: [],
+    bounds: {
+      minX: 0,
+      maxX: meas.boundingBoxMm.x,
+      minY: 0,
+      maxY: meas.boundingBoxMm.y,
+      minZ: 0,
+      maxZ: meas.boundingBoxMm.z,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 2D drawings: PDF / images
+// ---------------------------------------------------------------------------
+
+async function analyzeDrawing(
+  file: CadFileInput,
+  fileName: string,
+  fileType: 'PDF' | 'IMAGE'
+): Promise<ExtractedCadAnalysis> {
+  // 1. Real extraction: read the drawing's dimensions with the AI vision endpoint.
+  if (file.base64 && file.mimeType) {
+    const data = await analyzeDrawingWithAI({
+      fileName,
+      fileBase64: file.base64,
+      mimeType: file.mimeType,
+    });
+    if (data) return fromAiData(fileName, fileType, data, file.pdfUrl);
+  }
+
+  // 2. Bundled demo drawing (P5) — use its curated title block when AI isn't available.
+  if (fileType === 'PDF' && /flag|fgc.?p5|round.?top|\bp5\b/i.test(fileName)) {
+    return fromPdfMetadata(fileName, P5_ROUND_TOP_FLAG_PDF, file.pdfUrl);
+  }
+
+  // 3. Be honest: we couldn't measure it — ask the user to confirm the dimensions.
+  return manualAnalysis(fileName, fileType, file.pdfUrl);
+}
+
+function fromAiData(
+  fileName: string,
+  fileType: 'PDF' | 'IMAGE',
+  d: AiDrawingData,
+  pdfUrl?: string
+): ExtractedCadAnalysis {
+  return {
+    partName: d.partName || baseName(fileName),
+    fileType,
+    fileName,
+    materialName: d.materialName || 'Mild Steel 3.0mm',
+    thicknessMm: d.thicknessMm ?? 3.0,
+    lengthMm: d.lengthMm ?? 0,
+    widthMm: d.widthMm ?? 0,
+    heightMm: d.heightMm ?? 0,
+    perimeterMm: d.perimeterMm ?? 0,
+    pierceCount: d.pierceCount ?? 0,
+    bendCount: d.bendCount ?? 0,
+    isSimpleBending: d.isSimpleBending ?? true,
+    holeCount: d.holeCount ?? 0,
+    holeDetails: d.holeDetails ?? [],
+    weldLengthMm: d.weldLengthMm ?? 0,
+    weldCount: d.weldCount ?? 0,
+    weightKg: d.weightKg ?? 0,
+    surfaceAreaM2: d.surfaceAreaM2 ?? 0,
+    finishCallout: d.finishCallout,
+    tolerances: d.tolerances,
+    aiNotes:
+      d.aiNotes && d.aiNotes.length
+        ? d.aiNotes
+        : ['Dimensions read from the drawing by AI vision. Please verify before quoting.'],
+    confidenceScore: d.confidenceScore ?? 70,
+    measurementSource: 'ai-drawing',
+    pdfUrl,
+  };
+}
+
+function fromPdfMetadata(
+  fileName: string,
+  meta: CadPdfMetadata,
+  pdfUrl?: string
+): ExtractedCadAnalysis {
+  return {
+    partName: meta.title,
+    fileType: 'PDF',
+    fileName,
+    materialName: meta.material,
+    thicknessMm: 3.0,
+    lengthMm: meta.dimensions.lengthMm,
+    widthMm: meta.dimensions.widthMm,
+    heightMm: meta.dimensions.heightMm,
+    perimeterMm: meta.features.perimeterMm,
+    pierceCount: meta.features.pierceCount,
+    bendCount: meta.features.bendCount,
+    isSimpleBending: meta.features.isSimpleBending,
+    holeCount: meta.features.holeCount,
+    holeDetails: meta.features.holeDetails,
+    weldLengthMm: meta.features.weldLengthMm,
+    weldCount: meta.features.weldCount,
+    weightKg: meta.features.weightKg,
+    surfaceAreaM2: meta.features.surfaceAreaM2,
+    finishCallout: meta.finish,
+    tolerances: meta.tolerances,
+    aiNotes: meta.notes,
+    confidenceScore: 92,
+    measurementSource: 'ai-drawing',
+    pdfData: meta,
+    pdfUrl,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Honest fallback: no fabricated numbers
+// ---------------------------------------------------------------------------
+
+function manualAnalysis(
+  fileName: string,
+  fileType: ExtractedCadAnalysis['fileType'],
+  pdfUrl?: string
+): ExtractedCadAnalysis {
+  return {
+    partName: baseName(fileName),
+    fileType,
     fileName,
     materialName: 'Mild Steel 3.0mm',
     thicknessMm: 3.0,
-    lengthMm: 300,
-    widthMm: 200,
-    heightMm: 40,
-    perimeterMm: 1100,
-    pierceCount: 6,
-    bendCount: 4,
+    lengthMm: 0,
+    widthMm: 0,
+    heightMm: 0,
+    perimeterMm: 0,
+    pierceCount: 0,
+    bendCount: 0,
     isSimpleBending: true,
-    holeCount: 5,
-    holeDetails: [{ diameterMm: 6.0, count: 5 }],
-    weldLengthMm: 40,
-    weldCount: 2,
-    weightKg: 1.45,
-    surfaceAreaM2: 0.14,
-    finishCallout: 'Deburr',
-    tolerances: '±0.2mm',
-    aiNotes: ['Detected flat sheet geometry from 2D vector path.'],
-    confidenceScore: 88
+    holeCount: 0,
+    holeDetails: [],
+    weldLengthMm: 0,
+    weldCount: 0,
+    weightKg: 0,
+    surfaceAreaM2: 0,
+    aiNotes: [
+      'We could not automatically measure this file.',
+      'Enter or confirm the dimensions on the right before quoting.',
+    ],
+    confidenceScore: 0,
+    measurementSource: 'manual',
+    pdfUrl,
   };
 }

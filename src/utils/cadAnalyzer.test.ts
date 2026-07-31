@@ -28,9 +28,26 @@ describe('analyzeCadFile — PDF dispatch', () => {
     expect(a.pdfUrl).toBe('/samples/x.pdf');
   });
 
-  it('falls back to the generic sample for an unknown PDF', async () => {
+  it('asks for manual confirmation on an unknown PDF (no fabricated data)', async () => {
     const a = await analyzeCadFile({ name: 'random_drawing.pdf' });
     expect(a.fileType).toBe('PDF');
     expect(a.partName).not.toBe('P5 ROUND TOP FLAG');
+    expect(a.measurementSource).toBe('manual');
+    expect(a.lengthMm).toBe(0);
+  });
+});
+
+describe('analyzeCadFile — honest fallbacks', () => {
+  it('never fabricates dimensions for an unrecognized file', async () => {
+    const a = await analyzeCadFile({ name: 'mystery.dwg' });
+    expect(a.measurementSource).toBe('manual');
+    expect([a.lengthMm, a.widthMm, a.heightMm, a.weightKg]).toEqual([0, 0, 0, 0]);
+    expect(a.confidenceScore).toBe(0);
+  });
+
+  it('routes an image with no AI backend to manual entry', async () => {
+    const a = await analyzeCadFile({ name: 'sketch.png', pdfUrl: 'blob:x' });
+    expect(a.fileType).toBe('IMAGE');
+    expect(a.measurementSource).toBe('manual');
   });
 });

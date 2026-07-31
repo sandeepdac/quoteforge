@@ -99,14 +99,34 @@ function loadOcct() {
   return occtPromise;
 }
 
+export type CadSolidFormat = 'step' | 'iges' | 'brep';
+
+/** Maps a file extension to an OCCT solid format, or null if it isn't a 3D solid. */
+export function solidFormatFor(fileName: string): CadSolidFormat | null {
+  if (/\.(step|stp)$/i.test(fileName)) return 'step';
+  if (/\.(iges|igs)$/i.test(fileName)) return 'iges';
+  if (/\.brep$/i.test(fileName)) return 'brep';
+  return null;
+}
+
 /**
- * Reads a STEP file (as raw bytes) and returns a single merged, indexed mesh.
- * Returns null if OCCT is unavailable or the file yields no geometry.
+ * Reads a 3D solid file (STEP / IGES / BREP, as raw bytes) and returns a single
+ * merged, indexed mesh. Returns null if OCCT is unavailable or the file yields no
+ * geometry, so callers can fall back gracefully.
  */
-export async function tessellateStep(buffer: ArrayBuffer): Promise<TessellatedMesh | null> {
+export async function tessellateCad(
+  buffer: ArrayBuffer,
+  format: CadSolidFormat = 'step'
+): Promise<TessellatedMesh | null> {
   try {
     const occt = await loadOcct();
-    const result = occt.ReadStepFile(new Uint8Array(buffer), null);
+    const bytes = new Uint8Array(buffer);
+    const result =
+      format === 'iges'
+        ? occt.ReadIgesFile(bytes, null)
+        : format === 'brep'
+        ? occt.ReadBrepFile(bytes, null)
+        : occt.ReadStepFile(bytes, null);
     if (!result?.success || !result.meshes?.length) return null;
 
     // Pre-count so we can allocate typed arrays once and merge all sub-meshes.

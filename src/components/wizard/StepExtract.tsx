@@ -138,18 +138,24 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
                 {cadAnalysis?.partName || 'Extracted CAD Feature Geometry'}
               </h2>
               <span className="bg-primary/10 text-primary border border-primary/20 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider">
-                {cadAnalysis?.fileType === 'STEP' ? '3D STEP Model' : '2D Drawing PDF'}
+                {cadAnalysis?.stepData ? '3D CAD Model' : cadAnalysis?.fileType === 'IMAGE' ? '2D Image' : '2D Drawing'}
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Features extracted directly from CAD geometry & title block. Review and adjust parameters.
+              {cadAnalysis?.measurementSource === 'solid'
+                ? 'Dimensions measured exactly from the solid geometry. Review and adjust parameters.'
+                : cadAnalysis?.measurementSource === 'ai-drawing'
+                ? 'Dimensions read from the drawing by AI vision. Please verify before quoting.'
+                : cadAnalysis?.measurementSource === 'manual'
+                ? 'Automatic measurement unavailable — please enter the dimensions on the right.'
+                : 'Dimensions estimated from CAD geometry. Review and adjust parameters.'}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider border border-emerald-500/20 shrink-0">
           <Zap size={14} fill="currentColor" />
-          Extraction Score: {cadAnalysis?.confidenceScore || 94}%
+          Confidence: {cadAnalysis?.confidenceScore ?? 94}%
         </div>
       </div>
 
@@ -167,6 +173,17 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
 
           {cadAnalysis?.stepData ? (
             <CadViewer3D cadData={cadAnalysis.stepData} selectedMaterialName={selectedMatObj.name} stepMesh={cadAnalysis.stepMesh} />
+          ) : cadAnalysis?.fileType === 'IMAGE' && cadAnalysis?.pdfUrl ? (
+            <div className="rounded-xl border border-border overflow-hidden bg-card">
+              <div className="bg-slate-900 px-4 py-2.5 flex items-center gap-2 border-b border-slate-800 text-slate-200 text-xs">
+                <FileText size={16} className="text-sky-400" />
+                <span className="font-bold text-white">Drawing Image</span>
+                <span className="bg-sky-950 text-sky-400 border border-sky-800/50 px-2 py-0.5 rounded text-[10px] font-mono">{cadAnalysis.fileName}</span>
+              </div>
+              <div className="w-full h-[360px] bg-slate-100 flex items-center justify-center overflow-auto">
+                <img src={cadAnalysis.pdfUrl} alt={cadAnalysis.fileName} className="max-w-full max-h-full object-contain" />
+              </div>
+            </div>
           ) : (
             <CadPdfViewer pdfFileName={cadAnalysis?.fileName || 'Drawing.pdf'} pdfData={cadAnalysis?.pdfData} pdfUrl={cadAnalysis?.pdfUrl} />
           )}
@@ -178,15 +195,29 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
                 <CheckSquare size={14} className="text-primary" />
                 How We Read This Part
               </span>
-              {cadAnalysis?.measurementSource === 'solid' ? (
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-                  <Box size={11} /> Measured from solid
-                </span>
-              ) : (
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-                  Estimated
-                </span>
-              )}
+              {(() => {
+                const src = cadAnalysis?.measurementSource;
+                if (src === 'solid') return (
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                    <Box size={11} /> Measured from solid
+                  </span>
+                );
+                if (src === 'ai-drawing') return (
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30">
+                    Read from drawing
+                  </span>
+                );
+                if (src === 'manual') return (
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/30">
+                    Confirm dimensions
+                  </span>
+                );
+                return (
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                    Estimated
+                  </span>
+                );
+              })()}
             </div>
 
             <ul className="space-y-1.5 text-xs text-muted-foreground">

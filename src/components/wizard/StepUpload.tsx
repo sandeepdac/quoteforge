@@ -13,7 +13,21 @@ import {
   ShieldCheck,
   Cpu
 } from 'lucide-react';
-import { analyzeCadFile, ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
+import { analyzeCadFile, ExtractedCadAnalysis, CadFileInput } from '../../utils/cadAnalyzer';
+import { solidFormatFor } from '../../utils/occtLoader';
+
+/** Reads a file blob as a base64 string (without the data: prefix) for AI extraction. */
+function fileToBase64(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.includes(',') ? result.split(',')[1] : result);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 interface StepUploadProps {
   onContinue: (analysis?: ExtractedCadAnalysis) => void;
@@ -31,10 +45,10 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
   const [manualWidth, setManualWidth] = useState('');
   const [manualLength, setManualLength] = useState('');
 
-  const processFile = async (fileName: string, content?: string, buffer?: ArrayBuffer, pdfUrl?: string) => {
+  const processFile = async (input: CadFileInput) => {
     setAnalyzing(true);
     try {
-      const analysis = await analyzeCadFile({ name: fileName, content, buffer, pdfUrl });
+      const analysis = await analyzeCadFile(input);
       setAnalysisResult(analysis);
       onDataChange({ cadAnalysis: analysis });
     } catch (err) {
@@ -46,29 +60,32 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: async (acceptedFiles) => {
-      if (acceptedFiles.length > 0) {
-        const file = acceptedFiles[0];
-        setUploadedFile({ name: file.name, size: file.size, type: file.type });
-        
-        if (/\.step$|\.stp$/i.test(file.name)) {
-          // Pass raw bytes: the parser decodes text from them, and the 3D viewer
-          // tessellates the real B-Rep from the same buffer.
-          const buffer = await file.arrayBuffer();
-          await processFile(file.name, undefined, buffer);
-        } else if (/\.pdf$/i.test(file.name)) {
-          // Keep the real uploaded PDF around so the viewer can render it inline.
-          const url = URL.createObjectURL(file);
-          await processFile(file.name, undefined, undefined, url);
-        } else {
-          await processFile(file.name);
-        }
+      if (acceptedFiles.length === 0) return;
+      const file = acceptedFiles[0];
+      setUploadedFile({ name: file.name, size: file.size, type: file.type });
+
+      if (solidFormatFor(file.name)) {
+        // 3D solid (STEP/IGES/BREP): pass raw bytes for tessellation + measurement.
+        const buffer = await file.arrayBuffer();
+        await processFile({ name: file.name, buffer });
+      } else if (/\.pdf$/i.test(file.name)) {
+        // 2D PDF drawing: base64 for AI extraction + object URL for inline preview.
+        const [base64, url] = [await fileToBase64(file), URL.createObjectURL(file)];
+        await processFile({ name: file.name, base64, mimeType: 'application/pdf', pdfUrl: url });
+      } else if (/\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(file.name)) {
+        // Image of a drawing: base64 for AI vision + object URL for preview.
+        const [base64, url] = [await fileToBase64(file), URL.createObjectURL(file)];
+        await processFile({ name: file.name, base64, mimeType: file.type || 'image/png', pdfUrl: url });
+      } else {
+        await processFile({ name: file.name });
       }
     },
     accept: {
       'application/pdf': ['.pdf'],
       'model/step': ['.step', '.stp'],
+      'model/iges': ['.iges', '.igs'],
+      'application/octet-stream': ['.brep'],
       'image/vnd.dxf': ['.dxf'],
-      'application/acad': ['.dwg'],
       'image/png': ['.png'],
       'image/jpeg': ['.jpg', '.jpeg']
     },
@@ -81,7 +98,7 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
       setUploadedFile({ name: 'P5-Round-Top-Flag.STEP', size: 95634, type: 'model/step' });
       const res = await fetch('/samples/P5-Round-Top-Flag.STEP');
       const buffer = await res.arrayBuffer();
-      await processFile('P5-Round-Top-Flag.STEP', undefined, buffer);
+      await processFile({ name: 'P5-Round-Top-Flag.STEP', buffer });
     } catch (err) {
       console.error('Failed to load sample STEP file:', err);
       setAnalyzing(false);
@@ -90,7 +107,7 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
 
   const handleLoadSamplePdf = async () => {
     setUploadedFile({ name: 'P5-Round-Top-Flag.pdf', size: 252428, type: 'application/pdf' });
-    await processFile('P5-Round-Top-Flag.pdf', undefined, undefined, '/samples/P5-Round-Top-Flag.pdf');
+    await processFile({ name: 'P5-Round-Top-Flag.pdf', pdfUrl: '/samples/P5-Round-Top-Flag.pdf' });
   };
 
   const handleProceed = () => {
@@ -177,7 +194,7 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
             <div className="text-center space-y-1">
               <p className="font-semibold text-foreground text-base">Drop your CAD drawing or 3D STEP model here</p>
               <p className="text-xs text-muted-foreground">
-                Supports <strong className="text-foreground">.STEP, .STP, .PDF, .DXF, .DWG, .PNG, .JPG</strong> (up to 50MB)
+                3D solids <strong className="text-foreground">.STEP .STP .IGES .IGS .BREP</strong> are measured exactly; drawings <strong className="text-foreground">.PDF .PNG .JPG</strong> are read by AI vision (up to 50MB)
               </p>
             </div>
           </>
