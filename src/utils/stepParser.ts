@@ -66,10 +66,12 @@ export function parseStepFile(fileContent: string, fileName: string = 'part.step
   }
 
   if (/FILE_NAME\s*\(/i.test(headerText)) {
-    const fnMatch = headerText.match(/FILE_NAME\s*\(\s*'([^']*)'[^,]*,\s*'([^']*)'[^,]*,\s*\('([^']*)'\)[^,]*,\s*\('([^']*)'\)[^,]*,\s*'([^']*)'[^,]*,\s*'([^']*)'/i);
+    // Tolerant of SolidWorks-style spacing inside the author/org tuples, e.g. `( '' )`.
+    const fnMatch = headerText.match(/FILE_NAME\s*\(\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*\(\s*'([^']*)'\s*\)\s*,\s*\(\s*'([^']*)'\s*\)\s*,\s*'([^']*)'\s*,\s*'([^']*)'/i);
     if (fnMatch) {
-      if (fnMatch[2]) timestamp = fnMatch[2];
+      if (fnMatch[2]) timestamp = fnMatch[2].split('T')[0];
       if (fnMatch[3]) author = fnMatch[3];
+      // Field 6 is the originating system; field 5 is the pre-processor (e.g. "SwSTEP 2.0").
       if (fnMatch[6]) originatingSystem = fnMatch[6];
     }
   }
@@ -143,13 +145,6 @@ export function parseStepFile(fileContent: string, fileName: string = 'part.step
   const cylindricalSurfaceCount = (fileContent.match(/CYLINDRICAL_SURFACE/gi) || []).length;
   const circleCount = (fileContent.match(/CIRCLE\s*\(/gi) || []).length;
 
-  // Detect holes: cylindrical surfaces or circle curves
-  const holeCount = Math.max(
-    Math.floor(cylindricalSurfaceCount / 2),
-    Math.floor(circleCount / 2),
-    (fileContent.match(/CYLINDER/gi) || []).length
-  );
-
   // Detect hole sizes from CIRCLE radii in STEP
   const circleRadiusRegex = /CIRCLE\s*\(\s*'[^']*'\s*,\s*#[0-9]+\s*,\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*\)/gi;
   const detectedRadii: number[] = [];
@@ -161,14 +156,27 @@ export function parseStepFile(fileContent: string, fileName: string = 'part.step
     }
   }
 
-  // Group hole details
-  const holeMap = new Map<number, number>();
-  detectedRadii.forEach(d => {
-    holeMap.set(d, (holeMap.get(d) || 0) + 1);
-  });
-  const holeDetails: Array<{ diameterMm: number; count: number }> = Array.from(holeMap.entries())
-    .map(([diameterMm, count]) => ({ diameterMm, count: Math.ceil(count / 2) }))
-    .slice(0, 4);
+  // Group circles by diameter. A cylindrical through-hole contributes ~2 circle
+  // rims (top + bottom face), so halve the raw occurrence count to get part count.
+  const circlesByDia = new Map<number, number>();
+  detectedRadii.forEach(d => circlesByDia.set(d, (circlesByDia.get(d) || 0) + 1));
+
+  const groupedAll = Array.from(circlesByDia.entries())
+    .map(([diameterMm, circles]) => ({ diameterMm, count: Math.max(1, Math.round(circles / 2)) }))
+    .sort((a, b) => b.count - a.count);
+
+  // Separate fastener/pilot holes from large rounded bores & cutouts. Large bores
+  // still need piercing/cutting but are not "holes" in the manufacturing sense.
+  const LARGE_BORE_MM = 26;
+  const fastenerHoles = groupedAll.filter(h => h.diameterMm <= LARGE_BORE_MM);
+  const largeBores = groupedAll.filter(h => h.diameterMm > LARGE_BORE_MM);
+  const largeBoreCount = largeBores.reduce((sum, h) => sum + h.count, 0);
+
+  const holeDetails: Array<{ diameterMm: number; count: number }> = fastenerHoles.slice(0, 4);
+
+  // Detect holes: prefer counted circle rims, fall back to cylindrical-surface topology
+  const holeCount = fastenerHoles.reduce((sum, h) => sum + h.count, 0)
+    || Math.max(Math.floor(cylindricalSurfaceCount / 2), (fileContent.match(/CYLINDER/gi) || []).length);
 
   // Estimate bend count (non-parallel planes minus top/bottom covers)
   let bendCount = 0;
@@ -179,27 +187,32 @@ export function parseStepFile(fileContent: string, fileName: string = 'part.step
   // Simple vs Compound bending
   const isSimpleBending = bendCount <= 4 && heightMm < Math.min(lengthMm, widthMm) * 0.4;
 
-  // Derived Sheet Metal Features
+  // Derived Sheet Metal Features. Every hole and bore adds cut length + a pierce.
   const outerPerimeter = 2 * (lengthMm + widthMm);
-  const innerHolePerimeters = holeDetails.reduce((sum, h) => sum + (Math.PI * h.diameterMm * h.count), 0);
-  const perimeterMm = Math.round(outerPerimeter + (innerHolePerimeters > 0 ? innerHolePerimeters : holeCount * 25));
-  
-  const pierceCount = Math.max(1, holeCount + 1);
+  const innerCutPerimeters = groupedAll.reduce((sum, h) => sum + (Math.PI * h.diameterMm * h.count), 0);
+  const perimeterMm = Math.round(outerPerimeter + (innerCutPerimeters > 0 ? innerCutPerimeters : holeCount * 25));
+
+  // One pierce per hole + one per large bore/cutout + one for the outer contour.
+  const pierceCount = Math.max(1, holeCount + largeBoreCount + 1);
   
   // Weld length estimation if multiple B-Rep solids or structural geometry
   const solidCount = (fileContent.match(/MANIFOLD_SOLID_BREP/gi) || []).length;
   const weldCount = solidCount > 1 ? solidCount * 2 : 0;
   const weldLengthMm = weldCount > 0 ? Math.round(weldCount * Math.min(lengthMm, widthMm) * 0.2) : 0;
 
-  // Material extraction from STEP text
+  // Material extraction. Only scan human-authored text (header + comment blocks),
+  // never the raw geometry — bare alloy digits like "304" collide with coordinate
+  // values and produce false positives across the whole DATA section.
+  const commentBlocks = (fileContent.match(/\/\*[\s\S]*?\*\//g) || []).join('\n');
+  const materialText = headerText + '\n' + commentBlocks;
   let estimatedMaterialName: string | undefined = undefined;
-  if (/STAINLESS|304|316|INOX/i.test(fileContent)) {
+  if (/STAINLESS|INOX|\b304\b|\b316\b/i.test(materialText)) {
     estimatedMaterialName = 'Stainless Steel 304';
-  } else if (/ALUMINUM|6061|5052|ALU/i.test(fileContent)) {
+  } else if (/ALUMINI?UM|\b6061\b|\b5052\b/i.test(materialText)) {
     estimatedMaterialName = 'Aluminum 6061-T6';
-  } else if (/MILD STEEL|CR1018|STRUCTURAL STEEL|S235|A36/i.test(fileContent)) {
+  } else if (/MILD STEEL|CR1018|STRUCTURAL STEEL|\bS235\b|\bS275\b|\bA36\b/i.test(materialText)) {
     estimatedMaterialName = 'Mild Steel';
-  } else if (/GALVANIZED|GI/i.test(fileContent)) {
+  } else if (/GALVANI[SZ]ED/i.test(materialText)) {
     estimatedMaterialName = 'Galvanized Sheet';
   }
 

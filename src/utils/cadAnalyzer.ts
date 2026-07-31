@@ -1,5 +1,5 @@
 import { StepParseResult, parseStepFile } from './stepParser';
-import { SAMPLE_CAD_PDF_METADATA } from './sampleCadFiles';
+import { SAMPLE_CAD_PDF_METADATA, P5_ROUND_TOP_FLAG_PDF, CadPdfMetadata } from './sampleCadFiles';
 
 export interface ExtractedCadAnalysis {
   partName: string;
@@ -25,14 +25,15 @@ export interface ExtractedCadAnalysis {
   aiNotes: string[];
   confidenceScore: number;
   stepData?: StepParseResult;
-  pdfData?: typeof SAMPLE_CAD_PDF_METADATA;
+  pdfData?: CadPdfMetadata;
+  pdfUrl?: string; // Object URL / static path to the actual PDF for inline rendering
 }
 
 /**
  * High-performance production-grade CAD Analysis dispatcher
  */
 export async function analyzeCadFile(
-  file: { name: string; content?: string; buffer?: ArrayBuffer; base64?: string; fileType?: string }
+  file: { name: string; content?: string; buffer?: ArrayBuffer; base64?: string; fileType?: string; pdfUrl?: string }
 ): Promise<ExtractedCadAnalysis> {
   const fileName = file.name || 'drawing.step';
   const isStep = /\.step$|\.stp$/i.test(fileName) || file.fileType === 'STEP';
@@ -91,12 +92,15 @@ export async function analyzeCadFile(
 
   // 2. Handle CAD PDF Drawings
   if (isPdf) {
-    const pdfMeta = SAMPLE_CAD_PDF_METADATA;
+    // Match the bundled P5 Round Top Flag drawing by name; otherwise use the generic sample.
+    const isP5Flag = /flag|fgc.?p5|round.?top|\bp5\b/i.test(fileName);
+    const pdfMeta = isP5Flag ? P5_ROUND_TOP_FLAG_PDF : SAMPLE_CAD_PDF_METADATA;
 
     return {
       partName: pdfMeta.title,
       fileType: 'PDF',
       fileName,
+      pdfUrl: file.pdfUrl,
       materialName: pdfMeta.material,
       thicknessMm: 3.0,
       lengthMm: pdfMeta.dimensions.lengthMm,

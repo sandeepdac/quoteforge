@@ -94,6 +94,29 @@ export const mockParts: Part[] = [
     }
   },
   {
+    id: 'p6',
+    name: 'P5 Round Top Flag',
+    materialId: 'm1',
+    thicknessMm: 3.0,
+    thumbnail: 'https://images.unsplash.com/photo-1565043666747-69f6646db940?auto=format&fit=crop&q=80&w=800',
+    quoteCount: 9,
+    lastQuotedDate: '2026-07-28',
+    features: {
+      perimeterMm: 1302,
+      pierceCount: 21,
+      bendCount: 8,
+      isSimpleBending: false,
+      weldLengthMm: 0,
+      weldCount: 0,
+      holeCount: 14,
+      surfaceAreaM2: 0.05,
+      weightKg: 0.27,
+      lengthMm: 56.3,
+      widthMm: 40.0,
+      heightMm: 34.3
+    }
+  },
+  {
     id: 'p5',
     name: 'Thermal Heat Sink Plate',
     materialId: 'm6',

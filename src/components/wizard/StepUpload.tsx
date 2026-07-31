@@ -14,7 +14,6 @@ import {
   Cpu
 } from 'lucide-react';
 import { analyzeCadFile, ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
-import { SAMPLE_STEP_BRACKET, SAMPLE_STEP_ENCLOSURE } from '../../utils/sampleCadFiles';
 
 interface StepUploadProps {
   onContinue: (analysis?: ExtractedCadAnalysis) => void;
@@ -32,10 +31,10 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
   const [manualWidth, setManualWidth] = useState('');
   const [manualLength, setManualLength] = useState('');
 
-  const processFile = async (fileName: string, content?: string, buffer?: ArrayBuffer) => {
+  const processFile = async (fileName: string, content?: string, buffer?: ArrayBuffer, pdfUrl?: string) => {
     setAnalyzing(true);
     try {
-      const analysis = await analyzeCadFile({ name: fileName, content, buffer });
+      const analysis = await analyzeCadFile({ name: fileName, content, buffer, pdfUrl });
       setAnalysisResult(analysis);
       onDataChange({ cadAnalysis: analysis });
     } catch (err) {
@@ -54,6 +53,10 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
         if (/\.step$|\.stp$/i.test(file.name)) {
           const text = await file.text();
           await processFile(file.name, text);
+        } else if (/\.pdf$/i.test(file.name)) {
+          // Keep the real uploaded PDF around so the viewer can render it inline.
+          const url = URL.createObjectURL(file);
+          await processFile(file.name, undefined, undefined, url);
         } else {
           await processFile(file.name);
         }
@@ -71,13 +74,21 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
   } as any);
 
   const handleLoadSampleStep = async () => {
-    setUploadedFile({ name: 'Precision_Bracing_Bracket.step', size: 14200, type: 'model/step' });
-    await processFile('Precision_Bracing_Bracket.step', SAMPLE_STEP_BRACKET);
+    setAnalyzing(true);
+    try {
+      setUploadedFile({ name: 'P5-Round-Top-Flag.STEP', size: 95634, type: 'model/step' });
+      const res = await fetch('/samples/P5-Round-Top-Flag.STEP');
+      const text = await res.text();
+      await processFile('P5-Round-Top-Flag.STEP', text);
+    } catch (err) {
+      console.error('Failed to load sample STEP file:', err);
+      setAnalyzing(false);
+    }
   };
 
   const handleLoadSamplePdf = async () => {
-    setUploadedFile({ name: 'Control_Chassis_Drawing.pdf', size: 245000, type: 'application/pdf' });
-    await processFile('Control_Chassis_Drawing.pdf');
+    setUploadedFile({ name: 'P5-Round-Top-Flag.pdf', size: 252428, type: 'application/pdf' });
+    await processFile('P5-Round-Top-Flag.pdf', undefined, undefined, '/samples/P5-Round-Top-Flag.pdf');
   };
 
   const handleProceed = () => {
@@ -191,8 +202,8 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
               <Box size={22} />
             </div>
             <div className="overflow-hidden">
-              <p className="text-xs font-semibold text-foreground truncate">Precision Bracket.step</p>
-              <p className="text-[10px] text-muted-foreground">3D STEP ISO-10303-21 B-Rep Model</p>
+              <p className="text-xs font-semibold text-foreground truncate">P5 Round Top Flag.STEP</p>
+              <p className="text-[10px] text-muted-foreground">3D STEP B-Rep · SolidWorks 2023</p>
             </div>
           </button>
 
@@ -205,8 +216,8 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
               <FileText size={22} />
             </div>
             <div className="overflow-hidden">
-              <p className="text-xs font-semibold text-foreground truncate">Control Chassis Blueprint.pdf</p>
-              <p className="text-[10px] text-muted-foreground">2D CAD PDF Drawing with Title Block</p>
+              <p className="text-xs font-semibold text-foreground truncate">P5 Round Top Flag.pdf</p>
+              <p className="text-[10px] text-muted-foreground">2D CAD Drawing · FGC-P5-08 ISS 4</p>
             </div>
           </button>
         </div>

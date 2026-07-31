@@ -168,7 +168,7 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
           {cadAnalysis?.stepData ? (
             <CadViewer3D cadData={cadAnalysis.stepData} selectedMaterialName={selectedMatObj.name} />
           ) : (
-            <CadPdfViewer pdfFileName={cadAnalysis?.fileName || 'Drawing.pdf'} pdfData={cadAnalysis?.pdfData} />
+            <CadPdfViewer pdfFileName={cadAnalysis?.fileName || 'Drawing.pdf'} pdfData={cadAnalysis?.pdfData} pdfUrl={cadAnalysis?.pdfUrl} />
           )}
 
           {/* AI Extraction Audit Notes */}
