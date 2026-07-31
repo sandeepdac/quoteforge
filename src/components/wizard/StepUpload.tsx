@@ -51,8 +51,10 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
         setUploadedFile({ name: file.name, size: file.size, type: file.type });
         
         if (/\.step$|\.stp$/i.test(file.name)) {
-          const text = await file.text();
-          await processFile(file.name, text);
+          // Pass raw bytes: the parser decodes text from them, and the 3D viewer
+          // tessellates the real B-Rep from the same buffer.
+          const buffer = await file.arrayBuffer();
+          await processFile(file.name, undefined, buffer);
         } else if (/\.pdf$/i.test(file.name)) {
           // Keep the real uploaded PDF around so the viewer can render it inline.
           const url = URL.createObjectURL(file);
@@ -78,8 +80,8 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
     try {
       setUploadedFile({ name: 'P5-Round-Top-Flag.STEP', size: 95634, type: 'model/step' });
       const res = await fetch('/samples/P5-Round-Top-Flag.STEP');
-      const text = await res.text();
-      await processFile('P5-Round-Top-Flag.STEP', text);
+      const buffer = await res.arrayBuffer();
+      await processFile('P5-Round-Top-Flag.STEP', undefined, buffer);
     } catch (err) {
       console.error('Failed to load sample STEP file:', err);
       setAnalyzing(false);

@@ -166,7 +166,7 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
           </div>
 
           {cadAnalysis?.stepData ? (
-            <CadViewer3D cadData={cadAnalysis.stepData} selectedMaterialName={selectedMatObj.name} />
+            <CadViewer3D cadData={cadAnalysis.stepData} selectedMaterialName={selectedMatObj.name} stepBuffer={cadAnalysis.stepBuffer} />
           ) : (
             <CadPdfViewer pdfFileName={cadAnalysis?.fileName || 'Drawing.pdf'} pdfData={cadAnalysis?.pdfData} pdfUrl={cadAnalysis?.pdfUrl} />
           )}

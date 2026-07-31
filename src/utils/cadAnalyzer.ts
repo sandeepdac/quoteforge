@@ -25,6 +25,7 @@ export interface ExtractedCadAnalysis {
   aiNotes: string[];
   confidenceScore: number;
   stepData?: StepParseResult;
+  stepBuffer?: ArrayBuffer; // Raw STEP bytes, used to tessellate the real B-Rep for 3D
   pdfData?: CadPdfMetadata;
   pdfUrl?: string; // Object URL / static path to the actual PDF for inline rendering
 }
@@ -86,7 +87,8 @@ export async function analyzeCadFile(
         `Volume: ${stepResult.volumeCm3} cm³, calculated weight: ${weightKg} kg based on ${matchedMaterialName} density.`
       ],
       confidenceScore: 96,
-      stepData: stepResult
+      stepData: stepResult,
+      stepBuffer: file.buffer
     };
   }
 

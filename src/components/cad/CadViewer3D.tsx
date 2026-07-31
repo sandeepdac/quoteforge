@@ -14,14 +14,18 @@ import {
   HelpCircle
 } from 'lucide-react';
 import { StepParseResult } from '../../utils/stepParser';
+import { tessellateStep } from '../../utils/occtLoader';
 
 interface CadViewer3DProps {
   cadData: StepParseResult;
   selectedMaterialName?: string;
+  stepBuffer?: ArrayBuffer;
   className?: string;
 }
 
-export default function CadViewer3D({ cadData, selectedMaterialName, className = '' }: CadViewer3DProps) {
+type MeshStatus = 'idle' | 'loading' | 'ready' | 'fallback';
+
+export default function CadViewer3D({ cadData, selectedMaterialName, stepBuffer, className = '' }: CadViewer3DProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [isWireframe, setIsWireframe] = useState(false);
   const [showBoundingBox, setShowBoundingBox] = useState(true);
@@ -31,6 +35,52 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
   const [isAutoRotate, setIsAutoRotate] = useState(true);
   const [measurementMode, setMeasurementMode] = useState(false);
   const [measuredDistance, setMeasuredDistance] = useState<number | null>(null);
+
+  // Real tessellated B-Rep geometry (from OpenCascade), if a STEP buffer is provided.
+  const [realGeometry, setRealGeometry] = useState<THREE.BufferGeometry | null>(null);
+  const [meshStatus, setMeshStatus] = useState<MeshStatus>('idle');
+
+  // Tessellate the actual STEP solid once per file; fall back to the schematic on failure.
+  useEffect(() => {
+    if (!stepBuffer) {
+      setRealGeometry(null);
+      setMeshStatus('idle');
+      return;
+    }
+
+    let cancelled = false;
+    setMeshStatus('loading');
+
+    tessellateStep(stepBuffer).then((mesh) => {
+      if (cancelled) return;
+      if (!mesh) {
+        setRealGeometry(null);
+        setMeshStatus('fallback');
+        return;
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(mesh.positions, 3));
+      if (mesh.hasNormals) {
+        geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
+      }
+      geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+      if (!mesh.hasNormals) geometry.computeVertexNormals();
+
+      // Center the model on the origin so the existing camera framing works.
+      geometry.computeBoundingBox();
+      const center = new THREE.Vector3();
+      geometry.boundingBox!.getCenter(center);
+      geometry.translate(-center.x, -center.y, -center.z);
+
+      setRealGeometry(geometry);
+      setMeshStatus('ready');
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stepBuffer]);
 
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -95,9 +145,6 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
     const { lengthMm, widthMm, heightMm } = cadData;
     const thickness = heightMm < 12 ? Math.max(1.5, heightMm) : 3.0;
 
-    // Main CAD Solid Geometry (Sheet metal rounded box / flange model)
-    const boxGeo = new THREE.BoxGeometry(lengthMm, thickness, widthMm, 8, 2, 8);
-
     // Material Styling
     let cadMaterial: THREE.Material;
 
@@ -107,62 +154,75 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
         metalness: 0.3,
         roughness: 0.2,
         wireframe: isWireframe,
-        transparent: true,
-        opacity: 0.9
+        side: THREE.DoubleSide
       });
     } else if (theme === 'metal') {
       cadMaterial = new THREE.MeshStandardMaterial({
         color: 0xcbd5e1,
         metalness: 0.85,
         roughness: 0.25,
-        wireframe: isWireframe
+        wireframe: isWireframe,
+        side: THREE.DoubleSide
       });
     } else {
       cadMaterial = new THREE.MeshStandardMaterial({
         color: 0x3b82f6,
         metalness: 0.5,
         roughness: 0.3,
-        wireframe: isWireframe
+        wireframe: isWireframe,
+        side: THREE.DoubleSide
       });
     }
 
-    const mainMesh = new THREE.Mesh(boxGeo, cadMaterial);
-    objectGroup.add(mainMesh);
-
-    // Add Edges Line for crisp CAD outline look
-    const edgesGeo = new THREE.EdgesGeometry(boxGeo);
     const edgeColor = theme === 'blueprint' ? 0x38bdf8 : 0x0284c7;
     const lineMat = new THREE.LineBasicMaterial({ color: edgeColor, linewidth: 2 });
-    const lineSegments = new THREE.LineSegments(edgesGeo, lineMat);
-    objectGroup.add(lineSegments);
 
-    // Add Bent Flanges if bend count > 0
-    if (cadData.bendCount > 0) {
-      const flangeHeight = Math.min(60, cadData.heightMm > 15 ? cadData.heightMm : 40);
-      
-      // Top Flange
-      const flangeGeo1 = new THREE.BoxGeometry(lengthMm, flangeHeight, thickness);
-      const flangeMesh1 = new THREE.Mesh(flangeGeo1, cadMaterial);
-      flangeMesh1.position.set(0, flangeHeight / 2 - thickness / 2, widthMm / 2 - thickness / 2);
-      objectGroup.add(flangeMesh1);
+    if (realGeometry) {
+      // ---- Exact tessellated B-Rep from the STEP solid ----
+      const mainMesh = new THREE.Mesh(realGeometry, cadMaterial);
+      objectGroup.add(mainMesh);
 
-      const edgeFlange1 = new THREE.LineSegments(new THREE.EdgesGeometry(flangeGeo1), lineMat);
-      edgeFlange1.position.copy(flangeMesh1.position);
-      objectGroup.add(edgeFlange1);
+      // Real CAD edges derived from the actual faces (feature-angle filtered).
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(realGeometry, 20), lineMat);
+      objectGroup.add(edges);
+    } else {
+      // ---- Schematic fallback: representative sheet-metal box + flanges + hole markers ----
+      const boxGeo = new THREE.BoxGeometry(lengthMm, thickness, widthMm, 8, 2, 8);
+      const mainMesh = new THREE.Mesh(boxGeo, cadMaterial);
+      objectGroup.add(mainMesh);
 
-      // Bottom Flange
-      const flangeGeo2 = new THREE.BoxGeometry(lengthMm, flangeHeight, thickness);
-      const flangeMesh2 = new THREE.Mesh(flangeGeo2, cadMaterial);
-      flangeMesh2.position.set(0, flangeHeight / 2 - thickness / 2, -widthMm / 2 + thickness / 2);
-      objectGroup.add(flangeMesh2);
+      const edgesGeo = new THREE.EdgesGeometry(boxGeo);
+      const lineSegments = new THREE.LineSegments(edgesGeo, lineMat);
+      objectGroup.add(lineSegments);
 
-      const edgeFlange2 = new THREE.LineSegments(new THREE.EdgesGeometry(flangeGeo2), lineMat);
-      edgeFlange2.position.copy(flangeMesh2.position);
-      objectGroup.add(edgeFlange2);
+      // Add Bent Flanges if bend count > 0
+      if (cadData.bendCount > 0) {
+        const flangeHeight = Math.min(60, cadData.heightMm > 15 ? cadData.heightMm : 40);
+
+        // Top Flange
+        const flangeGeo1 = new THREE.BoxGeometry(lengthMm, flangeHeight, thickness);
+        const flangeMesh1 = new THREE.Mesh(flangeGeo1, cadMaterial);
+        flangeMesh1.position.set(0, flangeHeight / 2 - thickness / 2, widthMm / 2 - thickness / 2);
+        objectGroup.add(flangeMesh1);
+
+        const edgeFlange1 = new THREE.LineSegments(new THREE.EdgesGeometry(flangeGeo1), lineMat);
+        edgeFlange1.position.copy(flangeMesh1.position);
+        objectGroup.add(edgeFlange1);
+
+        // Bottom Flange
+        const flangeGeo2 = new THREE.BoxGeometry(lengthMm, flangeHeight, thickness);
+        const flangeMesh2 = new THREE.Mesh(flangeGeo2, cadMaterial);
+        flangeMesh2.position.set(0, flangeHeight / 2 - thickness / 2, -widthMm / 2 + thickness / 2);
+        objectGroup.add(flangeMesh2);
+
+        const edgeFlange2 = new THREE.LineSegments(new THREE.EdgesGeometry(flangeGeo2), lineMat);
+        edgeFlange2.position.copy(flangeMesh2.position);
+        objectGroup.add(edgeFlange2);
+      }
     }
 
-    // Add Cylindrical Hole Markers
-    if (showHoles) {
+    // Add Cylindrical Hole Markers (schematic only — real geometry already has holes)
+    if (showHoles && !realGeometry) {
       cadData.holeDetails.forEach((hole, idx) => {
         const radius = Math.max(2, hole.diameterMm / 2);
         const cylGeo = new THREE.CylinderGeometry(radius, radius, thickness * 1.8, 16);
@@ -288,7 +348,7 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
         domElem.removeChild(rendererRef.current.domElement);
       }
     };
-  }, [cadData, theme, isWireframe, showBoundingBox, showHoles, isAutoRotate]);
+  }, [cadData, theme, isWireframe, showBoundingBox, showHoles, isAutoRotate, realGeometry]);
 
   const handleResetView = () => {
     if (objectGroupRef.current) {
@@ -308,6 +368,21 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
           <span className="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-[10px] font-mono">
             {cadData.fileName}
           </span>
+          {meshStatus === 'ready' && (
+            <span className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
+              <CheckCircle size={11} /> Exact B-Rep
+            </span>
+          )}
+          {meshStatus === 'loading' && (
+            <span className="bg-amber-500/15 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider animate-pulse">
+              Tessellating…
+            </span>
+          )}
+          {meshStatus === 'fallback' && (
+            <span className="bg-slate-700 text-slate-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider" title="Could not tessellate the STEP solid; showing a representative schematic.">
+              Schematic
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
