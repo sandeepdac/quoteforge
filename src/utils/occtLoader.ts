@@ -101,6 +101,18 @@ function loadOcct() {
 
 export type CadSolidFormat = 'step' | 'iges' | 'brep';
 
+/**
+ * Meshing parameters. We use an ABSOLUTE chordal deflection (mm) rather than OCCT's
+ * default bounding-box ratio: the ratio scales with part size, so on a large part
+ * (e.g. 860 mm) it becomes ~0.9 mm and small holes/fillets collapse or vanish. A fixed
+ * 0.1 mm keeps holes and fine features faithful on parts of any size.
+ */
+const TESSELLATION_PARAMS = {
+  linearDeflectionType: 'absolute_value',
+  linearDeflection: 0.1, // mm
+  angularDeflection: 0.5, // radians
+};
+
 /** Maps a file extension to an OCCT solid format, or null if it isn't a 3D solid. */
 export function solidFormatFor(fileName: string): CadSolidFormat | null {
   if (/\.(step|stp)$/i.test(fileName)) return 'step';
@@ -123,10 +135,10 @@ export async function tessellateCad(
     const bytes = new Uint8Array(buffer);
     const result =
       format === 'iges'
-        ? occt.ReadIgesFile(bytes, null)
+        ? occt.ReadIgesFile(bytes, TESSELLATION_PARAMS)
         : format === 'brep'
-        ? occt.ReadBrepFile(bytes, null)
-        : occt.ReadStepFile(bytes, null);
+        ? occt.ReadBrepFile(bytes, TESSELLATION_PARAMS)
+        : occt.ReadStepFile(bytes, TESSELLATION_PARAMS);
     if (!result?.success || !result.meshes?.length) return null;
 
     // Pre-count so we can allocate typed arrays once and merge all sub-meshes.
