@@ -166,17 +166,29 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
           </div>
 
           {cadAnalysis?.stepData ? (
-            <CadViewer3D cadData={cadAnalysis.stepData} selectedMaterialName={selectedMatObj.name} stepBuffer={cadAnalysis.stepBuffer} />
+            <CadViewer3D cadData={cadAnalysis.stepData} selectedMaterialName={selectedMatObj.name} stepMesh={cadAnalysis.stepMesh} />
           ) : (
             <CadPdfViewer pdfFileName={cadAnalysis?.fileName || 'Drawing.pdf'} pdfData={cadAnalysis?.pdfData} pdfUrl={cadAnalysis?.pdfUrl} />
           )}
 
-          {/* AI Extraction Audit Notes */}
-          <div className="bg-card border border-border p-4 rounded-xl space-y-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-              <CheckSquare size={14} className="text-primary" />
-              CAD Feature Detection Audit
-            </span>
+          {/* How the dimensions were measured — plain-language explanation */}
+          <div className="bg-card border border-border p-4 rounded-xl space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                <CheckSquare size={14} className="text-primary" />
+                How We Read This Part
+              </span>
+              {cadAnalysis?.measurementSource === 'solid' ? (
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                  <Box size={11} /> Measured from solid
+                </span>
+              ) : (
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                  Estimated
+                </span>
+              )}
+            </div>
+
             <ul className="space-y-1.5 text-xs text-muted-foreground">
               {(cadAnalysis?.aiNotes || [
                 `Detected bounding box ${features.lengthMm} x ${features.widthMm} x ${features.heightMm} mm`,
@@ -189,6 +201,14 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
                 </li>
               ))}
             </ul>
+
+            <p className="text-[11px] text-muted-foreground leading-relaxed border-t border-border pt-2.5">
+              These measurements drive the quote: <strong className="text-foreground">weight</strong> → material cost,
+              <strong className="text-foreground"> perimeter &amp; pierces</strong> → laser time,
+              <strong className="text-foreground"> bends</strong> → press-brake time, and
+              <strong className="text-foreground"> surface area</strong> → finishing. Adjust any value on the right
+              and the price updates in the next step.
+            </p>
           </div>
         </div>
 

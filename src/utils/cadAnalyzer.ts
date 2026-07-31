@@ -1,5 +1,6 @@
 import { StepParseResult, parseStepFile } from './stepParser';
 import { SAMPLE_CAD_PDF_METADATA, P5_ROUND_TOP_FLAG_PDF, CadPdfMetadata } from './sampleCadFiles';
+import { tessellateStep, measureMesh, TessellatedMesh } from './occtLoader';
 
 export interface ExtractedCadAnalysis {
   partName: string;
@@ -25,7 +26,9 @@ export interface ExtractedCadAnalysis {
   aiNotes: string[];
   confidenceScore: number;
   stepData?: StepParseResult;
-  stepBuffer?: ArrayBuffer; // Raw STEP bytes, used to tessellate the real B-Rep for 3D
+  stepMesh?: TessellatedMesh; // Tessellated B-Rep for the 3D viewer (reused, not re-computed)
+  /** Whether dimensions/volume/weight were measured from the solid mesh or estimated. */
+  measurementSource?: 'solid' | 'estimated';
   pdfData?: CadPdfMetadata;
   pdfUrl?: string; // Object URL / static path to the actual PDF for inline rendering
 }
@@ -57,18 +60,59 @@ export async function analyzeCadFile(
     if (/STAINLESS|304|316/i.test(matchedMaterialName)) densityGcm3 = 8.0;
     if (/ALUMINUM|6061|5052/i.test(matchedMaterialName)) densityGcm3 = 2.7;
 
-    const weightKg = Math.round((stepResult.volumeCm3 * densityGcm3 / 1000) * 100) / 100 || 1.85;
-    const surfaceAreaM2 = Math.round((stepResult.surfaceAreaCm2 / 10000) * 100) / 100 || 0.18;
+    // Start from the text-parser estimates, then upgrade to exact values measured
+    // from the tessellated solid when we can read the raw STEP bytes.
+    let lengthMm = stepResult.lengthMm;
+    let widthMm = stepResult.widthMm;
+    let heightMm = stepResult.heightMm;
+    let volumeCm3 = stepResult.volumeCm3;
+    let surfaceAreaCm2 = stepResult.surfaceAreaCm2;
+    let stepMesh: TessellatedMesh | undefined;
+    let measurementSource: 'solid' | 'estimated' = 'estimated';
+
+    if (file.buffer) {
+      const mesh = await tessellateStep(file.buffer);
+      if (mesh) {
+        const m = measureMesh(mesh);
+        lengthMm = m.lengthMm;
+        widthMm = m.widthMm;
+        heightMm = m.heightMm;
+        volumeCm3 = m.volumeCm3;
+        surfaceAreaCm2 = m.surfaceAreaCm2;
+        stepMesh = mesh;
+        measurementSource = 'solid';
+        // Reflect measured geometry back so the 3D viewer overlays match.
+        stepResult.lengthMm = lengthMm;
+        stepResult.widthMm = widthMm;
+        stepResult.heightMm = heightMm;
+        stepResult.volumeCm3 = volumeCm3;
+        stepResult.surfaceAreaCm2 = surfaceAreaCm2;
+      }
+    }
+
+    const weightKg = Math.round((volumeCm3 * densityGcm3 / 1000) * 100) / 100 || 1.85;
+    const surfaceAreaM2 = Math.round((surfaceAreaCm2 / 10000) * 1000) / 1000 || 0.18;
+
+    const measuredNotes = [
+      `Measured directly from the solid model — bounding box ${lengthMm} × ${widthMm} × ${heightMm} mm.`,
+      `Enclosed volume ${volumeCm3} cm³ → weight ${weightKg} kg in ${matchedMaterialName} (density ${densityGcm3} g/cm³).`,
+      `Wetted surface area ${surfaceAreaM2} m² sets the finishing cost; ${stepResult.holeCount} holes and ${stepResult.bendCount} bends detected from B-Rep topology.`
+    ];
+    const estimatedNotes = [
+      `Estimated bounding box from B-Rep control points: ${lengthMm} × ${widthMm} × ${heightMm} mm.`,
+      `Approximate volume ${volumeCm3} cm³ → weight ${weightKg} kg based on ${matchedMaterialName} density.`,
+      `Identified ${stepResult.holeCount} cylindrical holes and ${stepResult.bendCount} sheet-metal bend faces.`
+    ];
 
     return {
       partName: fileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' '),
       fileType: 'STEP',
       fileName,
       materialName: matchedMaterialName,
-      thicknessMm: stepResult.heightMm < 12 ? Math.max(1.5, stepResult.heightMm) : 3.0,
-      lengthMm: stepResult.lengthMm,
-      widthMm: stepResult.widthMm,
-      heightMm: stepResult.heightMm,
+      thicknessMm: heightMm < 12 ? Math.max(1.5, heightMm) : 3.0,
+      lengthMm,
+      widthMm,
+      heightMm,
       perimeterMm: stepResult.perimeterMm,
       pierceCount: stepResult.pierceCount,
       bendCount: stepResult.bendCount,
@@ -81,14 +125,11 @@ export async function analyzeCadFile(
       surfaceAreaM2,
       finishCallout: 'Deburr & De-grease',
       tolerances: 'Standard ISO 2768-m (±0.2mm)',
-      aiNotes: [
-        `Parsed 3D B-Rep Bounding Box: ${stepResult.lengthMm} x ${stepResult.widthMm} x ${stepResult.heightMm} mm.`,
-        `Identified ${stepResult.holeCount} cylindrical holes and ${stepResult.bendCount} sheet metal bend faces.`,
-        `Volume: ${stepResult.volumeCm3} cm³, calculated weight: ${weightKg} kg based on ${matchedMaterialName} density.`
-      ],
-      confidenceScore: 96,
+      aiNotes: measurementSource === 'solid' ? measuredNotes : estimatedNotes,
+      confidenceScore: measurementSource === 'solid' ? 98 : 90,
       stepData: stepResult,
-      stepBuffer: file.buffer
+      stepMesh,
+      measurementSource
     };
   }
 

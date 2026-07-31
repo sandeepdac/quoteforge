@@ -122,8 +122,9 @@ export default function StepReview({ data, onSend, onSaveDraft, onBack }: StepRe
 
           {/* Cost breakdown table */}
           <div className="bg-card border border-border rounded-lg overflow-hidden">
-            <div className="p-4 bg-muted/30 border-b border-border">
+            <div className="p-4 bg-muted/30 border-b border-border space-y-1">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Detailed Cost Breakdown</h3>
+              <p className="text-[11px] text-muted-foreground">Each line is priced from a dimension measured from your CAD file.</p>
             </div>
             <table className="w-full text-sm">
               <thead>

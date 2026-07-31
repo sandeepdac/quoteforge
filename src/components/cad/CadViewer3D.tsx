@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { 
   RotateCcw, 
@@ -14,18 +14,18 @@ import {
   HelpCircle
 } from 'lucide-react';
 import { StepParseResult } from '../../utils/stepParser';
-import { tessellateStep } from '../../utils/occtLoader';
+import { TessellatedMesh } from '../../utils/occtLoader';
 
 interface CadViewer3DProps {
   cadData: StepParseResult;
   selectedMaterialName?: string;
-  stepBuffer?: ArrayBuffer;
+  stepMesh?: TessellatedMesh;
   className?: string;
 }
 
-type MeshStatus = 'idle' | 'loading' | 'ready' | 'fallback';
+type MeshStatus = 'idle' | 'ready' | 'fallback';
 
-export default function CadViewer3D({ cadData, selectedMaterialName, stepBuffer, className = '' }: CadViewer3DProps) {
+export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, className = '' }: CadViewer3DProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [isWireframe, setIsWireframe] = useState(false);
   const [showBoundingBox, setShowBoundingBox] = useState(true);
@@ -36,51 +36,27 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepBuffer,
   const [measurementMode, setMeasurementMode] = useState(false);
   const [measuredDistance, setMeasuredDistance] = useState<number | null>(null);
 
-  // Real tessellated B-Rep geometry (from OpenCascade), if a STEP buffer is provided.
-  const [realGeometry, setRealGeometry] = useState<THREE.BufferGeometry | null>(null);
-  const [meshStatus, setMeshStatus] = useState<MeshStatus>('idle');
-
-  // Tessellate the actual STEP solid once per file; fall back to the schematic on failure.
-  useEffect(() => {
-    if (!stepBuffer) {
-      setRealGeometry(null);
-      setMeshStatus('idle');
-      return;
+  // Build a three.js geometry from the pre-tessellated B-Rep mesh (produced during
+  // extraction). No re-computation here — the viewer just consumes the mesh.
+  const realGeometry = useMemo(() => {
+    if (!stepMesh) return null;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(stepMesh.positions, 3));
+    if (stepMesh.hasNormals) {
+      geometry.setAttribute('normal', new THREE.BufferAttribute(stepMesh.normals, 3));
     }
+    geometry.setIndex(new THREE.BufferAttribute(stepMesh.indices, 1));
+    if (!stepMesh.hasNormals) geometry.computeVertexNormals();
 
-    let cancelled = false;
-    setMeshStatus('loading');
+    // Center the model on the origin so the existing camera framing works.
+    geometry.computeBoundingBox();
+    const center = new THREE.Vector3();
+    geometry.boundingBox!.getCenter(center);
+    geometry.translate(-center.x, -center.y, -center.z);
+    return geometry;
+  }, [stepMesh]);
 
-    tessellateStep(stepBuffer).then((mesh) => {
-      if (cancelled) return;
-      if (!mesh) {
-        setRealGeometry(null);
-        setMeshStatus('fallback');
-        return;
-      }
-
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.BufferAttribute(mesh.positions, 3));
-      if (mesh.hasNormals) {
-        geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
-      }
-      geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
-      if (!mesh.hasNormals) geometry.computeVertexNormals();
-
-      // Center the model on the origin so the existing camera framing works.
-      geometry.computeBoundingBox();
-      const center = new THREE.Vector3();
-      geometry.boundingBox!.getCenter(center);
-      geometry.translate(-center.x, -center.y, -center.z);
-
-      setRealGeometry(geometry);
-      setMeshStatus('ready');
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [stepBuffer]);
+  const meshStatus: MeshStatus = realGeometry ? 'ready' : 'fallback';
 
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -371,11 +347,6 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepBuffer,
           {meshStatus === 'ready' && (
             <span className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
               <CheckCircle size={11} /> Exact B-Rep
-            </span>
-          )}
-          {meshStatus === 'loading' && (
-            <span className="bg-amber-500/15 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider animate-pulse">
-              Tessellating…
             </span>
           )}
           {meshStatus === 'fallback' && (

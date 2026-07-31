@@ -17,6 +17,75 @@ export interface TessellatedMesh {
   meshCount: number;
 }
 
+export interface MeshMeasurements {
+  /** Bounding-box extents sorted descending, in mm. */
+  lengthMm: number;
+  widthMm: number;
+  heightMm: number;
+  /** Raw axis-aligned bounding box extents (unsorted), in mm. */
+  boundingBoxMm: { x: number; y: number; z: number };
+  /** Enclosed solid volume, in cm³ (exact for a closed manifold mesh). */
+  volumeCm3: number;
+  /** Total wetted surface area, in cm². */
+  surfaceAreaCm2: number;
+}
+
+const round = (value: number, decimals: number) => {
+  const f = 10 ** decimals;
+  return Math.round(value * f) / f;
+};
+
+/**
+ * Computes exact bounding box, enclosed volume and surface area directly from the
+ * tessellated triangles — the "measured from the solid" numbers that then drive the
+ * weight and finishing cost. Volume uses the signed-tetrahedron sum (origin- and
+ * winding-independent in magnitude for a closed surface); area sums triangle areas.
+ */
+export function measureMesh(mesh: TessellatedMesh): MeshMeasurements {
+  const p = mesh.positions;
+  const idx = mesh.indices;
+
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < p.length; i += 3) {
+    const x = p[i], y = p[i + 1], z = p[i + 2];
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+
+  let sixVolume = 0;
+  let twiceArea = 0;
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+    const ax = p[a], ay = p[a + 1], az = p[a + 2];
+    const bx = p[b], by = p[b + 1], bz = p[b + 2];
+    const cx = p[c], cy = p[c + 1], cz = p[c + 2];
+
+    // 6 * signed volume of the tetrahedron (origin, a, b, c)
+    sixVolume += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+
+    // 2 * triangle area = |(b - a) × (c - a)|
+    const ux = bx - ax, uy = by - ay, uz = bz - az;
+    const vx = cx - ax, vy = cy - ay, vz = cz - az;
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    twiceArea += Math.hypot(nx, ny, nz);
+  }
+
+  const volumeMm3 = Math.abs(sixVolume) / 6;
+  const areaMm2 = twiceArea / 2;
+  const dims = [maxX - minX, maxY - minY, maxZ - minZ].sort((x, y) => y - x);
+
+  return {
+    lengthMm: round(dims[0], 1),
+    widthMm: round(dims[1], 1),
+    heightMm: round(dims[2], 1),
+    boundingBoxMm: { x: maxX - minX, y: maxY - minY, z: maxZ - minZ },
+    volumeCm3: round(volumeMm3 / 1000, 2),
+    surfaceAreaCm2: round(areaMm2 / 100, 1),
+  };
+}
+
 let occtPromise: Promise<import('occt-import-js').OcctModule> | null = null;
 
 function loadOcct() {
