@@ -9,12 +9,15 @@
 // Vite emits the WASM as a hashed asset and hands back its URL (a tiny string).
 import wasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 
+import { detectHolesFromOcctMeshes, DetectedHoles } from './holeDetector';
+
 export interface TessellatedMesh {
   positions: Float32Array;
   normals: Float32Array;
   indices: Uint32Array;
   hasNormals: boolean;
   meshCount: number;
+  holes?: DetectedHoles; // holes detected geometrically from the B-Rep faces
 }
 
 export interface MeshMeasurements {
@@ -202,7 +205,15 @@ export async function tessellateCad(
       idxOffset += idx.length;
     }
 
-    return { positions, normals, indices, hasNormals, meshCount: result.meshes.length };
+    // Detect holes geometrically from the solid faces (before they were merged).
+    let holes: DetectedHoles | undefined;
+    try {
+      holes = detectHolesFromOcctMeshes(meshes);
+    } catch (err) {
+      console.warn('[occt] geometric hole detection failed', err);
+    }
+
+    return { positions, normals, indices, hasNormals, meshCount: result.meshes.length, holes };
   } catch (err) {
     console.warn('[occt] STEP tessellation failed, falling back to schematic view', err);
     return null;

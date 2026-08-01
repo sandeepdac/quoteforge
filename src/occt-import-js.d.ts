@@ -5,6 +5,12 @@ declare module 'occt-import-js' {
   }) => Promise<OcctModule>;
   export default occtimportjs;
 
+  export interface OcctBrepFace {
+    first: number; // first triangle index of this B-Rep face
+    last: number; // last triangle index (inclusive)
+    color: [number, number, number] | null;
+  }
+
   export interface OcctMesh {
     name?: string;
     color?: [number, number, number];
@@ -13,6 +19,7 @@ declare module 'occt-import-js' {
       normal?: { array: number[] };
     };
     index: { array: number[] };
+    brep_faces?: OcctBrepFace[];
   }
 
   export interface OcctReadResult {

@@ -127,29 +127,42 @@ async function analyzeSolid(
     const surfaceAreaM2 = round(meas.surfaceAreaCm2 / 10000, 3) || 0;
     const stepData = solidStepData(fileName, meas, stepResult);
 
-    // Perimeter is a laser-cut concept derived from the outline + holes. Recompute it
-    // from the MEASURED bounding box — the text parser's value can be corrupted by
-    // PMI/annotation geometry that sits far outside the actual part.
+    // Prefer holes detected geometrically from the B-Rep cylindrical faces — far more
+    // reliable than counting STEP CIRCLE entities, which also catch annotation arcs
+    // and convex rounds. Fall back to the text-parser counts only if geometry fails.
+    const geo = mesh.holes;
+    const holeCount = geo ? geo.holeCount : stepData.holeCount;
+    const holeDetails = geo ? geo.holeDetails : stepData.holeDetails;
+    const boreCount = geo ? geo.boreCount : 0;
+    stepData.holeCount = holeCount;
+    stepData.holeDetails = holeDetails;
+
+    // Perimeter (laser concept) = measured outline + hole circumferences. Recompute
+    // from measured geometry; the text parser's value can be corrupted by PMI.
     const outerPerimeter = 2 * (meas.lengthMm + meas.widthMm);
-    const holePerimeter = stepData.holeDetails.reduce(
-      (s, h) => s + Math.PI * h.diameterMm * h.count,
-      0
-    );
+    const holePerimeter = holeDetails.reduce((s, h) => s + Math.PI * h.diameterMm * h.count, 0);
     const perimeterMm = Math.round(outerPerimeter + holePerimeter);
+    const pierceCount = holeCount + boreCount + 1;
     stepData.perimeterMm = perimeterMm;
+    stepData.pierceCount = pierceCount;
     stepData.bounds = {
       minX: 0, maxX: meas.boundingBoxMm.x,
       minY: 0, maxY: meas.boundingBoxMm.y,
       minZ: 0, maxZ: meas.boundingBoxMm.z,
     };
 
-    // Topology from the STEP text is unreliable when the file carries PMI/annotation
-    // geometry — detectable when the text bounding box dwarfs the measured solid.
+    // Bend detection (from face topology) is unreliable on machined/PMI-rich parts —
+    // flag when the STEP text bounding box dwarfs the measured solid. Holes are now
+    // geometric, so this review is about bends, not holes.
     const textDiag = stepResult
       ? Math.hypot(stepResult.lengthMm, stepResult.widthMm, stepResult.heightMm)
       : 0;
     const meshDiag = Math.hypot(meas.lengthMm, meas.widthMm, meas.heightMm);
     const featuresNeedReview = !!stepResult && textDiag > meshDiag * 1.5;
+
+    const holeSummary = holeDetails.length
+      ? holeDetails.map((h) => `${h.count}×⌀${h.diameterMm}`).join(', ')
+      : 'none';
 
     return {
       partName: baseName(fileName),
@@ -161,11 +174,11 @@ async function analyzeSolid(
       widthMm: meas.widthMm,
       heightMm: meas.heightMm,
       perimeterMm,
-      pierceCount: stepData.pierceCount,
+      pierceCount,
       bendCount: stepData.bendCount,
       isSimpleBending: stepData.isSimpleBending,
-      holeCount: stepData.holeCount,
-      holeDetails: stepData.holeDetails,
+      holeCount,
+      holeDetails,
       weldLengthMm: stepData.weldLengthMm,
       weldCount: stepData.weldCount,
       weightKg,
@@ -175,13 +188,11 @@ async function analyzeSolid(
       aiNotes: [
         `Measured directly from the solid model — bounding box ${meas.lengthMm} × ${meas.widthMm} × ${meas.heightMm} mm.`,
         `Enclosed volume ${meas.volumeCm3} cm³ → weight ${weightKg} kg in ${materialName} (density ${density} g/cm³).`,
-        featuresNeedReview
-          ? `Detected ${stepData.holeCount} holes and ${stepData.bendCount} bends, but this file carries annotation/PMI geometry — please verify the operation counts before quoting.`
-          : stepResult
-          ? `Wetted surface area ${surfaceAreaM2} m² sets finishing cost; ${stepData.holeCount} holes and ${stepData.bendCount} bends from B-Rep topology.`
-          : `Wetted surface area ${surfaceAreaM2} m² sets finishing cost. Confirm holes/bends on the right — topology isn't available for ${format.toUpperCase()}.`,
+        geo
+          ? `${holeCount} holes found on cylindrical faces (${holeSummary})${boreCount ? ` + ${boreCount} large bores` : ''}. Bend count (${stepData.bendCount}) is estimated — verify for machined parts.`
+          : `Wetted surface area ${surfaceAreaM2} m² sets finishing cost; ${holeCount} holes and ${stepData.bendCount} bends from topology.`,
       ],
-      confidenceScore: featuresNeedReview ? 75 : 98,
+      confidenceScore: featuresNeedReview ? 88 : 98,
       stepData,
       stepMesh: mesh,
       measurementSource: 'solid',

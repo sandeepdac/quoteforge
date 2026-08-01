@@ -330,9 +330,9 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
               <div className="flex items-start gap-2 bg-orange-500/10 border border-orange-500/25 text-orange-700 dark:text-orange-300 rounded-lg p-3 text-[11px] leading-relaxed">
                 <AlertCircle size={15} className="shrink-0 mt-0.5" />
                 <span>
-                  This file carries annotation/PMI geometry, so auto-detected hole and bend
-                  counts may be over-stated. Dimensions and weight are measured from the solid
-                  and are reliable — but please verify the operation counts below before quoting.
+                  Dimensions, weight and hole counts are measured from the solid geometry and
+                  are reliable. The <strong>bend count</strong> is an estimate from face
+                  topology, which can be off on machined parts — please verify it before quoting.
                 </span>
               </div>
             )}
