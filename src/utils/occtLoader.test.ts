@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { measureMesh, solidFormatFor, TessellatedMesh } from './occtLoader';
+import { measureMesh, solidFormatFor, keepSolidMeshes, TessellatedMesh } from './occtLoader';
+
+// Minimal OcctMesh-shaped objects for the degenerate-mesh filter.
+const occtMesh = (positions: number[]) => ({
+  attributes: { position: { array: positions }, normal: { array: [] } },
+  index: { array: [0, 1, 2] },
+});
+// A real (3D) triangle-ish solid vs a flat, zero-thickness surface (all z = 0).
+const solid = occtMesh([0, 0, 0, 10, 0, 0, 10, 10, 5]);
+const flatShell = occtMesh([0, 0, 0, 10, 0, 0, 10, 10, 0]);
+
+describe('keepSolidMeshes', () => {
+  it('drops zero-thickness surface artifacts when a solid is present', () => {
+    const kept = keepSolidMeshes([solid, flatShell] as any);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toBe(solid);
+  });
+
+  it('keeps everything if all meshes are degenerate (surface-only model)', () => {
+    const kept = keepSolidMeshes([flatShell, flatShell] as any);
+    expect(kept).toHaveLength(2);
+  });
+});
 
 describe('solidFormatFor', () => {
   it('maps 3D solid extensions to OCCT formats', () => {

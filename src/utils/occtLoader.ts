@@ -121,6 +121,30 @@ export function solidFormatFor(fileName: string): CadSolidFormat | null {
   return null;
 }
 
+/** True if a mesh is degenerate — flat/zero-thickness in any axis (an open surface). */
+function isDegenerateMesh(mesh: import('occt-import-js').OcctMesh): boolean {
+  const p = mesh.attributes.position.array;
+  if (p.length < 9) return true;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < p.length; i += 3) {
+    const x = p[i], y = p[i + 1], z = p[i + 2];
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+  const EPS = 1e-3; // mm — no real solid is thinner than this
+  return maxX - minX < EPS || maxY - minY < EPS || maxZ - minZ < EPS;
+}
+
+/** Keeps only solid (non-degenerate) meshes, unless every mesh is degenerate. */
+export function keepSolidMeshes(
+  meshes: import('occt-import-js').OcctMesh[]
+): import('occt-import-js').OcctMesh[] {
+  const solids = meshes.filter((m) => !isDegenerateMesh(m));
+  return solids.length > 0 ? solids : meshes;
+}
+
 /**
  * Reads a 3D solid file (STEP / IGES / BREP, as raw bytes) and returns a single
  * merged, indexed mesh. Returns null if OCCT is unavailable or the file yields no
@@ -141,11 +165,17 @@ export async function tessellateCad(
         : occt.ReadStepFile(bytes, TESSELLATION_PARAMS);
     if (!result?.success || !result.meshes?.length) return null;
 
+    // Drop degenerate (zero-thickness) meshes. AP242/PMI files often ship open
+    // surface "shells" alongside the real solid — flat annotation geometry that
+    // clutters the view and corrupts the volume. Keep them only if there is no
+    // genuine solid to fall back to.
+    const meshes = keepSolidMeshes(result.meshes);
+
     // Pre-count so we can allocate typed arrays once and merge all sub-meshes.
     let vertexCount = 0;
     let indexCount = 0;
     let hasNormals = true;
-    for (const mesh of result.meshes) {
+    for (const mesh of meshes) {
       vertexCount += mesh.attributes.position.array.length / 3;
       indexCount += mesh.index.array.length;
       if (!mesh.attributes.normal) hasNormals = false;
@@ -159,7 +189,7 @@ export async function tessellateCad(
     let posOffset = 0;
     let idxOffset = 0;
     let vertexBase = 0;
-    for (const mesh of result.meshes) {
+    for (const mesh of meshes) {
       const pos = mesh.attributes.position.array;
       positions.set(pos, posOffset);
       if (mesh.attributes.normal) normals.set(mesh.attributes.normal.array, posOffset);
