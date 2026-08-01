@@ -70,6 +70,8 @@ export interface Quote {
   winProbability: number;
   lossReason?: 'Price too High' | 'Lead Time' | 'Lost to Competitor' | 'Project Cancelled';
   actualLeadTimeDays?: number;
+  /** Recorded actual factory cost for a completed job — powers estimator-accuracy analytics. */
+  actualCost?: number;
 }
 
 export interface QuoteCosts {

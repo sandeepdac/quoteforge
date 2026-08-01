@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { 
   ArrowLeft, 
@@ -27,6 +27,9 @@ export default function QuoteDetailPage() {
   const { getQuoteById, getCustomerById, getPartById, getMaterialById, deleteQuote, updateQuote } = useQuotes();
 
   const quote = getQuoteById(id || '');
+  const [actualCostInput, setActualCostInput] = useState(
+    quote?.actualCost != null ? String(quote.actualCost) : ''
+  );
   if (!quote) {
     return (
       <div className="text-center py-20">
@@ -58,6 +61,16 @@ export default function QuoteDetailPage() {
   const handleDownload = () => {
     downloadQuotePDF(quote, customer, part);
   };
+
+  const estFactoryCost = (quote.costs.subtotal + quote.costs.overhead) * quote.quantity;
+  const saveActualCost = () => {
+    const val = parseFloat(actualCostInput);
+    updateQuote({ ...quote, actualCost: Number.isFinite(val) && val > 0 ? val : undefined });
+  };
+  const costVariancePct =
+    quote.actualCost != null && estFactoryCost > 0
+      ? ((quote.actualCost - estFactoryCost) / estFactoryCost) * 100
+      : null;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -269,6 +282,42 @@ export default function QuoteDetailPage() {
             <p className="text-[10px] text-muted-foreground uppercase font-bold">Confidence: Medium</p>
           </div>
           
+          {quote.status === 'won' && (
+            <div className="bg-card border border-border p-5 rounded-lg space-y-3">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Estimator Accuracy</h3>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Estimated factory cost</span>
+                <span className="font-mono font-medium">${estFactoryCost.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Actual production cost ($)</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    value={actualCostInput}
+                    onChange={(e) => setActualCostInput(e.target.value)}
+                    placeholder="Enter actual…"
+                    className="flex-1 bg-background border border-border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <button
+                    onClick={saveActualCost}
+                    className="px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-xs font-bold hover:bg-primary/90 transition-colors"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+              {costVariancePct !== null && (
+                <div className="flex justify-between text-sm pt-1 border-t border-border">
+                  <span className="text-muted-foreground">Variance vs estimate</span>
+                  <span className={cn('font-bold', costVariancePct > 0 ? 'text-red-500' : 'text-green-600')}>
+                    {costVariancePct > 0 ? '+' : ''}{costVariancePct.toFixed(1)}%
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
           {quote.status === 'lost' && (
             <div className="p-5 bg-red-100/30 border border-red-200 dark:bg-red-900/10 dark:border-red-900/30 rounded-lg space-y-3">
               <div className="flex items-center gap-2 text-red-700 dark:text-red-400 font-bold text-xs uppercase tracking-widest">

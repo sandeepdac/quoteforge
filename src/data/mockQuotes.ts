@@ -31,6 +31,14 @@ const generateMockQuote = (
   const unitTotal = costs.subtotal + costs.overhead + costs.marginAmount;
   const grandTotal = unitTotal * quantity;
 
+  // For completed (won) jobs, record a plausible actual factory cost within ±10% of
+  // the estimate, derived deterministically from the id so it's stable across reloads.
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  const variance = 0.9 + ((Math.abs(hash) % 1000) / 1000) * 0.2;
+  const estimatedFactoryCost = (costs.subtotal + costs.overhead) * quantity;
+  const actualCost = status === 'won' ? Math.round(estimatedFactoryCost * variance) : undefined;
+
   return {
     id,
     quoteNumber,
@@ -50,7 +58,8 @@ const generateMockQuote = (
     grandTotal,
     winProbability: calculateWinProbability(margin, 14),
     lossReason,
-    actualLeadTimeDays
+    actualLeadTimeDays,
+    actualCost
   };
 };
 

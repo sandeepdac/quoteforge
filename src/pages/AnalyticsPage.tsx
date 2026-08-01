@@ -47,43 +47,39 @@ export default function AnalyticsPage() {
     color: theme === 'dark' ? '#fafafa' : '#0a0a0a',
   };
 
-  // Stable pseudo-random in [0,1) from a string, so the estimator-accuracy scatter
-  // doesn't jitter on every render.
-  const hashFrac = (s: string) => {
-    let h = 0;
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-    return (Math.abs(h) % 1000) / 1000;
-  };
-
   const totalRevenue = quotes.filter(q => q.status === 'won').reduce((acc, q) => acc + q.grandTotal, 0);
   const pipelineValue = quotes.filter(q => q.status === 'sent').reduce((acc, q) => acc + q.grandTotal, 0);
   const avgMargin = quotes.length > 0 ? (quotes.reduce((acc, q) => acc + q.marginPercent, 0) / quotes.length) * 100 : 0;
   const decidedCount = quotes.filter(q => ['won', 'lost', 'expired'].includes(q.status)).length;
   const winRate = decidedCount > 0 ? Math.round((quotes.filter(q => q.status === 'won').length / decidedCount) * 100) : 0;
 
-  // Process data for charts
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May'];
-  const winRateData = months.map((month, idx) => {
-    const monthQuotes = quotes.filter(q => {
-      const parts = q.createdDate.split('-');
-      return parseInt(parts[1], 10) - 1 === idx;
-    });
+  // The last 6 months of activity, anchored to the most recent quote (falls back to
+  // today), so the charts populate regardless of where the data sits in time.
+  const latestDate = quotes.reduce((m, q) => (q.createdDate > m ? q.createdDate : m), '');
+  const anchor = latestDate ? new Date(`${latestDate}T00:00:00`) : new Date();
+  const monthBuckets = Array.from({ length: 6 }).map((_, i) => {
+    const d = new Date(anchor.getFullYear(), anchor.getMonth() - (5 - i), 1);
+    return { label: d.toLocaleString('en-US', { month: 'short' }), year: d.getFullYear(), month: d.getMonth() };
+  });
+  const inMonth = (q: typeof quotes[number], b: { year: number; month: number }) => {
+    const [y, m] = q.createdDate.split('-');
+    return parseInt(y, 10) === b.year && parseInt(m, 10) - 1 === b.month;
+  };
+
+  const winRateData = monthBuckets.map(b => {
+    const monthQuotes = quotes.filter(q => inMonth(q, b));
     const won = monthQuotes.filter(q => q.status === 'won').length;
     const total = monthQuotes.filter(q => ['won', 'lost', 'expired'].includes(q.status)).length;
-    return {
-      month,
-      rate: total > 0 ? Math.round((won / total) * 100) : 0
-    };
+    return { month: b.label, rate: total > 0 ? Math.round((won / total) * 100) : 0 };
   });
 
-  const revenueByMonth = months.map((month, idx) => {
-    const monthQuotes = quotes.filter(q => {
-      const parts = q.createdDate.split('-');
-      return parseInt(parts[1], 10) - 1 === idx;
-    });
-    const won = monthQuotes.filter(q => q.status === 'won').reduce((acc, q) => acc + q.grandTotal, 0);
-    const lost = monthQuotes.filter(q => q.status === 'lost').reduce((acc, q) => acc + q.grandTotal, 0);
-    return { month, won, lost };
+  const revenueByMonth = monthBuckets.map(b => {
+    const monthQuotes = quotes.filter(q => inMonth(q, b));
+    return {
+      month: b.label,
+      won: monthQuotes.filter(q => q.status === 'won').reduce((acc, q) => acc + q.grandTotal, 0),
+      lost: monthQuotes.filter(q => q.status === 'lost').reduce((acc, q) => acc + q.grandTotal, 0),
+    };
   });
 
   const lossReasonData = [
@@ -127,11 +123,26 @@ export default function AnalyticsPage() {
     .sort((a, b) => b.value - a.value)
     .slice(0, 5);
 
-  const accuracyData = quotes.filter(q => q.status === 'won').map(q => ({
-    quoted: q.costs.subtotal,
-    actual: q.costs.subtotal * (0.95 + hashFrac(q.id) * 0.1), // deterministic sample actual
-    label: q.quoteNumber
+  // Estimator accuracy compares the estimated factory cost against the recorded
+  // actual cost — only for jobs that have an actual cost logged.
+  const estFactoryCost = (q: typeof quotes[number]) => (q.costs.subtotal + q.costs.overhead) * q.quantity;
+  const costedQuotes = quotes.filter(q => q.actualCost !== undefined);
+  const accuracyData = costedQuotes.map(q => ({
+    quoted: Math.round(estFactoryCost(q)),
+    actual: q.actualCost!,
+    label: q.quoteNumber,
   }));
+  const estimatorAccuracy = costedQuotes.length
+    ? Math.round(
+        (1 -
+          costedQuotes.reduce((acc, q) => {
+            const est = estFactoryCost(q);
+            return acc + (est > 0 ? Math.abs(q.actualCost! - est) / est : 0);
+          }, 0) /
+            costedQuotes.length) *
+          1000
+      ) / 10
+    : null;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500 pb-12">
@@ -299,7 +310,17 @@ export default function AnalyticsPage() {
 
         <div className="lg:col-span-2 xl:col-span-1">
           <ChartCard title="Estimator Accuracy">
-            <div className="h-[300px]">
+            <div className="flex items-baseline gap-2 mb-3">
+              <span className="text-2xl font-black text-foreground">
+                {estimatorAccuracy !== null ? `${estimatorAccuracy}%` : '—'}
+              </span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                {estimatorAccuracy !== null
+                  ? `mean accuracy · ${costedQuotes.length} costed jobs`
+                  : 'no actual costs recorded yet'}
+              </span>
+            </div>
+            <div className="h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ScatterChart margin={{ top: 20, right: 30, bottom: 20, left: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
