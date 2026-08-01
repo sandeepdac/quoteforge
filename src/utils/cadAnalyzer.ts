@@ -127,15 +127,19 @@ async function analyzeSolid(
     const surfaceAreaM2 = round(meas.surfaceAreaCm2 / 10000, 3) || 0;
     const stepData = solidStepData(fileName, meas, stepResult);
 
-    // Prefer holes detected geometrically from the B-Rep cylindrical faces — far more
-    // reliable than counting STEP CIRCLE entities, which also catch annotation arcs
-    // and convex rounds. Fall back to the text-parser counts only if geometry fails.
-    const geo = mesh.holes;
+    // Prefer holes and bends detected geometrically from the B-Rep faces — far more
+    // reliable than counting STEP CIRCLE/PLANE entities, which also catch annotation
+    // arcs, convex rounds and machining fillets. Fall back to text only if geometry fails.
+    const geo = mesh.features;
     const holeCount = geo ? geo.holeCount : stepData.holeCount;
     const holeDetails = geo ? geo.holeDetails : stepData.holeDetails;
     const boreCount = geo ? geo.boreCount : 0;
+    const bendCount = geo ? geo.bendCount : stepData.bendCount;
+    const isSimpleBending = bendCount <= 4;
     stepData.holeCount = holeCount;
     stepData.holeDetails = holeDetails;
+    stepData.bendCount = bendCount;
+    stepData.isSimpleBending = isSimpleBending;
 
     // Perimeter (laser concept) = measured outline + hole circumferences. Recompute
     // from measured geometry; the text parser's value can be corrupted by PMI.
@@ -150,15 +154,6 @@ async function analyzeSolid(
       minY: 0, maxY: meas.boundingBoxMm.y,
       minZ: 0, maxZ: meas.boundingBoxMm.z,
     };
-
-    // Bend detection (from face topology) is unreliable on machined/PMI-rich parts —
-    // flag when the STEP text bounding box dwarfs the measured solid. Holes are now
-    // geometric, so this review is about bends, not holes.
-    const textDiag = stepResult
-      ? Math.hypot(stepResult.lengthMm, stepResult.widthMm, stepResult.heightMm)
-      : 0;
-    const meshDiag = Math.hypot(meas.lengthMm, meas.widthMm, meas.heightMm);
-    const featuresNeedReview = !!stepResult && textDiag > meshDiag * 1.5;
 
     const holeSummary = holeDetails.length
       ? holeDetails.map((h) => `${h.count}×⌀${h.diameterMm}`).join(', ')
@@ -175,8 +170,8 @@ async function analyzeSolid(
       heightMm: meas.heightMm,
       perimeterMm,
       pierceCount,
-      bendCount: stepData.bendCount,
-      isSimpleBending: stepData.isSimpleBending,
+      bendCount,
+      isSimpleBending,
       holeCount,
       holeDetails,
       weldLengthMm: stepData.weldLengthMm,
@@ -189,14 +184,14 @@ async function analyzeSolid(
         `Measured directly from the solid model — bounding box ${meas.lengthMm} × ${meas.widthMm} × ${meas.heightMm} mm.`,
         `Enclosed volume ${meas.volumeCm3} cm³ → weight ${weightKg} kg in ${materialName} (density ${density} g/cm³).`,
         geo
-          ? `${holeCount} holes found on cylindrical faces (${holeSummary})${boreCount ? ` + ${boreCount} large bores` : ''}. Bend count (${stepData.bendCount}) is estimated — verify for machined parts.`
-          : `Wetted surface area ${surfaceAreaM2} m² sets finishing cost; ${holeCount} holes and ${stepData.bendCount} bends from topology.`,
+          ? `${holeCount} holes (${holeSummary})${boreCount ? ` + ${boreCount} bores` : ''} and ${bendCount} bends detected geometrically from the solid faces.`
+          : `Wetted surface area ${surfaceAreaM2} m² sets finishing cost; ${holeCount} holes and ${bendCount} bends from topology.`,
       ],
-      confidenceScore: featuresNeedReview ? 88 : 98,
+      confidenceScore: 98,
       stepData,
       stepMesh: mesh,
       measurementSource: 'solid',
-      featuresNeedReview,
+      featuresNeedReview: false,
     };
   }
 

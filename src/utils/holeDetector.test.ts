@@ -1,25 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { detectHolesFromOcctMeshes } from './holeDetector';
+import { detectFeaturesFromOcctMeshes } from './holeDetector';
 import type { OcctMesh } from 'occt-import-js';
 
-/**
- * Builds an OcctMesh containing a single cylindrical wall of the given radius/height.
- * `inward` makes the normals point toward the axis (a concave bore = hole); otherwise
- * they point outward (a convex boss).
- */
-function cylinderMesh(radius: number, height: number, segments: number, inward: boolean): OcctMesh {
+/** A cylindrical wall arc from 0..arcDeg. `inward` normals = concave (bore/inner). */
+function arcWall(radius: number, height: number, arcDeg: number, segments: number, inward: boolean): OcctMesh {
   const position: number[] = [];
   const normal: number[] = [];
   const index: number[] = [];
+  const arc = (arcDeg * Math.PI) / 180;
   for (let i = 0; i <= segments; i++) {
-    const a = (i / segments) * Math.PI * 2;
+    const a = (i / segments) * arc;
     const cx = Math.cos(a), cy = Math.sin(a);
     const nx = inward ? -cx : cx, ny = inward ? -cy : cy;
-    // bottom ring vertex, then top ring vertex
-    position.push(radius * cx, radius * cy, 0);
-    normal.push(nx, ny, 0);
-    position.push(radius * cx, radius * cy, height);
-    normal.push(nx, ny, 0);
+    position.push(radius * cx, radius * cy, 0); normal.push(nx, ny, 0);
+    position.push(radius * cx, radius * cy, height); normal.push(nx, ny, 0);
   }
   for (let i = 0; i < segments; i++) {
     const b0 = i * 2, t0 = i * 2 + 1, b1 = i * 2 + 2, t1 = i * 2 + 3;
@@ -32,28 +26,39 @@ function cylinderMesh(radius: number, height: number, segments: number, inward: 
   };
 }
 
-describe('detectHolesFromOcctMeshes', () => {
+describe('detectFeaturesFromOcctMeshes — holes', () => {
   it('detects a concave full cylinder as one hole with the right diameter', () => {
-    const result = detectHolesFromOcctMeshes([cylinderMesh(4, 10, 48, true)]);
-    expect(result.holeCount).toBe(1);
-    expect(result.holeDetails[0].diameterMm).toBe(8);
+    const r = detectFeaturesFromOcctMeshes([arcWall(4, 10, 360, 48, true)]);
+    expect(r.holeCount).toBe(1);
+    expect(r.holeDetails[0].diameterMm).toBe(8);
   });
 
-  it('ignores a convex cylinder (an outer boss, not a hole)', () => {
-    const result = detectHolesFromOcctMeshes([cylinderMesh(4, 10, 48, false)]);
-    expect(result.holeCount).toBe(0);
+  it('ignores a convex cylinder (outer boss)', () => {
+    const r = detectFeaturesFromOcctMeshes([arcWall(4, 10, 360, 48, false)]);
+    expect(r.holeCount).toBe(0);
+    expect(r.bendCount).toBe(0);
   });
 
-  it('groups multiple holes of the same diameter', () => {
-    const result = detectHolesFromOcctMeshes([cylinderMesh(3, 8, 40, true), cylinderMesh(3, 8, 40, true)]);
-    // Same axis/radius → clustered into one; distinct locations would be two. Here they
-    // are coincident, so this asserts at least the diameter is captured.
-    expect(result.holeDetails[0].diameterMm).toBe(6);
+  it('counts a very large opening as a bore, not a hole', () => {
+    const r = detectFeaturesFromOcctMeshes([arcWall(40, 20, 360, 64, true)]);
+    expect(r.holeCount).toBe(0);
+    expect(r.boreCount).toBe(1);
+  });
+});
+
+describe('detectFeaturesFromOcctMeshes — bends', () => {
+  it('detects a coaxial concave+convex arc pair (a fold) as one bend', () => {
+    // Inner wall r=3 (concave) + outer wall r=6 (convex): 3 mm sheet, 90° fold.
+    const r = detectFeaturesFromOcctMeshes([
+      arcWall(3, 40, 90, 24, true),
+      arcWall(6, 40, 90, 24, false),
+    ]);
+    expect(r.bendCount).toBe(1);
+    expect(r.holeCount).toBe(0);
   });
 
-  it('counts a very large opening as a bore, not a fastener hole', () => {
-    const result = detectHolesFromOcctMeshes([cylinderMesh(40, 20, 64, true)]);
-    expect(result.holeCount).toBe(0);
-    expect(result.boreCount).toBe(1);
+  it('does not treat a lone fillet arc (no matching inner/outer wall) as a bend', () => {
+    const r = detectFeaturesFromOcctMeshes([arcWall(2, 40, 90, 24, false)]);
+    expect(r.bendCount).toBe(0);
   });
 });

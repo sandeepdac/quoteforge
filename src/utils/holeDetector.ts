@@ -1,42 +1,44 @@
 /**
- * Geometric hole detection from a tessellated B-Rep.
+ * Geometric feature detection from a tessellated B-Rep (holes + sheet-metal bends).
  *
  * OpenCascade gives us, per mesh, the triangles grouped by their originating B-Rep
  * face (`brep_faces`) plus per-vertex normals. We fit each face to a cylinder and
- * keep only the ones that are actually holes:
- *   - cylindrical (clean circular cross-section),
- *   - concave (surface normals point inward, toward the axis — i.e. a bore wall, not
- *     an outer boss/round),
- *   - near-complete (the wall wraps most of the way around, so fillets and edge
- *     blends — which are shallow arcs — are excluded).
- * Coaxial half-cylinders (OCCT splits a hole at its seam) are merged so one physical
- * hole counts once. This is far more reliable than counting CIRCLE entities in the
- * STEP text, which also picks up annotation arcs and convex rounds.
+ * classify:
+ *   - HOLE: concave, near-complete cylinder (a bore wall). Coaxial half-cylinders are
+ *     merged so one physical hole counts once; openings over ⌀60 mm are "bores".
+ *   - BEND: a coaxial concave(inner) + convex(outer) cylinder pair separated by the
+ *     sheet thickness — the signature of a press-brake fold. Machining fillets and
+ *     edge rounds lack the matching inner/outer wall, so they're excluded.
+ * This is far more reliable than counting CIRCLE / PLANE entities in the STEP text,
+ * which also picks up annotation arcs, convex rounds and PMI geometry.
  */
 import type { OcctMesh } from 'occt-import-js';
 
-export interface DetectedHoles {
+export interface DetectedFeatures {
   holeCount: number;
   holeDetails: Array<{ diameterMm: number; count: number }>;
-  boreCount: number; // large round openings (diameter > 60 mm), counted separately
+  boreCount: number;
+  bendCount: number;
 }
 
 type Vec3 = [number, number, number];
 
+interface CylFace {
+  axis: Vec3;
+  radius: number;
+  centerPerp: Vec3; // foot of perpendicular from origin to the axis line
+  concave: boolean;
+  coverageDeg: number; // angular wrap of this face
+  axMin: number; // extent along the axis
+  axMax: number;
+  worldPts: Vec3[];
+}
+
 // ---- small linear-algebra helpers -----------------------------------------
 
-/** Jacobi eigen-decomposition of a symmetric 3x3 matrix given as [a00,a01,a02,a11,a12,a22]. */
 function eigenSym3(m: number[]): { values: number[]; vectors: Vec3[] } {
-  const a = [
-    [m[0], m[1], m[2]],
-    [m[1], m[3], m[4]],
-    [m[2], m[4], m[5]],
-  ];
-  const v = [
-    [1, 0, 0],
-    [0, 1, 0],
-    [0, 0, 1],
-  ];
+  const a = [[m[0], m[1], m[2]], [m[1], m[3], m[4]], [m[2], m[4], m[5]]];
+  const v = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
   const pairs: Array<[number, number]> = [[0, 1], [0, 2], [1, 2]];
   for (let iter = 0; iter < 50; iter++) {
     let p = 0, q = 1, max = Math.abs(a[0][1]);
@@ -60,25 +62,15 @@ function eigenSym3(m: number[]): { values: number[]; vectors: Vec3[] } {
   return { values: order.map((i) => values[i]), vectors: order.map((i) => vectors[i]) };
 }
 
-/** Two orthonormal vectors spanning the plane perpendicular to `axis`. */
 function planeBasis(axis: Vec3): [Vec3, Vec3] {
   const up: Vec3 = Math.abs(axis[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
-  let u: Vec3 = [
-    up[1] * axis[2] - up[2] * axis[1],
-    up[2] * axis[0] - up[0] * axis[2],
-    up[0] * axis[1] - up[1] * axis[0],
-  ];
+  let u: Vec3 = [up[1] * axis[2] - up[2] * axis[1], up[2] * axis[0] - up[0] * axis[2], up[0] * axis[1] - up[1] * axis[0]];
   const ul = Math.hypot(u[0], u[1], u[2]) || 1;
   u = [u[0] / ul, u[1] / ul, u[2] / ul];
-  const v: Vec3 = [
-    axis[1] * u[2] - axis[2] * u[1],
-    axis[2] * u[0] - axis[0] * u[2],
-    axis[0] * u[1] - axis[1] * u[0],
-  ];
+  const v: Vec3 = [axis[1] * u[2] - axis[2] * u[1], axis[2] * u[0] - axis[0] * u[2], axis[0] * u[1] - axis[1] * u[0]];
   return [u, v];
 }
 
-/** Algebraic (Kåsa) circle fit; returns center in (u,v) coords, radius and RMS residual. */
 function fitCircle(pts: Array<[number, number]>): { uc: number; vc: number; r: number; res: number } | null {
   const n = pts.length;
   let mu = 0, mv = 0;
@@ -103,7 +95,6 @@ function fitCircle(pts: Array<[number, number]>): { uc: number; vc: number; r: n
   return { uc, vc, r, res: Math.sqrt(res / n) };
 }
 
-/** Angular coverage (degrees) of a set of angles around their circle. */
 function angularCoverageDeg(angles: number[]): number {
   const a = angles.slice().sort((x, y) => x - y);
   let maxGap = 2 * Math.PI - (a[a.length - 1] - a[0]);
@@ -111,18 +102,20 @@ function angularCoverageDeg(angles: number[]): number {
   return ((2 * Math.PI - maxGap) * 180) / Math.PI;
 }
 
-interface CylFace {
-  axis: Vec3;
-  radius: number;
-  centerPerp: Vec3; // foot of perpendicular from origin to the axis line (canonical point)
-  worldPts: Vec3[];
+function sameAxisLine(a: { axis: Vec3; centerPerp: Vec3 }, b: { axis: Vec3; centerPerp: Vec3 }, perpTol = 0.6): boolean {
+  const dot = Math.abs(a.axis[0] * b.axis[0] + a.axis[1] * b.axis[1] + a.axis[2] * b.axis[2]);
+  const dp = Math.hypot(
+    a.centerPerp[0] - b.centerPerp[0],
+    a.centerPerp[1] - b.centerPerp[1],
+    a.centerPerp[2] - b.centerPerp[2]
+  );
+  return dot > 0.996 && dp < perpTol;
 }
 
-// ---- main detector ---------------------------------------------------------
+// ---- face extraction -------------------------------------------------------
 
-export function detectHolesFromOcctMeshes(meshes: OcctMesh[]): DetectedHoles {
-  const cylFaces: CylFace[] = [];
-
+function extractCylindricalFaces(meshes: OcctMesh[]): CylFace[] {
+  const faces: CylFace[] = [];
   for (const mesh of meshes) {
     const P = mesh.attributes.position.array;
     const N = mesh.attributes.normal?.array;
@@ -137,9 +130,6 @@ export function detectHolesFromOcctMeshes(meshes: OcctMesh[]): DetectedHoles {
       if (vids.size < 10) continue;
       const ids = [...vids];
 
-      // Axis = eigenvector of the normal covariance with the smallest eigenvalue
-      // (the direction the surface normals never point along). Planes have two tiny
-      // eigenvalues (normals collinear); cylinders have exactly one.
       const m = [0, 0, 0, 0, 0, 0];
       for (const i of ids) {
         const nx = N[i * 3], ny = N[i * 3 + 1], nz = N[i * 3 + 2];
@@ -150,7 +140,6 @@ export function detectHolesFromOcctMeshes(meshes: OcctMesh[]): DetectedHoles {
       const [e0, e1, e2] = values;
       if (e2 < 1e-9 || e0 / e2 > 0.08 || e1 / e2 < 0.15) continue;
 
-      // Canonicalize axis sign so coaxial faces cluster together.
       let axis = vectors[0];
       const abs = axis.map(Math.abs);
       const mi = abs[0] >= abs[1] && abs[0] >= abs[2] ? 0 : abs[1] >= abs[2] ? 1 : 2;
@@ -162,69 +151,92 @@ export function detectHolesFromOcctMeshes(meshes: OcctMesh[]): DetectedHoles {
         P[i * 3] * v[0] + P[i * 3 + 1] * v[1] + P[i * 3 + 2] * v[2],
       ]);
       const cf = fitCircle(pts2d);
-      if (!cf || cf.r < 0.3 || cf.r > 80 || cf.res / cf.r > 0.06) continue;
+      if (!cf || cf.r < 0.2 || cf.r > 80 || cf.res / cf.r > 0.06) continue;
 
-      // Concave? Normals must point inward (toward the axis).
-      let concave = 0;
+      let concaveVotes = 0;
+      const axialVals: number[] = [];
       for (let k = 0; k < ids.length; k++) {
         const i = ids[k];
         const pu = pts2d[k][0] - cf.uc, pv = pts2d[k][1] - cf.vc;
         const rl = Math.hypot(pu, pv) || 1;
         const nu = N[i * 3] * u[0] + N[i * 3 + 1] * u[1] + N[i * 3 + 2] * u[2];
         const nv = N[i * 3] * v[0] + N[i * 3 + 1] * v[1] + N[i * 3 + 2] * v[2];
-        if (nu * (pu / rl) + nv * (pv / rl) < 0) concave++;
+        if (nu * (pu / rl) + nv * (pv / rl) < 0) concaveVotes++;
+        axialVals.push(P[i * 3] * axis[0] + P[i * 3 + 1] * axis[1] + P[i * 3 + 2] * axis[2]);
       }
-      if (concave / ids.length < 0.5) continue;
 
-      cylFaces.push({
+      faces.push({
         axis,
         radius: cf.r,
         centerPerp: [cf.uc * u[0] + cf.vc * v[0], cf.uc * u[1] + cf.vc * v[1], cf.uc * u[2] + cf.vc * v[2]],
+        concave: concaveVotes / ids.length > 0.5,
+        coverageDeg: angularCoverageDeg(pts2d.map(([pu, pv]) => Math.atan2(pv - cf.vc, pu - cf.uc))),
+        axMin: Math.min(...axialVals),
+        axMax: Math.max(...axialVals),
         worldPts: ids.map((i): Vec3 => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]),
       });
     }
   }
+  return faces;
+}
 
-  // Cluster concave cylinder faces by axis line + radius so a hole split into
-  // half-cylinders is counted once (different radii → different features, e.g. a
-  // counterbore, which is a distinct machining operation).
-  interface Cluster { axis: Vec3; radius: number; centerPerp: Vec3; faces: CylFace[] }
-  const clusters: Cluster[] = [];
-  for (const f of cylFaces) {
-    let placed = false;
-    for (const c of clusters) {
-      const dot = Math.abs(c.axis[0] * f.axis[0] + c.axis[1] * f.axis[1] + c.axis[2] * f.axis[2]);
-      const dp = Math.hypot(
-        c.centerPerp[0] - f.centerPerp[0],
-        c.centerPerp[1] - f.centerPerp[1],
-        c.centerPerp[2] - f.centerPerp[2]
-      );
-      if (dot > 0.996 && dp < 0.6 && Math.abs(c.radius - f.radius) < 0.3) {
-        c.faces.push(f);
-        placed = true;
-        break;
-      }
-    }
-    if (!placed) clusters.push({ axis: f.axis, radius: f.radius, centerPerp: f.centerPerp, faces: [f] });
-  }
+// ---- classification --------------------------------------------------------
 
+export function detectFeaturesFromOcctMeshes(meshes: OcctMesh[]): DetectedFeatures {
+  const faces = extractCylindricalFaces(meshes);
+
+  // HOLES: cluster concave faces by axis line + radius; a hole wraps (near) fully.
+  const isHoleFace = new Array(faces.length).fill(false);
   const holeDiameters: number[] = [];
   let boreCount = 0;
-  for (const c of clusters) {
-    const [u, v] = planeBasis(c.axis);
-    const cu = c.centerPerp[0] * u[0] + c.centerPerp[1] * u[1] + c.centerPerp[2] * u[2];
-    const cv = c.centerPerp[0] * v[0] + c.centerPerp[1] * v[1] + c.centerPerp[2] * v[2];
+  const claimed = new Array(faces.length).fill(false);
+
+  for (let i = 0; i < faces.length; i++) {
+    if (claimed[i] || !faces[i].concave) continue;
+    const group = [i];
+    for (let j = i + 1; j < faces.length; j++) {
+      if (!claimed[j] && faces[j].concave && Math.abs(faces[j].radius - faces[i].radius) < 0.3 && sameAxisLine(faces[i], faces[j])) {
+        group.push(j);
+      }
+    }
+    // Union angular coverage across the cluster, in the first face's frame.
+    const [u, v] = planeBasis(faces[i].axis);
+    const cu = faces[i].centerPerp[0] * u[0] + faces[i].centerPerp[1] * u[1] + faces[i].centerPerp[2] * u[2];
+    const cv = faces[i].centerPerp[0] * v[0] + faces[i].centerPerp[1] * v[1] + faces[i].centerPerp[2] * v[2];
     const angles: number[] = [];
-    for (const f of c.faces) {
-      for (const p of f.worldPts) {
+    for (const g of group) {
+      for (const p of faces[g].worldPts) {
         angles.push(Math.atan2(p[0] * v[0] + p[1] * v[1] + p[2] * v[2] - cv, p[0] * u[0] + p[1] * u[1] + p[2] * u[2] - cu));
       }
     }
-    // A real bore wraps (near) all the way around; shallow arcs are fillets/blends.
-    if (angularCoverageDeg(angles) <= 270) continue;
-    const diameterMm = Math.round(c.radius * 2 * 10) / 10;
-    if (diameterMm <= 60) holeDiameters.push(diameterMm);
-    else boreCount++;
+    if (angularCoverageDeg(angles) > 270) {
+      group.forEach((g) => { claimed[g] = true; isHoleFace[g] = true; });
+      const diameterMm = Math.round(faces[i].radius * 2 * 10) / 10;
+      if (diameterMm <= 60) holeDiameters.push(diameterMm);
+      else boreCount++;
+    }
+  }
+
+  // BENDS: a coaxial concave(inner r) + convex(outer r+t) partial-arc pair, with t in
+  // the sheet-thickness range and overlapping along the axis (the two walls of a fold).
+  const usedForBend = new Array(faces.length).fill(false);
+  let bendCount = 0;
+  for (let i = 0; i < faces.length; i++) {
+    const inner = faces[i];
+    if (usedForBend[i] || isHoleFace[i] || !inner.concave || inner.coverageDeg > 230) continue;
+    for (let j = 0; j < faces.length; j++) {
+      const outer = faces[j];
+      if (usedForBend[j] || isHoleFace[j] || outer.concave || outer.coverageDeg > 230) continue;
+      const thickness = outer.radius - inner.radius;
+      if (thickness < 0.3 || thickness > 8) continue;
+      if (!sameAxisLine(inner, outer, 1.0)) continue;
+      const overlap = Math.min(inner.axMax, outer.axMax) - Math.max(inner.axMin, outer.axMin);
+      const minLen = Math.min(inner.axMax - inner.axMin, outer.axMax - outer.axMin);
+      if (overlap < minLen * 0.4) continue;
+      usedForBend[i] = usedForBend[j] = true;
+      bendCount++;
+      break;
+    }
   }
 
   const byDiameter = new Map<number, number>();
@@ -233,5 +245,5 @@ export function detectHolesFromOcctMeshes(meshes: OcctMesh[]): DetectedHoles {
     .map(([diameterMm, count]) => ({ diameterMm, count }))
     .sort((a, b) => b.count - a.count);
 
-  return { holeCount: holeDiameters.length, holeDetails, boreCount };
+  return { holeCount: holeDiameters.length, holeDetails, boreCount, bendCount };
 }

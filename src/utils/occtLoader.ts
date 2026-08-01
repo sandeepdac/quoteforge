@@ -9,7 +9,7 @@
 // Vite emits the WASM as a hashed asset and hands back its URL (a tiny string).
 import wasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 
-import { detectHolesFromOcctMeshes, DetectedHoles } from './holeDetector';
+import { detectFeaturesFromOcctMeshes, DetectedFeatures } from './holeDetector';
 
 export interface TessellatedMesh {
   positions: Float32Array;
@@ -17,7 +17,7 @@ export interface TessellatedMesh {
   indices: Uint32Array;
   hasNormals: boolean;
   meshCount: number;
-  holes?: DetectedHoles; // holes detected geometrically from the B-Rep faces
+  features?: DetectedFeatures; // holes + bends detected geometrically from the B-Rep faces
 }
 
 export interface MeshMeasurements {
@@ -205,15 +205,15 @@ export async function tessellateCad(
       idxOffset += idx.length;
     }
 
-    // Detect holes geometrically from the solid faces (before they were merged).
-    let holes: DetectedHoles | undefined;
+    // Detect holes + bends geometrically from the solid faces (before merging).
+    let features: DetectedFeatures | undefined;
     try {
-      holes = detectHolesFromOcctMeshes(meshes);
+      features = detectFeaturesFromOcctMeshes(meshes);
     } catch (err) {
-      console.warn('[occt] geometric hole detection failed', err);
+      console.warn('[occt] geometric feature detection failed', err);
     }
 
-    return { positions, normals, indices, hasNormals, meshCount: result.meshes.length, holes };
+    return { positions, normals, indices, hasNormals, meshCount: result.meshes.length, features };
   } catch (err) {
     console.warn('[occt] STEP tessellation failed, falling back to schematic view', err);
     return null;
