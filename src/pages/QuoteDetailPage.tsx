@@ -211,8 +211,8 @@ export default function QuoteDetailPage() {
                  <div className="space-y-4 border-l-2 border-border ml-2 pl-4 py-2">
                    <div className="relative">
                       <div className="absolute -left-[24px] top-1.5 w-3 h-3 rounded-full bg-primary ring-4 ring-background"></div>
-                      <p className="text-xs font-bold">Today, 10:24 AM</p>
-                      <p className="text-xs text-muted-foreground">Quote created by AI extraction</p>
+                      <p className="text-xs font-bold">{new Date(quote.createdDate).toLocaleDateString()}</p>
+                      <p className="text-xs text-muted-foreground">Quote created from CAD extraction</p>
                    </div>
                  </div>
               </div>
@@ -251,6 +251,9 @@ export default function QuoteDetailPage() {
                   <BreakdownRow label="Fabrication/Bending" value={quote.costs.bendCost + quote.costs.weldCost} />
                   <BreakdownRow label="Assembly & Finish" value={quote.costs.assemblyCost + quote.costs.finishCost} />
                   <BreakdownRow label="Overhead" value={quote.costs.overhead} />
+                  {quote.costs.rushPremium > 0 && (
+                    <BreakdownRow label="Rush Premium (order)" value={quote.costs.rushPremium} />
+                  )}
                 </div>
              </div>
           </div>
@@ -269,10 +272,13 @@ export default function QuoteDetailPage() {
           {quote.status === 'lost' && (
             <div className="p-5 bg-red-100/30 border border-red-200 dark:bg-red-900/10 dark:border-red-900/30 rounded-lg space-y-3">
               <div className="flex items-center gap-2 text-red-700 dark:text-red-400 font-bold text-xs uppercase tracking-widest">
-                <Info size={14} /> AI Loss Analysis
+                <Info size={14} /> Loss Analysis
               </div>
               <p className="text-xs text-red-700/80 dark:text-red-400/80 leading-relaxed">
-                Quote was likely lost due to price being 15% above market average for Aluminum 5052 chassis components.
+                {quote.lossReason
+                  ? `Marked lost — reason: ${quote.lossReason}.`
+                  : 'Marked lost. No specific reason was recorded.'}
+                {` ${part?.name ?? 'This part'} in ${material?.name ?? 'the selected material'} was quoted at $${quote.totalUnitPrice.toFixed(2)}/ea over ${quote.leadTimeDays} days.`}
               </p>
             </div>
           )}

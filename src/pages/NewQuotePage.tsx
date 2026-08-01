@@ -22,6 +22,8 @@ export default function NewQuotePage() {
   const { settings } = useSettings();
   const [currentStep, setCurrentStep] = useState(1);
   const [cadAnalysis, setCadAnalysis] = useState<ExtractedCadAnalysis | undefined>(undefined);
+  // Generate the quote number once so the Review preview matches the saved quote.
+  const [quoteNumber] = useState(generateQuoteNumber);
 
   const [quoteData, setQuoteData] = useState<any>({
     partName: 'Custom Fabricated Part',
@@ -50,21 +52,27 @@ export default function NewQuotePage() {
   });
 
   useEffect(() => {
-    if (location.state?.cloneData) {
-      const clone = location.state.cloneData as Quote;
-      const part = location.state.partData;
-      setQuoteData({
-        features: part?.features || quoteData.features,
-        config: {
-          customerId: clone.customerId,
-          quantity: clone.quantity,
-          leadTimeDays: clone.leadTimeDays,
-          shippingType: clone.shippingType,
-          isRush: clone.isRushOrder
-        }
-      });
-      setCurrentStep(3);
-    }
+    const state = location.state as { cloneData?: Quote; partData?: Part } | null;
+    if (!state?.cloneData && !state?.partData) return;
+    const clone = state.cloneData;
+    const part = state.partData;
+    setQuoteData((prev: any) => ({
+      ...prev,
+      partName: part?.name ?? prev.partName,
+      features: part?.features
+        ? { ...prev.features, materialId: part.materialId, ...part.features }
+        : prev.features,
+      config: clone
+        ? {
+            customerId: clone.customerId,
+            quantity: clone.quantity,
+            leadTimeDays: clone.leadTimeDays,
+            shippingType: clone.shippingType,
+            isRush: clone.isRushOrder,
+          }
+        : prev.config,
+    }));
+    setCurrentStep(3);
   }, [location.state]);
 
   const handleUploadContinue = (analysis?: ExtractedCadAnalysis) => {
@@ -150,7 +158,7 @@ export default function NewQuotePage() {
 
     const newQuote: Quote = {
       id: generateId('q-'),
-      quoteNumber: generateQuoteNumber(),
+      quoteNumber,
       customerId: quoteData.config.customerId,
       partId: newPart.id,
       status: isDraft ? 'draft' : 'sent',
@@ -202,6 +210,7 @@ export default function NewQuotePage() {
         {currentStep === 4 && (
           <StepReview
             data={quoteData}
+            quoteNumber={quoteNumber}
             onSend={(opts) => handleFinalize(false, opts)}
             onSaveDraft={(opts) => handleFinalize(true, opts)}
             onBack={handleBack}

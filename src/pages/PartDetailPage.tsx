@@ -29,8 +29,9 @@ export default function PartDetailPage() {
           <p className="text-sm text-muted-foreground">Internal Part ID: {part.id.toUpperCase()}</p>
         </div>
         <div className="flex-1"></div>
-        <Link 
+        <Link
           to="/quotes/new"
+          state={{ partData: part }}
           className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-shadow shadow"
         >
           <Plus size={18} /> New Quote for this Part
@@ -143,10 +144,12 @@ export default function PartDetailPage() {
            
            <div className="bg-primary/5 border border-primary/20 p-5 rounded-lg space-y-3">
               <div className="flex items-center gap-2 text-primary font-bold text-xs uppercase tracking-widest leading-snug">
-                <Zap size={14} fill="currentColor" /> Feature Consistency
+                <Zap size={14} fill="currentColor" /> Reusable Part
               </div>
               <p className="text-xs text-primary/80 leading-relaxed">
-                This part has high feature extraction consistency (98%). AI models have identified this geometry in 4 other client repositories.
+                Geometry measured from CAD: {part.features.holeCount} holes, {part.features.bendCount} bends,
+                {' '}{part.features.weightKg.toFixed(2)} kg. Quoted {part.quoteCount}× — start a new quote to reuse
+                these features without re-uploading.
               </p>
            </div>
         </div>

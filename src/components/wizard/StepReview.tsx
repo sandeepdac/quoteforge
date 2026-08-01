@@ -18,12 +18,13 @@ import { cn } from '../../utils/cn';
 
 interface StepReviewProps {
   data: any;
+  quoteNumber: string;
   onSend: (opts: { margin: number; notes: string }) => void;
   onSaveDraft: (opts: { margin: number; notes: string }) => void;
   onBack: () => void;
 }
 
-export default function StepReview({ data, onSend, onSaveDraft, onBack }: StepReviewProps) {
+export default function StepReview({ data, quoteNumber, onSend, onSaveDraft, onBack }: StepReviewProps) {
   const { customers, materials } = useQuotes();
   const { settings } = useSettings();
   const [margin, setMargin] = useState(settings.defaultMargin);
@@ -54,7 +55,6 @@ export default function StepReview({ data, onSend, onSaveDraft, onBack }: StepRe
     return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
   };
 
-  const quoteNumber = "Q-2026-0248";
   const validUntil = new Date();
   validUntil.setDate(validUntil.getDate() + 30);
 

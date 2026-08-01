@@ -36,10 +36,30 @@ export default function AnalyticsPage() {
 
   // Color Palette
   const CHART_COLORS = ['#2563eb', '#16a34a', '#ea580c', '#dc2626', '#71717a'];
+  // Theme-aware chart styling so charts are legible in dark mode.
+  const gridColor = theme === 'dark' ? '#27272a' : '#e5e5e5';
+  const axisColor = theme === 'dark' ? '#a1a1aa' : '#71717a';
+  const tooltipStyle = {
+    borderRadius: '8px',
+    border: `1px solid ${gridColor}`,
+    fontSize: '12px',
+    background: theme === 'dark' ? '#18181b' : '#ffffff',
+    color: theme === 'dark' ? '#fafafa' : '#0a0a0a',
+  };
+
+  // Stable pseudo-random in [0,1) from a string, so the estimator-accuracy scatter
+  // doesn't jitter on every render.
+  const hashFrac = (s: string) => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return (Math.abs(h) % 1000) / 1000;
+  };
 
   const totalRevenue = quotes.filter(q => q.status === 'won').reduce((acc, q) => acc + q.grandTotal, 0);
   const pipelineValue = quotes.filter(q => q.status === 'sent').reduce((acc, q) => acc + q.grandTotal, 0);
   const avgMargin = quotes.length > 0 ? (quotes.reduce((acc, q) => acc + q.marginPercent, 0) / quotes.length) * 100 : 0;
+  const decidedCount = quotes.filter(q => ['won', 'lost', 'expired'].includes(q.status)).length;
+  const winRate = decidedCount > 0 ? Math.round((quotes.filter(q => q.status === 'won').length / decidedCount) * 100) : 0;
 
   // Process data for charts
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May'];
@@ -109,7 +129,7 @@ export default function AnalyticsPage() {
 
   const accuracyData = quotes.filter(q => q.status === 'won').map(q => ({
     quoted: q.costs.subtotal,
-    actual: q.costs.subtotal * (0.95 + Math.random() * 0.1), // Mock actual vs quote
+    actual: q.costs.subtotal * (0.95 + hashFrac(q.id) * 0.1), // deterministic sample actual
     label: q.quoteNumber
   }));
 
@@ -122,10 +142,10 @@ export default function AnalyticsPage() {
 
       {/* Primary KPI Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard label="Total Won Revenue" value={`$${(totalRevenue / 1000).toFixed(1)}k`} trend="+12.4%" />
-        <MetricCard label="Pipeline Value" value={`$${(pipelineValue / 1000).toFixed(1)}k`} trend="+4.2%" />
-        <MetricCard label="Average Margin" value={`${avgMargin.toFixed(1)}%`} trend="-2.1%" />
-        <MetricCard label="Avg. Bid Spread" value="8.4%" trend="+0.5%" />
+        <MetricCard label="Total Won Revenue" value={`$${(totalRevenue / 1000).toFixed(1)}k`} />
+        <MetricCard label="Pipeline Value" value={`$${(pipelineValue / 1000).toFixed(1)}k`} />
+        <MetricCard label="Average Margin" value={`${avgMargin.toFixed(1)}%`} />
+        <MetricCard label="Win Rate" value={`${winRate}%`} sub={`${quotes.filter(q => q.status === 'won').length} of ${decidedCount} decided`} />
       </div>
 
       {/* Conversion & Win Rate Row */}
@@ -141,10 +161,10 @@ export default function AnalyticsPage() {
                       <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
-                  <XAxis dataKey="month" axisLine={false} tickLine={false} fontSize={10} />
-                  <YAxis axisLine={false} tickLine={false} unit="%" fontSize={10} />
-                  <RechartsTooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e5e5e5', fontSize: '12px' }} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
+                  <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} />
+                  <YAxis axisLine={false} tickLine={false} unit="%" tick={{ fill: axisColor, fontSize: 10 }} />
+                  <RechartsTooltip contentStyle={tooltipStyle} />
                   <Area type="monotone" dataKey="rate" stroke="#2563eb" fillOpacity={1} fill="url(#colorRate)" strokeWidth={3} />
                 </AreaChart>
               </ResponsiveContainer>
@@ -155,10 +175,10 @@ export default function AnalyticsPage() {
           <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={funnelData} layout="vertical" margin={{ left: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e5e5e5" />
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={gridColor} />
                 <XAxis type="number" hide />
-                <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} fontSize={10} />
-                <RechartsTooltip cursor={{ fill: 'transparent' }} contentStyle={{ borderRadius: '8px', border: '1px solid #e5e5e5', fontSize: '12px' }} />
+                <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} />
+                <RechartsTooltip cursor={{ fill: 'transparent' }} contentStyle={tooltipStyle} />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={40}>
                   {funnelData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.fill} />
@@ -176,10 +196,10 @@ export default function AnalyticsPage() {
            <div className="h-[300px]">
              <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={revenueByMonth}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
-                  <XAxis dataKey="month" axisLine={false} tickLine={false} fontSize={10} />
-                  <YAxis axisLine={false} tickLine={false} fontSize={10} unit="$" tickFormatter={(v) => `${v/1000}k`} />
-                  <RechartsTooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e5e5e5', fontSize: '12px' }} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
+                  <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} unit="$" tickFormatter={(v) => `${v/1000}k`} />
+                  <RechartsTooltip contentStyle={tooltipStyle} />
                   <Bar dataKey="won" stackId="a" fill="#16a34a" name="Won" />
                   <Bar dataKey="lost" stackId="a" fill="#dc2626" name="Lost" radius={[4, 4, 0, 0]} />
                 </BarChart>
@@ -191,10 +211,10 @@ export default function AnalyticsPage() {
            <div className="h-[300px]">
              <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={leadTimeAccuracy} margin={{ top: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={10} />
-                  <YAxis axisLine={false} tickLine={false} fontSize={10} />
-                  <RechartsTooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e5e5e5', fontSize: '12px' }} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} />
+                  <RechartsTooltip contentStyle={tooltipStyle} />
                   <Bar dataKey="promised" fill="#3b82f6" name="Promised" radius={[4, 4, 0, 0]} barSize={20} />
                   <Bar dataKey="actual" fill="#fbbf24" name="Actual Production" radius={[4, 4, 0, 0]} barSize={20} />
                 </BarChart>
@@ -223,7 +243,7 @@ export default function AnalyticsPage() {
                         <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
                       ))}
                     </Pie>
-                    <RechartsTooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e5e5e5', fontSize: '12px' }} />
+                    <RechartsTooltip contentStyle={tooltipStyle} />
                   </PieChart>
                </ResponsiveContainer>
              </div>
@@ -234,7 +254,7 @@ export default function AnalyticsPage() {
                       <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: CHART_COLORS[idx] }}></div>
                       {item.name.split(' ')[0]}
                     </span>
-                    <span className="font-black text-[#0a0a0a]">${(item.value / 1000).toFixed(0)}k</span>
+                    <span className="font-black text-foreground">${(item.value / 1000).toFixed(0)}k</span>
                   </div>
                 ))}
              </div>
@@ -259,7 +279,7 @@ export default function AnalyticsPage() {
                       <Cell key={`cell-${index}`} fill={CHART_COLORS[(index + 2) % CHART_COLORS.length]} />
                     ))}
                   </Pie>
-                  <RechartsTooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e5e5e5', fontSize: '12px' }} />
+                  <RechartsTooltip contentStyle={tooltipStyle} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -270,7 +290,7 @@ export default function AnalyticsPage() {
                     <div className="w-2 h-2 rounded-full" style={{ backgroundColor: CHART_COLORS[(idx + 2) % CHART_COLORS.length] }}></div>
                     {item.name}
                   </span>
-                  <span className="font-black text-[#0a0a0a]">{item.value} quotes</span>
+                  <span className="font-black text-foreground">{item.value} quotes</span>
                 </div>
               ))}
             </div>
@@ -282,11 +302,11 @@ export default function AnalyticsPage() {
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ScatterChart margin={{ top: 20, right: 30, bottom: 20, left: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" vertical={false} />
-                  <XAxis type="number" dataKey="quoted" name="Quoted Cost" unit="$" axisLine={false} tickLine={false} fontSize={10} />
-                  <YAxis type="number" dataKey="actual" name="Actual Cost" unit="$" axisLine={false} tickLine={false} fontSize={10} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+                  <XAxis type="number" dataKey="quoted" name="Quoted Cost" unit="$" axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} />
+                  <YAxis type="number" dataKey="actual" name="Actual Cost" unit="$" axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} />
                   <ZAxis type="category" dataKey="label" name="Project ID" />
-                  <RechartsTooltip cursor={{ strokeDasharray: '3-3' }} contentStyle={{ borderRadius: '8px', border: '1px solid #e5e5e5', fontSize: '12px' }} />
+                  <RechartsTooltip cursor={{ strokeDasharray: '3-3' }} contentStyle={tooltipStyle} />
                   <Scatter name="Projects" data={accuracyData} fill="#2563eb" />
                 </ScatterChart>
               </ResponsiveContainer>
@@ -298,21 +318,24 @@ export default function AnalyticsPage() {
   );
 }
 
-function MetricCard({ label, value, trend }: { label: string; value: string; trend: string }) {
-  const isPositive = trend.startsWith('+');
+function MetricCard({ label, value, trend, sub }: { label: string; value: string; trend?: string; sub?: string }) {
+  const isPositive = trend?.startsWith('+');
   return (
     <div className="bg-card border border-border p-5 rounded-lg shadow-sm">
       <div className="flex items-center justify-between mb-2">
         <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{label}</span>
-        <div className={cn(
-          "flex items-center gap-0.5 text-[10px] font-bold",
-          isPositive ? "text-green-600" : "text-red-500"
-        )}>
-           {isPositive ? <ArrowUpRight size={10} /> : <ArrowUpRight className="rotate-90" size={10} />}
-           {trend}
-        </div>
+        {trend && (
+          <div className={cn(
+            "flex items-center gap-0.5 text-[10px] font-bold",
+            isPositive ? "text-green-600" : "text-red-500"
+          )}>
+            {isPositive ? <ArrowUpRight size={10} /> : <ArrowUpRight className="rotate-90" size={10} />}
+            {trend}
+          </div>
+        )}
       </div>
-      <p className="text-2xl font-black">{value}</p>
+      <p className="text-2xl font-black text-foreground">{value}</p>
+      {sub && <p className="text-[10px] text-muted-foreground mt-1">{sub}</p>}
     </div>
   );
 }
