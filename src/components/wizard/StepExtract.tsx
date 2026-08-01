@@ -326,6 +326,17 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
               Detected Manufacturing Operations
             </h3>
 
+            {cadAnalysis?.featuresNeedReview && (
+              <div className="flex items-start gap-2 bg-orange-500/10 border border-orange-500/25 text-orange-700 dark:text-orange-300 rounded-lg p-3 text-[11px] leading-relaxed">
+                <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                <span>
+                  This file carries annotation/PMI geometry, so auto-detected hole and bend
+                  counts may be over-stated. Dimensions and weight are measured from the solid
+                  and are reliable — but please verify the operation counts below before quoting.
+                </span>
+              </div>
+            )}
+
             <div className="space-y-3">
               {/* Laser Cutting */}
               <div className="bg-accent/40 border border-border p-3.5 rounded-lg flex items-center justify-between">
@@ -398,11 +409,33 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
                   </div>
                   <div className="text-right">
                     <span className="text-[10px] text-muted-foreground block">Weld (mm)</span>
-                    <input 
-                      type="number" 
+                    <input
+                      type="number"
                       className="w-20 bg-background border border-border rounded px-2 py-1 text-xs text-center font-bold"
                       value={features.weldLengthMm}
                       onChange={(e) => setFeatures({...features, weldLengthMm: Number(e.target.value)})}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Surface Finishing */}
+              <div className="bg-accent/40 border border-border p-3.5 rounded-lg flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-foreground">Surface Finishing</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Deburr, coat &amp; finish over wetted area
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <span className="text-[10px] text-muted-foreground block">Area (m²)</span>
+                    <input
+                      type="number"
+                      step="0.001"
+                      className="w-20 bg-background border border-border rounded px-2 py-1 text-xs text-center font-bold"
+                      value={features.surfaceAreaM2}
+                      onChange={(e) => setFeatures({...features, surfaceAreaM2: Number(e.target.value)})}
                     />
                   </div>
                 </div>

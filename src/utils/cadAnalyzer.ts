@@ -38,6 +38,8 @@ export interface ExtractedCadAnalysis {
   stepMesh?: TessellatedMesh; // Tessellated B-Rep for the 3D viewer (reused, not re-computed)
   /** How dimensions/volume/weight were obtained. */
   measurementSource: MeasurementSource;
+  /** True when detected operations (holes/bends/perimeter) are unreliable and need review. */
+  featuresNeedReview?: boolean;
   pdfData?: CadPdfMetadata;
   pdfUrl?: string; // Object URL / static path to the actual PDF/image for inline rendering
 }
@@ -125,6 +127,30 @@ async function analyzeSolid(
     const surfaceAreaM2 = round(meas.surfaceAreaCm2 / 10000, 3) || 0;
     const stepData = solidStepData(fileName, meas, stepResult);
 
+    // Perimeter is a laser-cut concept derived from the outline + holes. Recompute it
+    // from the MEASURED bounding box — the text parser's value can be corrupted by
+    // PMI/annotation geometry that sits far outside the actual part.
+    const outerPerimeter = 2 * (meas.lengthMm + meas.widthMm);
+    const holePerimeter = stepData.holeDetails.reduce(
+      (s, h) => s + Math.PI * h.diameterMm * h.count,
+      0
+    );
+    const perimeterMm = Math.round(outerPerimeter + holePerimeter);
+    stepData.perimeterMm = perimeterMm;
+    stepData.bounds = {
+      minX: 0, maxX: meas.boundingBoxMm.x,
+      minY: 0, maxY: meas.boundingBoxMm.y,
+      minZ: 0, maxZ: meas.boundingBoxMm.z,
+    };
+
+    // Topology from the STEP text is unreliable when the file carries PMI/annotation
+    // geometry — detectable when the text bounding box dwarfs the measured solid.
+    const textDiag = stepResult
+      ? Math.hypot(stepResult.lengthMm, stepResult.widthMm, stepResult.heightMm)
+      : 0;
+    const meshDiag = Math.hypot(meas.lengthMm, meas.widthMm, meas.heightMm);
+    const featuresNeedReview = !!stepResult && textDiag > meshDiag * 1.5;
+
     return {
       partName: baseName(fileName),
       fileType: 'STEP',
@@ -134,7 +160,7 @@ async function analyzeSolid(
       lengthMm: meas.lengthMm,
       widthMm: meas.widthMm,
       heightMm: meas.heightMm,
-      perimeterMm: stepData.perimeterMm,
+      perimeterMm,
       pierceCount: stepData.pierceCount,
       bendCount: stepData.bendCount,
       isSimpleBending: stepData.isSimpleBending,
@@ -149,14 +175,17 @@ async function analyzeSolid(
       aiNotes: [
         `Measured directly from the solid model — bounding box ${meas.lengthMm} × ${meas.widthMm} × ${meas.heightMm} mm.`,
         `Enclosed volume ${meas.volumeCm3} cm³ → weight ${weightKg} kg in ${materialName} (density ${density} g/cm³).`,
-        stepResult
+        featuresNeedReview
+          ? `Detected ${stepData.holeCount} holes and ${stepData.bendCount} bends, but this file carries annotation/PMI geometry — please verify the operation counts before quoting.`
+          : stepResult
           ? `Wetted surface area ${surfaceAreaM2} m² sets finishing cost; ${stepData.holeCount} holes and ${stepData.bendCount} bends from B-Rep topology.`
           : `Wetted surface area ${surfaceAreaM2} m² sets finishing cost. Confirm holes/bends on the right — topology isn't available for ${format.toUpperCase()}.`,
       ],
-      confidenceScore: 98,
+      confidenceScore: featuresNeedReview ? 75 : 98,
       stepData,
       stepMesh: mesh,
       measurementSource: 'solid',
+      featuresNeedReview,
     };
   }
 

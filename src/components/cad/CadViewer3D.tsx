@@ -25,6 +25,46 @@ interface CadViewer3DProps {
 
 type MeshStatus = 'idle' | 'ready' | 'fallback';
 
+/** Builds a camera-facing text label (rounded pill) as a THREE.Sprite. */
+function makeTextSprite(text: string, colorCss: string): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  const measureCtx = canvas.getContext('2d')!;
+  const fontSize = 48;
+  const font = `bold ${fontSize}px ui-monospace, monospace`;
+  measureCtx.font = font;
+  const textW = Math.ceil(measureCtx.measureText(text).width);
+  canvas.width = textW + 36;
+  canvas.height = fontSize + 26;
+
+  const ctx = canvas.getContext('2d')!;
+  ctx.font = font;
+  const r = 12;
+  ctx.beginPath();
+  ctx.moveTo(r, 0);
+  ctx.arcTo(canvas.width, 0, canvas.width, canvas.height, r);
+  ctx.arcTo(canvas.width, canvas.height, 0, canvas.height, r);
+  ctx.arcTo(0, canvas.height, 0, 0, r);
+  ctx.arcTo(0, 0, canvas.width, 0, r);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(15,23,42,0.82)';
+  ctx.fill();
+  ctx.strokeStyle = colorCss;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = colorCss;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true })
+  );
+  sprite.userData.aspect = canvas.width / canvas.height;
+  return sprite;
+}
+
 export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, className = '' }: CadViewer3DProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [isWireframe, setIsWireframe] = useState(false);
@@ -57,6 +97,18 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
   }, [stepMesh]);
 
   const meshStatus: MeshStatus = realGeometry ? 'ready' : 'fallback';
+
+  // Real per-axis bounding-box extents (mm) of what's actually rendered — used for
+  // both the on-canvas dimension overlay and the summary panel.
+  const axisDims = useMemo(() => {
+    if (realGeometry) {
+      realGeometry.computeBoundingBox();
+      const b = realGeometry.boundingBox!;
+      const r1 = (n: number) => Math.round(n * 10) / 10;
+      return { x: r1(b.max.x - b.min.x), y: r1(b.max.y - b.min.y), z: r1(b.max.z - b.min.z) };
+    }
+    return { x: cadData.lengthMm, y: cadData.heightMm, z: cadData.widthMm };
+  }, [realGeometry, cadData]);
 
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -91,7 +143,9 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
     // 2. Camera Setup
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 2000);
     const maxDim = Math.max(cadData.lengthMm, cadData.widthMm, cadData.heightMm) || 300;
-    camera.position.set(maxDim * 1.5, maxDim * 1.2, maxDim * 1.8);
+    // Frame slightly wider when dimension annotations are shown so their labels fit.
+    const frame = showDimensions ? 1.12 : 1.0;
+    camera.position.set(maxDim * 1.5 * frame, maxDim * 1.2 * frame, maxDim * 1.8 * frame);
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
@@ -242,6 +296,52 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
       objectGroup.add(bboxLines);
     }
 
+    // Add 3D dimension annotations (dimension lines + camera-facing labels) along
+    // each axis of the actual geometry, so the size reads directly off the model.
+    if (showDimensions) {
+      const dx = axisDims.x, dy = axisDims.y, dz = axisDims.z;
+      const hx = dx / 2, hy = dy / 2, hz = dz / 2;
+      const maxD = Math.max(dx, dy, dz) || 100;
+      const off = maxD * 0.06;
+      const tickLen = maxD * 0.025;
+      const labelH = maxD * 0.1;
+
+      const addDim = (
+        a: THREE.Vector3,
+        b: THREE.Vector3,
+        tickDir: THREE.Vector3,
+        label: string,
+        hex: number,
+        css: string
+      ) => {
+        const mat = new THREE.LineBasicMaterial({ color: hex, depthTest: false, transparent: true });
+        objectGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), mat));
+        const td = tickDir.clone().multiplyScalar(tickLen);
+        objectGroup.add(
+          new THREE.LineSegments(
+            new THREE.BufferGeometry().setFromPoints([
+              a.clone().add(td), a.clone().sub(td),
+              b.clone().add(td), b.clone().sub(td),
+            ]),
+            mat
+          )
+        );
+        const sprite = makeTextSprite(label, css);
+        const aspect = (sprite.userData.aspect as number) || 3;
+        sprite.scale.set(labelH * aspect, labelH, 1);
+        sprite.position.copy(
+          a.clone().add(b).multiplyScalar(0.5).add(tickDir.clone().multiplyScalar(tickLen * 2.4))
+        );
+        objectGroup.add(sprite);
+      };
+
+      const V = THREE.Vector3;
+      // X (red), Y (green), Z (blue) — labelled with the real extent along that axis.
+      addDim(new V(-hx, -hy - off, hz), new V(hx, -hy - off, hz), new V(0, 1, 0), `${dx} mm`, 0xf87171, '#f87171');
+      addDim(new V(hx + off, -hy, hz), new V(hx + off, hy, hz), new V(1, 0, 0), `${dy} mm`, 0x4ade80, '#4ade80');
+      addDim(new V(hx, -hy - off, -hz), new V(hx, -hy - off, hz), new V(0, 1, 0), `${dz} mm`, 0x60a5fa, '#60a5fa');
+    }
+
     scene.add(objectGroup);
 
     // Mouse Controls (Simple Orbit Drag)
@@ -324,7 +424,7 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
         domElem.removeChild(rendererRef.current.domElement);
       }
     };
-  }, [cadData, theme, isWireframe, showBoundingBox, showHoles, isAutoRotate, realGeometry]);
+  }, [cadData, theme, isWireframe, showBoundingBox, showHoles, showDimensions, isAutoRotate, realGeometry, axisDims]);
 
   const handleResetView = () => {
     if (objectGroupRef.current) {
@@ -380,6 +480,17 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
           </button>
 
           <button
+            onClick={() => setShowDimensions(!showDimensions)}
+            className={`px-2.5 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
+              showDimensions ? 'bg-sky-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+            }`}
+            title="Toggle Dimensions"
+          >
+            <Ruler size={13} />
+            Dims
+          </button>
+
+          <button
             onClick={() => setIsAutoRotate(!isAutoRotate)}
             className={`px-2.5 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
               isAutoRotate ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
@@ -427,16 +538,16 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
             </div>
             <div className="grid grid-cols-3 gap-3 text-center">
               <div className="bg-slate-800/80 p-1.5 rounded border border-slate-700">
-                <span className="text-[10px] text-slate-400 block">Length X</span>
-                <span className="font-bold text-white text-sm">{cadData.lengthMm} mm</span>
+                <span className="text-[10px] text-red-400 block">X</span>
+                <span className="font-bold text-white text-sm">{axisDims.x} mm</span>
               </div>
               <div className="bg-slate-800/80 p-1.5 rounded border border-slate-700">
-                <span className="text-[10px] text-slate-400 block">Width Y</span>
-                <span className="font-bold text-white text-sm">{cadData.widthMm} mm</span>
+                <span className="text-[10px] text-emerald-400 block">Y</span>
+                <span className="font-bold text-white text-sm">{axisDims.y} mm</span>
               </div>
               <div className="bg-slate-800/80 p-1.5 rounded border border-slate-700">
-                <span className="text-[10px] text-slate-400 block">Height Z</span>
-                <span className="font-bold text-white text-sm">{cadData.heightMm} mm</span>
+                <span className="text-[10px] text-sky-400 block">Z</span>
+                <span className="font-bold text-white text-sm">{axisDims.z} mm</span>
               </div>
             </div>
           </div>
