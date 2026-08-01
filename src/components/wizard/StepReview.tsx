@@ -18,8 +18,8 @@ import { cn } from '../../utils/cn';
 
 interface StepReviewProps {
   data: any;
-  onSend: () => void;
-  onSaveDraft: () => void;
+  onSend: (opts: { margin: number; notes: string }) => void;
+  onSaveDraft: (opts: { margin: number; notes: string }) => void;
   onBack: () => void;
 }
 
@@ -27,6 +27,7 @@ export default function StepReview({ data, onSend, onSaveDraft, onBack }: StepRe
   const { customers, materials } = useQuotes();
   const { settings } = useSettings();
   const [margin, setMargin] = useState(settings.defaultMargin);
+  const [notes, setNotes] = useState('');
 
   const customer = customers.find(c => c.id === data.config.customerId);
   const material = materials.find(m => m.id === data.features.materialId) || materials[0];
@@ -71,13 +72,10 @@ export default function StepReview({ data, onSend, onSaveDraft, onBack }: StepRe
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={onSaveDraft} className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium border border-border hover:bg-accent transition-colors">
+          <button onClick={() => onSaveDraft({ margin, notes })} className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium border border-border hover:bg-accent transition-colors">
             <Save size={16} /> Save Draft
           </button>
-          <button className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium border border-border hover:bg-accent transition-colors">
-            <Download size={16} /> PDF
-          </button>
-          <button onClick={onSend} className="flex items-center gap-2 px-6 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-shadow shadow">
+          <button onClick={() => onSend({ margin, notes })} className="flex items-center gap-2 px-6 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-shadow shadow">
             <Send size={16} /> Send to Customer
           </button>
         </div>
@@ -112,7 +110,7 @@ export default function StepReview({ data, onSend, onSaveDraft, onBack }: StepRe
                   <img src="https://picsum.photos/seed/quote/200/200" alt="Part" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 </div>
                 <div className="space-y-1">
-                  <p className="text-sm font-semibold">Custom Fabricated Part</p>
+                  <p className="text-sm font-semibold">{data.partName || 'Custom Fabricated Part'}</p>
                   <p className="text-xs text-muted-foreground">{material.name} {material.thicknessMm}mm</p>
                   <p className="text-xs text-muted-foreground">{data.features.lengthMm} x {data.features.widthMm} x {data.features.heightMm} mm</p>
                 </div>
@@ -170,9 +168,11 @@ export default function StepReview({ data, onSend, onSaveDraft, onBack }: StepRe
 
           <div className="space-y-3">
             <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Notes for customer</label>
-            <textarea 
-              placeholder="Add any specific assumptions or notes for this quote..." 
+            <textarea
+              placeholder="Add any specific assumptions or notes for this quote..."
               className="w-full bg-background border border-border rounded-md p-4 text-sm min-h-[100px] focus:outline-none focus:ring-1 focus:ring-primary"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
             ></textarea>
           </div>
         </div>

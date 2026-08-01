@@ -19,6 +19,7 @@ interface QuoteContextType {
   getCustomerById: (id: string) => Customer | undefined;
   getMaterialById: (id: string) => Material | undefined;
   addMaterial: (material: Material) => void;
+  addPart: (part: Part) => void;
 }
 
 const QuoteContext = createContext<QuoteContextType | undefined>(undefined);
@@ -44,6 +45,8 @@ export const QuoteProvider = ({ children }: { children: ReactNode }) => {
 
   const addMaterial = (material: Material) => setMaterials([material, ...materials]);
 
+  const addPart = (part: Part) => setParts([part, ...parts]);
+
   return (
     <QuoteContext.Provider value={{ 
       quotes, 
@@ -57,7 +60,8 @@ export const QuoteProvider = ({ children }: { children: ReactNode }) => {
       getPartById,
       getCustomerById,
       getMaterialById,
-      addMaterial
+      addMaterial,
+      addPart
     }}>
       {children}
     </QuoteContext.Provider>

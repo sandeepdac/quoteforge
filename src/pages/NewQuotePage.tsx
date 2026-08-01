@@ -6,10 +6,11 @@ import StepExtract from '../components/wizard/StepExtract';
 import StepQuantity from '../components/wizard/StepQuantity';
 import StepReview from '../components/wizard/StepReview';
 import { useQuotes } from '../context/QuoteContext';
-import { Quote } from '../types';
+import { useSettings } from '../context/SettingsContext';
+import { Quote, Part } from '../types';
 import { calculateQuoteCosts, calculateWinProbability } from '../utils/estimator';
-import { DEFAULT_SHOP_SETTINGS } from '../constants';
 import { generateQuoteNumber, generateId } from '../utils/idGenerator';
+import { generatePartThumbnail } from '../utils/partThumbnail';
 import { ExtractedCadAnalysis } from '../utils/cadAnalyzer';
 
 const STEPS = ['Upload', 'AI Extraction', 'Quantity', 'Review'];
@@ -17,11 +18,13 @@ const STEPS = ['Upload', 'AI Extraction', 'Quantity', 'Review'];
 export default function NewQuotePage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { addQuote, materials } = useQuotes();
+  const { addQuote, addPart, materials } = useQuotes();
+  const { settings } = useSettings();
   const [currentStep, setCurrentStep] = useState(1);
   const [cadAnalysis, setCadAnalysis] = useState<ExtractedCadAnalysis | undefined>(undefined);
-  
-  const [quoteData, setQuoteData] = useState({
+
+  const [quoteData, setQuoteData] = useState<any>({
+    partName: 'Custom Fabricated Part',
     features: {
       materialId: 'm1',
       lengthMm: 0,
@@ -75,6 +78,7 @@ export default function NewQuotePage() {
 
       setQuoteData(prev => ({
         ...prev,
+        partName: analysis.partName || 'Custom Fabricated Part',
         features: {
           ...prev.features,
           materialId: matchedMat.id,
@@ -110,27 +114,45 @@ export default function NewQuotePage() {
     setCurrentStep(prev => prev - 1);
   };
 
-  const handleFinalize = (isDraft: boolean) => {
+  const handleFinalize = (isDraft: boolean, opts?: { margin?: number; notes?: string }) => {
     const material = materials.find(m => m.id === quoteData.features.materialId) || materials[0];
-    const margin = DEFAULT_SHOP_SETTINGS.defaultMargin;
-    
+    // Use the margin chosen on the Review step (falls back to the shop default), and
+    // the shop's live settings — so the saved quote matches what was previewed.
+    const margin = opts?.margin ?? settings.defaultMargin;
+
     const costs = calculateQuoteCosts(
       quoteData.features,
       quoteData.config.quantity,
       quoteData.config.isRush,
       margin,
       material.pricePerKg,
-      DEFAULT_SHOP_SETTINGS
+      settings
     );
 
     const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
     const grandTotal = (unitPrice * quoteData.config.quantity) + costs.rushPremium;
 
+    // Persist the actual measured part so the quote references its real geometry,
+    // and it shows up in the Parts catalog — instead of pointing at a mock part.
+    const { materialId, ...partFeatures } = quoteData.features;
+    const partName: string = quoteData.partName || 'Custom Fabricated Part';
+    const newPart: Part = {
+      id: generateId('p-'),
+      name: partName,
+      materialId,
+      thicknessMm: cadAnalysis?.thicknessMm ?? material.thicknessMm,
+      features: partFeatures,
+      thumbnail: generatePartThumbnail(partName),
+      lastQuotedDate: new Date().toISOString().split('T')[0],
+      quoteCount: 1,
+    };
+    addPart(newPart);
+
     const newQuote: Quote = {
       id: generateId('q-'),
       quoteNumber: generateQuoteNumber(),
       customerId: quoteData.config.customerId,
-      partId: 'p1',
+      partId: newPart.id,
       status: isDraft ? 'draft' : 'sent',
       createdDate: new Date().toISOString().split('T')[0],
       validUntilDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -139,7 +161,7 @@ export default function NewQuotePage() {
       shippingType: quoteData.config.shippingType,
       isRushOrder: quoteData.config.isRush,
       marginPercent: margin,
-      notes: '',
+      notes: opts?.notes ?? '',
       costs,
       totalUnitPrice: unitPrice,
       grandTotal,
@@ -178,10 +200,10 @@ export default function NewQuotePage() {
           />
         )}
         {currentStep === 4 && (
-          <StepReview 
-            data={quoteData} 
-            onSend={() => handleFinalize(false)}
-            onSaveDraft={() => handleFinalize(true)}
+          <StepReview
+            data={quoteData}
+            onSend={(opts) => handleFinalize(false, opts)}
+            onSaveDraft={(opts) => handleFinalize(true, opts)}
             onBack={handleBack}
           />
         )}
