@@ -8,6 +8,7 @@ import {
   MeshMeasurements,
 } from './occtLoader';
 import { analyzeDrawingWithAI, AiDrawingData } from './aiExtractor';
+import { analyzeDfm, DfmReport } from './dfm';
 
 export type MeasurementSource = 'solid' | 'estimated' | 'ai-drawing' | 'manual';
 
@@ -40,6 +41,8 @@ export interface ExtractedCadAnalysis {
   measurementSource: MeasurementSource;
   /** True when detected operations (holes/bends/perimeter) are unreliable and need review. */
   featuresNeedReview?: boolean;
+  /** Advisory Design-for-Manufacturing findings from the measured geometry. */
+  dfm?: DfmReport;
   pdfData?: CadPdfMetadata;
   pdfUrl?: string; // Object URL / static path to the actual PDF/image for inline rendering
 }
@@ -159,12 +162,24 @@ async function analyzeSolid(
       ? holeDetails.map((h) => `${h.count}×⌀${h.diameterMm}`).join(', ')
       : 'none';
 
+    const thicknessMm = meas.heightMm < 12 ? Math.max(1.5, meas.heightMm) : 3.0;
+
+    // Advisory DFM checks from the measured geometry (positions/radii from the B-Rep).
+    const dfm = analyzeDfm({
+      thicknessMm,
+      boundingBoxMm: { lengthMm: meas.lengthMm, widthMm: meas.widthMm, heightMm: meas.heightMm },
+      holeDetails,
+      holes: geo?.holes,
+      bends: geo?.bends,
+      hasGeometry: !!geo,
+    });
+
     return {
       partName: baseName(fileName),
       fileType: 'STEP',
       fileName,
       materialName,
-      thicknessMm: meas.heightMm < 12 ? Math.max(1.5, meas.heightMm) : 3.0,
+      thicknessMm,
       lengthMm: meas.lengthMm,
       widthMm: meas.widthMm,
       heightMm: meas.heightMm,
@@ -192,6 +207,7 @@ async function analyzeSolid(
       stepMesh: mesh,
       measurementSource: 'solid',
       featuresNeedReview: false,
+      dfm,
     };
   }
 

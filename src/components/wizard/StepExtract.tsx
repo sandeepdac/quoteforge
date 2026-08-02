@@ -16,6 +16,7 @@ import { PartFeatures } from '../../types';
 import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import CadViewer3D from '../cad/CadViewer3D';
 import CadPdfViewer from '../cad/CadPdfViewer';
+import DfmPanel from '../cad/DfmPanel';
 
 interface StepExtractProps {
   cadAnalysis?: ExtractedCadAnalysis;
@@ -241,6 +242,9 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
               and the price updates in the next step.
             </p>
           </div>
+
+          {/* Design-for-Manufacturing advisory findings */}
+          {cadAnalysis?.dfm && <DfmPanel dfm={cadAnalysis.dfm} />}
         </div>
 
         {/* Right Column: Feature Controls & Material Parameters */}

@@ -14,14 +14,33 @@
  */
 import type { OcctMesh } from 'occt-import-js';
 
+export type Vec3 = [number, number, number];
+
+/** A single physical hole with the geometry DFM needs (position + drill axis). */
+export interface DetectedHole {
+  diameterMm: number;
+  center: Vec3; // representative point on the hole axis (centroid of the bore wall)
+  axis: Vec3;   // unit drill direction
+}
+
+/** A single press-brake bend: its inside radius, length and axis line. */
+export interface DetectedBend {
+  radiusMm: number; // inside (concave wall) radius
+  lengthMm: number; // extent along the bend axis
+  axisPoint: Vec3;  // a point on the bend axis line
+  axisDir: Vec3;    // unit direction of the bend line
+}
+
 export interface DetectedFeatures {
   holeCount: number;
   holeDetails: Array<{ diameterMm: number; count: number }>;
   boreCount: number;
   bendCount: number;
+  /** Per-hole geometry (holes only, not bores) for downstream DFM checks. */
+  holes: DetectedHole[];
+  /** Per-bend geometry for downstream DFM checks. */
+  bends: DetectedBend[];
 }
-
-type Vec3 = [number, number, number];
 
 interface CylFace {
   axis: Vec3;
@@ -188,6 +207,7 @@ export function detectFeaturesFromOcctMeshes(meshes: OcctMesh[]): DetectedFeatur
   // HOLES: cluster concave faces by axis line + radius; a hole wraps (near) fully.
   const isHoleFace = new Array(faces.length).fill(false);
   const holeDiameters: number[] = [];
+  const holes: DetectedHole[] = [];
   let boreCount = 0;
   const claimed = new Array(faces.length).fill(false);
 
@@ -212,15 +232,24 @@ export function detectFeaturesFromOcctMeshes(meshes: OcctMesh[]): DetectedFeatur
     if (angularCoverageDeg(angles) > 270) {
       group.forEach((g) => { claimed[g] = true; isHoleFace[g] = true; });
       const diameterMm = Math.round(faces[i].radius * 2 * 10) / 10;
-      if (diameterMm <= 60) holeDiameters.push(diameterMm);
-      else boreCount++;
+      if (diameterMm <= 60) {
+        holeDiameters.push(diameterMm);
+        // Representative center: centroid of every wall vertex across the cluster.
+        let cx = 0, cy = 0, cz = 0, np = 0;
+        for (const g of group) {
+          for (const p of faces[g].worldPts) { cx += p[0]; cy += p[1]; cz += p[2]; np++; }
+        }
+        holes.push({ diameterMm, center: [cx / np, cy / np, cz / np], axis: faces[i].axis });
+      } else {
+        boreCount++;
+      }
     }
   }
 
   // BENDS: a coaxial concave(inner r) + convex(outer r+t) partial-arc pair, with t in
   // the sheet-thickness range and overlapping along the axis (the two walls of a fold).
   const usedForBend = new Array(faces.length).fill(false);
-  let bendCount = 0;
+  const bends: DetectedBend[] = [];
   for (let i = 0; i < faces.length; i++) {
     const inner = faces[i];
     if (usedForBend[i] || isHoleFace[i] || !inner.concave || inner.coverageDeg > 230) continue;
@@ -234,10 +263,16 @@ export function detectFeaturesFromOcctMeshes(meshes: OcctMesh[]): DetectedFeatur
       const minLen = Math.min(inner.axMax - inner.axMin, outer.axMax - outer.axMin);
       if (overlap < minLen * 0.4) continue;
       usedForBend[i] = usedForBend[j] = true;
-      bendCount++;
+      bends.push({
+        radiusMm: Math.round(inner.radius * 100) / 100,
+        lengthMm: Math.round((inner.axMax - inner.axMin) * 10) / 10,
+        axisPoint: inner.centerPerp,
+        axisDir: inner.axis,
+      });
       break;
     }
   }
+  const bendCount = bends.length;
 
   const byDiameter = new Map<number, number>();
   holeDiameters.forEach((d) => byDiameter.set(d, (byDiameter.get(d) || 0) + 1));
@@ -245,5 +280,5 @@ export function detectFeaturesFromOcctMeshes(meshes: OcctMesh[]): DetectedFeatur
     .map(([diameterMm, count]) => ({ diameterMm, count }))
     .sort((a, b) => b.count - a.count);
 
-  return { holeCount: holeDiameters.length, holeDetails, boreCount, bendCount };
+  return { holeCount: holeDiameters.length, holeDetails, boreCount, bendCount, holes, bends };
 }
