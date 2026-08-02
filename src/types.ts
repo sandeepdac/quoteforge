@@ -6,6 +6,7 @@ export interface Material {
   pricePerKg: number;
   density: number; // kg/m3
   thicknessMm: number;
+  lastPriceUpdate?: string; // ISO timestamp of the last price change
 }
 
 export interface PartFeatures {

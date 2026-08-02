@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { Search, Filter, ArrowUpDown, ChevronDown, Plus } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Search, Filter, ArrowUpDown, Plus } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuotes } from '../context/QuoteContext';
 import StatusPill from '../components/common/StatusPill';
 import { QuoteStatus } from '../types';
@@ -8,8 +8,16 @@ import { cn } from '../utils/cn';
 
 export default function QuotesListPage() {
   const { quotes, customers, parts } = useQuotes();
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchTerm, setSearchTerm] = useState(searchParams.get('search') ?? '');
   const [statusFilter, setStatusFilter] = useState<QuoteStatus | 'all'>('all');
+
+  // Keep the field in sync when arriving via the global TopBar search.
+  useEffect(() => {
+    const q = searchParams.get('search');
+    if (q !== null && q !== searchTerm) setSearchTerm(q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const filteredQuotes = quotes.filter(q => {
     const customer = customers.find(c => c.id === q.customerId);
@@ -70,7 +78,14 @@ export default function QuotesListPage() {
                 placeholder="Search by quote #, customer, or part..." 
                 className="w-full bg-background border border-border rounded-md py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSearchTerm(v);
+                  const next = new URLSearchParams(searchParams);
+                  if (v) next.set('search', v);
+                  else next.delete('search');
+                  setSearchParams(next, { replace: true });
+                }}
               />
             </div>
             <button className="flex items-center gap-2 px-4 py-2 bg-muted border border-border rounded-md text-sm font-medium hover:bg-accent transition-colors">

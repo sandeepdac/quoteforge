@@ -19,6 +19,8 @@ interface QuoteContextType {
   getCustomerById: (id: string) => Customer | undefined;
   getMaterialById: (id: string) => Material | undefined;
   addMaterial: (material: Material) => void;
+  updateMaterial: (material: Material) => void;
+  deleteMaterial: (id: string) => void;
   addPart: (part: Part) => void;
 }
 
@@ -45,6 +47,12 @@ export const QuoteProvider = ({ children }: { children: ReactNode }) => {
 
   const addMaterial = (material: Material) => setMaterials([material, ...materials]);
 
+  const updateMaterial = (updated: Material) => {
+    setMaterials(materials.map(m => m.id === updated.id ? updated : m));
+  };
+
+  const deleteMaterial = (id: string) => setMaterials(materials.filter(m => m.id !== id));
+
   const addPart = (part: Part) => setParts([part, ...parts]);
 
   return (
@@ -61,6 +69,8 @@ export const QuoteProvider = ({ children }: { children: ReactNode }) => {
       getCustomerById,
       getMaterialById,
       addMaterial,
+      updateMaterial,
+      deleteMaterial,
       addPart
     }}>
       {children}
