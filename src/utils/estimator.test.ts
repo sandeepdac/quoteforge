@@ -54,6 +54,11 @@ describe('calculateQuoteCosts', () => {
     expect(rushed.rushPremium).toBeCloseTo(quoteTotal * DEFAULT_SHOP_SETTINGS.rushPremiumPercent, 5);
   });
 
+  it('charges no press-brake cost for a flat part with zero bends', () => {
+    const flat = calculateQuoteCosts({ ...features, bendCount: 0 }, 1, false, 0.25, 2.0, DEFAULT_SHOP_SETTINGS);
+    expect(flat.bendCost).toBe(0);
+  });
+
   it('charges more time for compound bends than simple bends', () => {
     const simple = calculateQuoteCosts(features, 1, false, 0.25, 2.0, DEFAULT_SHOP_SETTINGS);
     const compound = calculateQuoteCosts(

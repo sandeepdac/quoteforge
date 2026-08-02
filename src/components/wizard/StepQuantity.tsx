@@ -8,12 +8,6 @@ import {
   TrendingUp,
   PieChart as PieChartIcon
 } from 'lucide-react';
-import { 
-  PieChart, 
-  Pie, 
-  Cell, 
-  ResponsiveContainer 
-} from 'recharts';
 import { useQuotes } from '../../context/QuoteContext';
 import { useSettings } from '../../context/SettingsContext';
 import { calculateQuoteCosts } from '../../utils/estimator';
@@ -47,14 +41,20 @@ export default function StepQuantity({ data, onContinue, onBack, onUpdate }: Ste
   const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
 
-  const pieData = [
-    { name: 'Material', value: costs.materialCost },
-    { name: 'Laser', value: costs.laserCost },
-    { name: 'Labor/Bending', value: costs.bendCost + costs.weldCost + costs.assemblyCost },
-    { name: 'Finish', value: costs.finishCost },
-  ];
+  const f = data.features as PartFeatures;
+  // Each process cost tied back to the measured feature that drives it, so the
+  // estimate is traceable to the geometry rather than a single opaque number.
+  const lineItems = [
+    { key: 'material', name: 'Material', driver: `${f.weightKg} kg × $${currentMaterial.pricePerKg.toFixed(2)}/kg (+${(settings.scrapFactor * 100).toFixed(0)}% scrap)`, value: costs.materialCost, color: '#2563eb' },
+    { key: 'laser', name: 'Laser cutting', driver: `${Math.round(f.perimeterMm)} mm cut path · ${f.pierceCount} pierces`, value: costs.laserCost, color: '#3b82f6' },
+    { key: 'bending', name: 'Press brake', driver: f.bendCount > 0 ? `${f.bendCount} bend${f.bendCount > 1 ? 's' : ''} (${f.isSimpleBending ? 'simple' : 'compound'}) + setup` : 'no bends', value: costs.bendCost, color: '#60a5fa' },
+    { key: 'welding', name: 'Welding', driver: `${Math.round(f.weldLengthMm)} mm · ${f.weldCount} joint${f.weldCount === 1 ? '' : 's'}`, value: costs.weldCost, color: '#8b5cf6' },
+    { key: 'handling', name: 'Handling / assembly', driver: `${f.holeCount} hole${f.holeCount === 1 ? '' : 's'} + base handling`, value: costs.assemblyCost, color: '#a78bfa' },
+    { key: 'finish', name: 'Finishing', driver: `${f.surfaceAreaM2.toFixed(3)} m² surface`, value: costs.finishCost, color: '#93c5fd' },
+  ].filter((li) => li.value > 0.005);
 
-  const COLORS = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'];
+  const maxItem = Math.max(...lineItems.map((li) => li.value), 0.0001);
+  const fmt = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const quantityPresets = [1, 10, 50, 100, 500];
 
@@ -209,57 +209,64 @@ export default function StepQuantity({ data, onContinue, onBack, onUpdate }: Ste
               </div>
             </div>
 
+            {/* Itemized cost breakdown — each process tied to the measured geometry */}
             <div className="space-y-3">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                <PieChartIcon size={14} /> Cost Breakdown <span className="normal-case font-normal text-muted-foreground/70">/ unit</span>
+              </h4>
+              <div className="space-y-2.5">
+                {lineItems.map((li) => (
+                  <div key={li.key} className="space-y-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: li.color }}></span>
+                        <span className="text-sm font-medium text-foreground truncate">{li.name}</span>
+                      </div>
+                      <span className="text-sm font-semibold text-foreground tabular-nums">${fmt(li.value)}</span>
+                    </div>
+                    <div className="flex items-center gap-2 pl-4">
+                      <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${(li.value / maxItem) * 100}%`, backgroundColor: li.color }}></div>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground shrink-0">{Math.round((li.value / costs.subtotal) * 100)}%</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground/80 pl-4 leading-tight">{li.driver}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Roll-up to the unit price */}
+            <div className="space-y-2 border-t border-border pt-4">
               <div className="flex justify-between text-sm text-muted-foreground">
-                <span>Material & Processing</span>
-                <span>${(costs.subtotal + costs.overhead).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                <span>Manufacturing subtotal</span>
+                <span className="tabular-nums">${fmt(costs.subtotal)}</span>
+              </div>
+              <div className="flex justify-between text-sm text-muted-foreground">
+                <span>Overhead ({(settings.overheadPercent * 100).toFixed(0)}%)</span>
+                <span className="tabular-nums">${fmt(costs.overhead)}</span>
               </div>
               <div className="flex justify-between text-sm text-muted-foreground">
                 <span>Margin ({(settings.defaultMargin * 100).toFixed(0)}%)</span>
-                <span>${costs.marginAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                <span className="tabular-nums">${fmt(costs.marginAmount)}</span>
+              </div>
+              <div className="flex justify-between text-sm font-medium text-foreground pt-1 border-t border-border/60">
+                <span>Unit price</span>
+                <span className="tabular-nums">${fmt(unitPrice)}</span>
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>× {data.config.quantity} unit{data.config.quantity === 1 ? '' : 's'}</span>
+                <span className="tabular-nums">${fmt(unitPrice * data.config.quantity)}</span>
               </div>
               {data.config.isRush && (
                 <div className="flex justify-between text-sm text-orange-500 font-medium">
-                  <span>Rush Premium (20%)</span>
-                  <span>+${costs.rushPremium.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span>Rush premium ({(settings.rushPremiumPercent * 100).toFixed(0)}%)</span>
+                  <span className="tabular-nums">+${fmt(costs.rushPremium)}</span>
                 </div>
               )}
               <div className="pt-2 flex justify-between items-center text-xl font-bold text-foreground border-t border-border">
                 <span>Total</span>
-                <span>${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-              </div>
-            </div>
-
-            <div className="pt-4 space-y-4">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                <PieChartIcon size={14} /> Cost Breakdown
-              </h4>
-              <div className="h-40">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={35}
-                      outerRadius={55}
-                      paddingAngle={5}
-                      dataKey="value"
-                    >
-                      {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="grid grid-cols-2 gap-y-2">
-                {pieData.map((item, idx) => (
-                  <div key={item.name} className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[idx] }}></div>
-                    <span className="text-[10px] text-muted-foreground font-medium uppercase truncate">{item.name}</span>
-                  </div>
-                ))}
+                <span className="tabular-nums">${fmt(grandTotal)}</span>
               </div>
             </div>
           </div>
