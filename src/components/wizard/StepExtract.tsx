@@ -189,6 +189,22 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
             <CadPdfViewer pdfFileName={cadAnalysis?.fileName || 'Drawing.pdf'} pdfData={cadAnalysis?.pdfData} pdfUrl={cadAnalysis?.pdfUrl} />
           )}
 
+          {/* Formed-part caveat: folded solids understate the flat-blank cut length */}
+          {cadAnalysis?.formedPart && (
+            <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-xl flex gap-3">
+              <AlertCircle size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="text-xs font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider">Formed part — cut length is a lower bound</p>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  This part is folded ({cadAnalysis.heightMm} mm tall on {cadAnalysis.thicknessMm} mm stock), so the perimeter and
+                  surface area are measured from the <strong className="text-foreground">folded shape</strong>. The laser actually cuts the
+                  larger <strong className="text-foreground">flat blank</strong>, so the laser and finishing costs here are an
+                  <strong className="text-foreground"> under-estimate</strong>. For an accurate cut cost, upload the flat-pattern DXF or the 2D drawing.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* How the dimensions were measured — plain-language explanation */}
           <div className="bg-card border border-border p-4 rounded-xl space-y-3">
             <div className="flex items-center justify-between gap-2">

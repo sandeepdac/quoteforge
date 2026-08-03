@@ -41,6 +41,13 @@ export interface ExtractedCadAnalysis {
   measurementSource: MeasurementSource;
   /** True when detected operations (holes/bends/perimeter) are unreliable and need review. */
   featuresNeedReview?: boolean;
+  /**
+   * True when the solid is a FORMED (folded) sheet-metal part rather than a flat
+   * blank. For these, the perimeter/surface area measured from the folded 3D shape
+   * understate the true flat-pattern cut length — the flat DXF/drawing is needed
+   * for an accurate cut cost.
+   */
+  formedPart?: boolean;
   /** Advisory Design-for-Manufacturing findings from the measured geometry. */
   dfm?: DfmReport;
   pdfData?: CadPdfMetadata;
@@ -164,6 +171,10 @@ async function analyzeSolid(
 
     const thicknessMm = meas.heightMm < 12 ? Math.max(1.5, meas.heightMm) : 3.0;
 
+    // A folded part stands much taller than its material is thick (or has detected
+    // bends). Its folded-envelope perimeter/area understate the flat-blank cut length.
+    const formedPart = bendCount > 0 || meas.heightMm > thicknessMm * 2.5;
+
     // Advisory DFM checks from the measured geometry (positions/radii from the B-Rep).
     const dfm = analyzeDfm({
       thicknessMm,
@@ -201,12 +212,18 @@ async function analyzeSolid(
         geo
           ? `${holeCount} holes (${holeSummary})${boreCount ? ` + ${boreCount} bores` : ''} and ${bendCount} bends detected geometrically from the solid faces.`
           : `Wetted surface area ${surfaceAreaM2} m² sets finishing cost; ${holeCount} holes and ${bendCount} bends from topology.`,
+        ...(formedPart
+          ? [
+              `Formed part: it stands ${meas.heightMm} mm tall on ${thicknessMm} mm stock, so this is a folded assembly. The ${perimeterMm} mm perimeter and ${surfaceAreaM2} m² area are measured from the FOLDED shape and understate the flat blank the laser actually cuts — upload the flat-pattern DXF or the 2D drawing for an accurate cut/laser cost.`,
+            ]
+          : []),
       ],
-      confidenceScore: 98,
+      confidenceScore: formedPart ? 80 : 98,
       stepData,
       stepMesh: mesh,
       measurementSource: 'solid',
-      featuresNeedReview: false,
+      featuresNeedReview: formedPart,
+      formedPart,
       dfm,
     };
   }

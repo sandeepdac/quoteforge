@@ -44,6 +44,20 @@ describe('detectFeaturesFromOcctMeshes — holes', () => {
     expect(r.holeCount).toBe(0);
     expect(r.boreCount).toBe(1);
   });
+
+  it('counts two collinear holes at different axial positions as two holes', () => {
+    // Same axis line (Z through origin), same radius, but axially separated — two
+    // distinct bores through stacked flanges, not one merged hole.
+    const shiftZ = (m: OcctMesh, dz: number): OcctMesh => {
+      const p = m.attributes.position.array.slice() as number[];
+      for (let i = 2; i < p.length; i += 3) p[i] += dz;
+      return { ...m, attributes: { ...m.attributes, position: { array: p } } };
+    };
+    const holeA = arcWall(4, 3, 360, 48, true);           // z ∈ [0, 3]
+    const holeB = shiftZ(arcWall(4, 3, 360, 48, true), 20); // z ∈ [20, 23]
+    const r = detectFeaturesFromOcctMeshes([holeA, holeB]);
+    expect(r.holeCount).toBe(2);
+  });
 });
 
 describe('detectFeaturesFromOcctMeshes — bends', () => {

@@ -131,10 +131,25 @@ function sameAxisLine(a: { axis: Vec3; centerPerp: Vec3 }, b: { axis: Vec3; cent
   return dot > 0.996 && dp < perpTol;
 }
 
+/**
+ * Axial overlap of two faces measured along face `a`'s axis. Two half-cylinders of
+ * the SAME bore overlap almost fully; two distinct holes drilled collinearly through
+ * different flanges are axially separated (negative overlap), so they must not merge.
+ */
+function axialOverlap(a: CylFace, b: CylFace): number {
+  const ax = a.axis;
+  const proj = (p: Vec3) => p[0] * ax[0] + p[1] * ax[1] + p[2] * ax[2];
+  let aMin = Infinity, aMax = -Infinity, bMin = Infinity, bMax = -Infinity;
+  for (const p of a.worldPts) { const t = proj(p); if (t < aMin) aMin = t; if (t > aMax) aMax = t; }
+  for (const p of b.worldPts) { const t = proj(p); if (t < bMin) bMin = t; if (t > bMax) bMax = t; }
+  return Math.min(aMax, bMax) - Math.max(aMin, bMin);
+}
+
 // ---- face extraction -------------------------------------------------------
 
-function extractCylindricalFaces(meshes: OcctMesh[]): CylFace[] {
+function extractCylindricalFaces(meshes: OcctMesh[], diag?: string[]): CylFace[] {
   const faces: CylFace[] = [];
+  let fi = -1;
   for (const mesh of meshes) {
     const P = mesh.attributes.position.array;
     const N = mesh.attributes.normal?.array;
@@ -142,11 +157,12 @@ function extractCylindricalFaces(meshes: OcctMesh[]): CylFace[] {
     if (!N || !mesh.brep_faces) continue;
 
     for (const face of mesh.brep_faces) {
+      fi++;
       const vids = new Set<number>();
       for (let t = face.first; t <= face.last; t++) {
         vids.add(idx[t * 3]); vids.add(idx[t * 3 + 1]); vids.add(idx[t * 3 + 2]);
       }
-      if (vids.size < 10) continue;
+      if (vids.size < 10) { diag?.push(`face ${fi}: SKIP too few verts (${vids.size})`); continue; }
       const ids = [...vids];
 
       const m = [0, 0, 0, 0, 0, 0];
@@ -157,7 +173,10 @@ function extractCylindricalFaces(meshes: OcctMesh[]): CylFace[] {
       }
       const { values, vectors } = eigenSym3(m);
       const [e0, e1, e2] = values;
-      if (e2 < 1e-9 || e0 / e2 > 0.08 || e1 / e2 < 0.15) continue;
+      if (e2 < 1e-9 || e0 / e2 > 0.08 || e1 / e2 < 0.15) {
+        diag?.push(`face ${fi}: SKIP not-cylinder eig e0/e2=${(e0 / e2).toFixed(3)} e1/e2=${(e1 / e2).toFixed(3)} (verts ${ids.length})`);
+        continue;
+      }
 
       let axis = vectors[0];
       const abs = axis.map(Math.abs);
@@ -170,7 +189,10 @@ function extractCylindricalFaces(meshes: OcctMesh[]): CylFace[] {
         P[i * 3] * v[0] + P[i * 3 + 1] * v[1] + P[i * 3 + 2] * v[2],
       ]);
       const cf = fitCircle(pts2d);
-      if (!cf || cf.r < 0.2 || cf.r > 80 || cf.res / cf.r > 0.06) continue;
+      if (!cf || cf.r < 0.2 || cf.r > 80 || cf.res / cf.r > 0.06) {
+        diag?.push(`face ${fi}: SKIP circle-fit r=${cf ? cf.r.toFixed(2) : 'null'} resRatio=${cf ? (cf.res / cf.r).toFixed(3) : '-'} (verts ${ids.length})`);
+        continue;
+      }
 
       let concaveVotes = 0;
       const axialVals: number[] = [];
@@ -184,16 +206,19 @@ function extractCylindricalFaces(meshes: OcctMesh[]): CylFace[] {
         axialVals.push(P[i * 3] * axis[0] + P[i * 3 + 1] * axis[1] + P[i * 3 + 2] * axis[2]);
       }
 
+      const cov = angularCoverageDeg(pts2d.map(([pu, pv]) => Math.atan2(pv - cf.vc, pu - cf.uc)));
+      const concave = concaveVotes / ids.length > 0.5;
       faces.push({
         axis,
         radius: cf.r,
         centerPerp: [cf.uc * u[0] + cf.vc * v[0], cf.uc * u[1] + cf.vc * v[1], cf.uc * u[2] + cf.vc * v[2]],
-        concave: concaveVotes / ids.length > 0.5,
-        coverageDeg: angularCoverageDeg(pts2d.map(([pu, pv]) => Math.atan2(pv - cf.vc, pu - cf.uc))),
+        concave,
+        coverageDeg: cov,
         axMin: Math.min(...axialVals),
         axMax: Math.max(...axialVals),
         worldPts: ids.map((i): Vec3 => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]),
       });
+      diag?.push(`face ${fi}: CYL r=${cf.r.toFixed(2)} ⌀${(cf.r * 2).toFixed(1)} ${concave ? 'concave' : 'convex'} cov=${cov.toFixed(0)}° axLen=${(Math.max(...axialVals) - Math.min(...axialVals)).toFixed(1)} (verts ${ids.length})`);
     }
   }
   return faces;
@@ -201,8 +226,8 @@ function extractCylindricalFaces(meshes: OcctMesh[]): CylFace[] {
 
 // ---- classification --------------------------------------------------------
 
-export function detectFeaturesFromOcctMeshes(meshes: OcctMesh[]): DetectedFeatures {
-  const faces = extractCylindricalFaces(meshes);
+export function detectFeaturesFromOcctMeshes(meshes: OcctMesh[], diag?: string[]): DetectedFeatures {
+  const faces = extractCylindricalFaces(meshes, diag);
 
   // HOLES: cluster concave faces by axis line + radius; a hole wraps (near) fully.
   const isHoleFace = new Array(faces.length).fill(false);
@@ -215,7 +240,13 @@ export function detectFeaturesFromOcctMeshes(meshes: OcctMesh[]): DetectedFeatur
     if (claimed[i] || !faces[i].concave) continue;
     const group = [i];
     for (let j = i + 1; j < faces.length; j++) {
-      if (!claimed[j] && faces[j].concave && Math.abs(faces[j].radius - faces[i].radius) < 0.3 && sameAxisLine(faces[i], faces[j])) {
+      if (
+        !claimed[j] &&
+        faces[j].concave &&
+        Math.abs(faces[j].radius - faces[i].radius) < 0.3 &&
+        sameAxisLine(faces[i], faces[j]) &&
+        axialOverlap(faces[i], faces[j]) > -0.3 // same bore, not a collinear-but-separate hole
+      ) {
         group.push(j);
       }
     }

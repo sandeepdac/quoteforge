@@ -200,9 +200,10 @@ export default function NewQuotePage() {
           />
         )}
         {currentStep === 3 && (
-          <StepQuantity 
-            data={quoteData} 
-            onContinue={(config) => handleContinue(config)} 
+          <StepQuantity
+            data={quoteData}
+            cadAnalysis={cadAnalysis}
+            onContinue={(config) => handleContinue(config)}
             onBack={handleBack}
             onUpdate={setQuoteData}
           />
@@ -210,6 +211,7 @@ export default function NewQuotePage() {
         {currentStep === 4 && (
           <StepReview
             data={quoteData}
+            cadAnalysis={cadAnalysis}
             quoteNumber={quoteNumber}
             onSend={(opts) => handleFinalize(false, opts)}
             onSaveDraft={(opts) => handleFinalize(true, opts)}

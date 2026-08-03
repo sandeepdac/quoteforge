@@ -8,24 +8,27 @@ import {
   Hammer,
   Zap,
   Info,
+  AlertTriangle,
   ChevronRight
 } from 'lucide-react';
 import { useQuotes } from '../../context/QuoteContext';
 import { useSettings } from '../../context/SettingsContext';
 import { calculateQuoteCosts, calculateWinProbability } from '../../utils/estimator';
 import { generatePartThumbnail } from '../../utils/partThumbnail';
+import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import { PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
 
 interface StepReviewProps {
   data: any;
+  cadAnalysis?: ExtractedCadAnalysis;
   quoteNumber: string;
   onSend: (opts: { margin: number; notes: string }) => void;
   onSaveDraft: (opts: { margin: number; notes: string }) => void;
   onBack: () => void;
 }
 
-export default function StepReview({ data, quoteNumber, onSend, onSaveDraft, onBack }: StepReviewProps) {
+export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onSaveDraft, onBack }: StepReviewProps) {
   const { customers, materials } = useQuotes();
   const { settings } = useSettings();
   const [margin, setMargin] = useState(settings.defaultMargin);
@@ -128,6 +131,15 @@ export default function StepReview({ data, quoteNumber, onSend, onSaveDraft, onB
             <div className="p-4 bg-muted/30 border-b border-border space-y-1">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Detailed Cost Breakdown</h3>
               <p className="text-[11px] text-muted-foreground">Each line is priced from a dimension measured from your CAD file.</p>
+              {cadAnalysis?.formedPart && (
+                <div className="flex gap-2 mt-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2">
+                  <AlertTriangle size={13} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Formed part — perimeter &amp; area are from the folded shape, so laser/finishing under-estimate the flat-blank cut.
+                    Upload the flat DXF or drawing for an accurate cut cost.
+                  </p>
+                </div>
+              )}
             </div>
             <table className="w-full text-sm">
               <thead>

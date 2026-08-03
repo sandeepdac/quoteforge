@@ -6,22 +6,25 @@ import {
   Clock, 
   ArrowRight,
   TrendingUp,
+  AlertTriangle,
   PieChart as PieChartIcon
 } from 'lucide-react';
 import { useQuotes } from '../../context/QuoteContext';
 import { useSettings } from '../../context/SettingsContext';
 import { calculateQuoteCosts } from '../../utils/estimator';
+import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import { PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
 
 interface StepQuantityProps {
   data: any;
+  cadAnalysis?: ExtractedCadAnalysis;
   onContinue: (config: any) => void;
   onBack: () => void;
   onUpdate: (data: any) => void;
 }
 
-export default function StepQuantity({ data, onContinue, onBack, onUpdate }: StepQuantityProps) {
+export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, onUpdate }: StepQuantityProps) {
   const { customers, materials } = useQuotes();
   const { settings } = useSettings();
 
@@ -234,6 +237,15 @@ export default function StepQuantity({ data, onContinue, onBack, onUpdate }: Ste
                   </div>
                 ))}
               </div>
+              {cadAnalysis?.formedPart && (
+                <div className="flex gap-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5">
+                  <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Formed part: laser &amp; finishing are measured from the <strong className="text-foreground">folded shape</strong> and
+                    under-estimate the flat-blank cut. Upload the flat DXF/drawing for an accurate cut cost.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Roll-up to the unit price */}
