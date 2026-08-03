@@ -150,7 +150,7 @@ export default function NewQuotePage() {
       materialId,
       thicknessMm: cadAnalysis?.thicknessMm ?? material.thicknessMm,
       features: partFeatures,
-      thumbnail: generatePartThumbnail(partName),
+      thumbnail: generatePartThumbnail(partName, partFeatures),
       lastQuotedDate: new Date().toISOString().split('T')[0],
       quoteCount: 1,
     };

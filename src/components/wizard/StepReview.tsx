@@ -13,6 +13,7 @@ import {
 import { useQuotes } from '../../context/QuoteContext';
 import { useSettings } from '../../context/SettingsContext';
 import { calculateQuoteCosts, calculateWinProbability } from '../../utils/estimator';
+import { generatePartThumbnail } from '../../utils/partThumbnail';
 import { PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
 
@@ -107,7 +108,11 @@ export default function StepReview({ data, quoteNumber, onSend, onSaveDraft, onB
               </h3>
               <div className="flex gap-4">
                 <div className="w-16 h-16 bg-muted rounded border border-border overflow-hidden">
-                  <img src="https://picsum.photos/seed/quote/200/200" alt="Part" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  <img
+                    src={generatePartThumbnail(data.partName || 'Custom Fabricated Part', data.features)}
+                    alt={data.partName || 'Part'}
+                    className="w-full h-full object-cover"
+                  />
                 </div>
                 <div className="space-y-1">
                   <p className="text-sm font-semibold">{data.partName || 'Custom Fabricated Part'}</p>

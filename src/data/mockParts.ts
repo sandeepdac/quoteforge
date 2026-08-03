@@ -1,12 +1,12 @@
 import { Part } from '../types';
+import { generatePartThumbnail } from '../utils/partThumbnail';
 
-export const mockParts: Part[] = [
+const partDefs: Omit<Part, 'thumbnail'>[] = [
   {
     id: 'p1',
     name: 'Precision Chassis Rail V2',
     materialId: 'm2',
     thicknessMm: 6.0,
-    thumbnail: 'https://images.unsplash.com/photo-1504917595217-d4dc5f9c4739?auto=format&fit=crop&q=80&w=800',
     quoteCount: 42,
     lastQuotedDate: '2026-04-18',
     features: {
@@ -29,7 +29,6 @@ export const mockParts: Part[] = [
     name: 'Heavy Duty Support Bracket',
     materialId: 'm1',
     thicknessMm: 3.0,
-    thumbnail: 'https://images.unsplash.com/photo-1540304453527-62f979142a17?auto=format&fit=crop&q=80&w=800',
     quoteCount: 124,
     lastQuotedDate: '2026-04-15',
     features: {
@@ -52,7 +51,6 @@ export const mockParts: Part[] = [
     name: 'Main Electronic Enclosure',
     materialId: 'm3',
     thicknessMm: 2.0,
-    thumbnail: 'https://images.unsplash.com/photo-1555664424-778a1e5e1b48?auto=format&fit=crop&q=80&w=800',
     quoteCount: 18,
     lastQuotedDate: '2026-04-10',
     features: {
@@ -75,7 +73,6 @@ export const mockParts: Part[] = [
     name: 'Exhaust Flange Adapter',
     materialId: 'm4',
     thicknessMm: 10.0,
-    thumbnail: 'https://images.unsplash.com/photo-1534067783941-51c9c23ecefd?auto=format&fit=crop&q=80&w=800',
     quoteCount: 6,
     lastQuotedDate: '2026-04-05',
     features: {
@@ -98,7 +95,6 @@ export const mockParts: Part[] = [
     name: 'P5 Round Top Flag',
     materialId: 'm1',
     thicknessMm: 3.0,
-    thumbnail: 'https://images.unsplash.com/photo-1565043666747-69f6646db940?auto=format&fit=crop&q=80&w=800',
     quoteCount: 9,
     lastQuotedDate: '2026-07-28',
     features: {
@@ -121,7 +117,6 @@ export const mockParts: Part[] = [
     name: 'Thermal Heat Sink Plate',
     materialId: 'm6',
     thicknessMm: 1.5,
-    thumbnail: 'https://images.unsplash.com/photo-1581091215307-9548b114d436?auto=format&fit=crop&q=80&w=800',
     quoteCount: 29,
     lastQuotedDate: '2026-04-19',
     features: {
@@ -140,3 +135,10 @@ export const mockParts: Part[] = [
     }
   }
 ];
+
+// Render each part's thumbnail from its measured footprint — a self-contained
+// blueprint schematic, not an external stock photo.
+export const mockParts: Part[] = partDefs.map((p) => ({
+  ...p,
+  thumbnail: generatePartThumbnail(p.name, p.features),
+}));
