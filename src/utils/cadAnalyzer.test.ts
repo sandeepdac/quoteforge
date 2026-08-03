@@ -20,11 +20,14 @@ describe('analyzeCadFile — STEP dispatch', () => {
 });
 
 describe('analyzeCadFile — PDF dispatch', () => {
-  it('matches the bundled P5 drawing by filename', async () => {
+  it('does not fabricate feature data for a PDF when no AI vision is available', async () => {
+    // Previously the bundled P5 PDF returned hand-authored numbers as if extracted;
+    // now, without a real vision backend, it must route to honest manual confirmation.
     const a = await analyzeCadFile({ name: 'P5-Round-Top-Flag.pdf', pdfUrl: '/samples/x.pdf' });
     expect(a.fileType).toBe('PDF');
-    expect(a.partName).toBe('P5 ROUND TOP FLAG');
-    expect(a.pdfData?.drawingNumber).toBe('FGC-P5-08');
+    expect(a.measurementSource).toBe('manual');
+    expect(a.pdfData).toBeUndefined();
+    expect([a.perimeterMm, a.holeCount, a.bendCount, a.weightKg]).toEqual([0, 0, 0, 0]);
     expect(a.pdfUrl).toBe('/samples/x.pdf');
   });
 

@@ -1,5 +1,5 @@
 import { StepParseResult, parseStepFile } from './stepParser';
-import { P5_ROUND_TOP_FLAG_PDF, CadPdfMetadata } from './sampleCadFiles';
+import { CadPdfMetadata } from './sampleCadFiles';
 import {
   tessellateCad,
   measureMesh,
@@ -169,7 +169,13 @@ async function analyzeSolid(
       ? holeDetails.map((h) => `${h.count}×⌀${h.diameterMm}`).join(', ')
       : 'none';
 
-    const thicknessMm = meas.heightMm < 12 ? Math.max(1.5, meas.heightMm) : 3.0;
+    // Measure effective material thickness from the solid (mean wall = 2·V/S) rather
+    // than assuming a value. For a plate/sheet this equals the gauge; for a chunky
+    // part it's the honest effective thickness. Falls back only if area is unusable.
+    const meanWallMm = meas.surfaceAreaCm2 > 0 ? (20 * meas.volumeCm3) / meas.surfaceAreaCm2 : 0;
+    const thicknessMm = meanWallMm > 0
+      ? Math.round(Math.min(60, Math.max(0.4, meanWallMm)) * 10) / 10
+      : (meas.heightMm < 12 ? Math.max(1.5, meas.heightMm) : 3.0);
 
     // A folded part stands much taller than its material is thick (or has detected
     // bends). Its folded-envelope perimeter/area understate the flat-blank cut length.
@@ -208,6 +214,7 @@ async function analyzeSolid(
       tolerances: 'Standard ISO 2768-m (±0.2mm)',
       aiNotes: [
         `Measured directly from the solid model — bounding box ${meas.lengthMm} × ${meas.widthMm} × ${meas.heightMm} mm.`,
+        `Material thickness measured at ${thicknessMm} mm (mean wall from volume ÷ surface area), not assumed.`,
         `Enclosed volume ${meas.volumeCm3} cm³ → weight ${weightKg} kg in ${materialName} (density ${density} g/cm³).`,
         geo
           ? `${holeCount} holes (${holeSummary})${boreCount ? ` + ${boreCount} bores` : ''} and ${bendCount} bends detected geometrically from the solid faces.`
@@ -330,12 +337,9 @@ async function analyzeDrawing(
     if (data) return fromAiData(fileName, fileType, data, file.pdfUrl);
   }
 
-  // 2. Bundled demo drawing (P5) — use its curated title block when AI isn't available.
-  if (fileType === 'PDF' && /flag|fgc.?p5|round.?top|\bp5\b/i.test(fileName)) {
-    return fromPdfMetadata(fileName, P5_ROUND_TOP_FLAG_PDF, file.pdfUrl);
-  }
-
-  // 3. Be honest: we couldn't measure it — ask the user to confirm the dimensions.
+  // 2. No AI vision available and we can't reliably read dimensions off a drawing
+  // here. Be honest — route to manual confirmation rather than inventing numbers.
+  // (A folded/thin part is best quoted from its STEP solid or a flat-pattern DXF.)
   return manualAnalysis(fileName, fileType, file.pdfUrl);
 }
 
@@ -372,40 +376,6 @@ function fromAiData(
         : ['Dimensions read from the drawing by AI vision. Please verify before quoting.'],
     confidenceScore: d.confidenceScore ?? 70,
     measurementSource: 'ai-drawing',
-    pdfUrl,
-  };
-}
-
-function fromPdfMetadata(
-  fileName: string,
-  meta: CadPdfMetadata,
-  pdfUrl?: string
-): ExtractedCadAnalysis {
-  return {
-    partName: meta.title,
-    fileType: 'PDF',
-    fileName,
-    materialName: meta.material,
-    thicknessMm: 3.0,
-    lengthMm: meta.dimensions.lengthMm,
-    widthMm: meta.dimensions.widthMm,
-    heightMm: meta.dimensions.heightMm,
-    perimeterMm: meta.features.perimeterMm,
-    pierceCount: meta.features.pierceCount,
-    bendCount: meta.features.bendCount,
-    isSimpleBending: meta.features.isSimpleBending,
-    holeCount: meta.features.holeCount,
-    holeDetails: meta.features.holeDetails,
-    weldLengthMm: meta.features.weldLengthMm,
-    weldCount: meta.features.weldCount,
-    weightKg: meta.features.weightKg,
-    surfaceAreaM2: meta.features.surfaceAreaM2,
-    finishCallout: meta.finish,
-    tolerances: meta.tolerances,
-    aiNotes: meta.notes,
-    confidenceScore: 92,
-    measurementSource: 'ai-drawing',
-    pdfData: meta,
     pdfUrl,
   };
 }

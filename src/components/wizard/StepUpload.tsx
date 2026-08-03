@@ -236,7 +236,7 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
             </div>
             <div className="overflow-hidden">
               <p className="text-xs font-semibold text-foreground truncate">P5 Round Top Flag.pdf</p>
-              <p className="text-[10px] text-muted-foreground">2D CAD Drawing · FGC-P5-08 ISS 4</p>
+              <p className="text-[10px] text-muted-foreground">2D Drawing · needs AI vision, else confirm manually</p>
             </div>
           </button>
         </div>
