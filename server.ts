@@ -59,6 +59,9 @@ Extract structured JSON with the following fields:
 }
 Return ONLY valid JSON.`;
 
+      // Ask the model for strict JSON so the reply is machine-parseable.
+      const generationConfig = { responseMimeType: 'application/json' };
+
       let responseText = '';
 
       if (fileBase64 && mimeType) {
@@ -77,20 +80,37 @@ Return ONLY valid JSON.`;
                 { text: prompt }
               ]
             }
-          ]
+          ],
+          config: generationConfig
         });
         responseText = response.text || '';
       } else {
         const response = await ai.models.generateContent({
           model: 'gemini-2.5-flash',
-          contents: prompt
+          contents: prompt,
+          config: generationConfig
         });
         responseText = response.text || '';
       }
 
-      // Clean JSON formatting
-      const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-      const parsedData = JSON.parse(cleanJson);
+      // Empty reply → let the client fall back to manual entry rather than error out.
+      if (!responseText.trim()) {
+        return res.json({ success: false, message: 'Empty response from vision model.' });
+      }
+
+      // Strip any stray code fences (belt-and-suspenders alongside responseMimeType).
+      const cleanJson = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+      let parsedData: unknown;
+      try {
+        parsedData = JSON.parse(cleanJson);
+      } catch {
+        console.error('Gemini CAD API: could not parse JSON reply');
+        return res.json({ success: false, message: 'Could not parse the model response as JSON.' });
+      }
+      if (!parsedData || typeof parsedData !== 'object') {
+        return res.json({ success: false, message: 'Model response was not a JSON object.' });
+      }
 
       return res.json({ success: true, data: parsedData });
     } catch (err: any) {
