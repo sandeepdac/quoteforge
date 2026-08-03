@@ -41,9 +41,19 @@ export async function analyzeDrawingWithAI(input: {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (res.status === 404) {
+        console.warn('[ai] /api/analyze-cad returned 404 — the API server is not running. Start the app with `npm run dev` (tsx server.ts), not the bare Vite dev server.');
+      } else {
+        console.warn(`[ai] /api/analyze-cad HTTP ${res.status} — falling back to manual entry.`);
+      }
+      return null;
+    }
     const json = await res.json();
-    if (!json?.success || !json.data) return null;
+    if (!json?.success || !json.data) {
+      console.warn('[ai] extraction did not succeed, falling back to manual entry:', json?.message || json?.error || 'unknown reason');
+      return null;
+    }
     return json.data as AiDrawingData;
   } catch (err) {
     console.warn('[ai] drawing extraction failed, falling back to manual entry', err);

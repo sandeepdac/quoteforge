@@ -22,11 +22,12 @@ async function startServer() {
     try {
       const { fileName, fileBase64, mimeType } = req.body;
       const apiKey = process.env.GEMINI_API_KEY;
+      console.log(`[analyze-cad] ${fileName} (${mimeType}, ${fileBase64 ? Math.round(fileBase64.length / 1024) + 'KB base64' : 'no data'}) — key ${apiKey && apiKey !== 'MY_GEMINI_API_KEY' ? 'present' : 'MISSING'}`);
 
       if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-        return res.json({ 
-          success: false, 
-          message: 'GEMINI_API_KEY not provided. Fallback to native STEP/PDF parser.' 
+        return res.json({
+          success: false,
+          message: 'GEMINI_API_KEY not provided. Fallback to native STEP/PDF parser.'
         });
       }
 
@@ -112,10 +113,11 @@ Return ONLY valid JSON.`;
         return res.json({ success: false, message: 'Model response was not a JSON object.' });
       }
 
+      console.log(`[analyze-cad] OK — extracted ${Object.keys(parsedData as object).length} fields`);
       return res.json({ success: true, data: parsedData });
     } catch (err: any) {
-      console.error('Gemini CAD API Error:', err.message);
-      return res.json({ success: false, error: err.message });
+      console.error('[analyze-cad] Gemini error:', err?.message || err);
+      return res.json({ success: false, error: err?.message || String(err) });
     }
   });
 
@@ -135,7 +137,10 @@ Return ONLY valid JSON.`;
   }
 
   app.listen(PORT, '0.0.0.0', () => {
+    const keyOk = process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY';
     console.log(`Server running on http://0.0.0.0:${PORT}`);
+    console.log(`AI vision (Gemini): GEMINI_API_KEY ${keyOk ? 'configured ✓' : 'NOT configured ✗ (PDF/image will fall back to manual)'}`);
+    console.log('Note: open the app on THIS port (the Express server) so /api/analyze-cad is available — not the bare Vite port.');
   });
 }
 
