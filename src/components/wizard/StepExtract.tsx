@@ -25,10 +25,10 @@ interface StepExtractProps {
 }
 
 const loadingMessages = [
-  "Reading CAD geometry & vector entities...",
-  "Parsing B-Rep topology & cylindrical surfaces...",
-  "Detecting bend lines, holes, and laser perimeters...",
-  "Matching material callouts against shop inventory...",
+  "Reading CAD geometry & B-Rep topology...",
+  "Classifying part — turned (bar) vs milled (billet)...",
+  "Sizing stock & material removal (buy-to-fly)...",
+  "Detecting holes, bores & cylindrical features...",
   "Calculating volume, surface area, and mass..."
 ];
 
@@ -124,6 +124,7 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
   }
 
   const selectedMatObj = materials.find(m => m.id === features.materialId) || materials[0];
+  const isMachining = !!cadAnalysis?.partClass;
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 animate-in slide-in-from-bottom-4 duration-500 pb-10">
@@ -251,11 +252,23 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
             </ul>
 
             <p className="text-[11px] text-muted-foreground leading-relaxed border-t border-border pt-2.5">
-              These measurements drive the quote: <strong className="text-foreground">weight</strong> → material cost,
-              <strong className="text-foreground"> perimeter &amp; pierces</strong> → laser time,
-              <strong className="text-foreground"> bends</strong> → press-brake time, and
-              <strong className="text-foreground"> surface area</strong> → finishing. Adjust any value on the right
-              and the price updates in the next step.
+              {isMachining ? (
+                <>
+                  These measurements drive the quote: <strong className="text-foreground">stock volume</strong> → material cost,
+                  <strong className="text-foreground"> volume removed</strong> → roughing time,
+                  <strong className="text-foreground"> surface area</strong> → finishing, and
+                  <strong className="text-foreground"> holes &amp; setups</strong> → drilling and machine time. Adjust any value on the right
+                  and the price updates in the next step.
+                </>
+              ) : (
+                <>
+                  These measurements drive the quote: <strong className="text-foreground">weight</strong> → material cost,
+                  <strong className="text-foreground"> perimeter &amp; pierces</strong> → laser time,
+                  <strong className="text-foreground"> bends</strong> → press-brake time, and
+                  <strong className="text-foreground"> surface area</strong> → finishing. Adjust any value on the right
+                  and the price updates in the next step.
+                </>
+              )}
             </p>
           </div>
 
@@ -340,7 +353,71 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
             </div>
           </div>
 
-          {/* Operations Breakdown */}
+          {/* Machining drivers (turning / milling) */}
+          {isMachining && cadAnalysis && (
+            <div className="bg-card border border-border p-5 rounded-xl space-y-4">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5 flex items-center justify-between">
+                <span>Machining Plan &amp; Stock</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                  {cadAnalysis.partClass === 'turned' ? 'TURNED' : 'MILLED'}
+                </span>
+              </h3>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-accent/40 border border-border p-3 rounded-lg">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Stock</p>
+                  <p className="text-sm font-bold text-foreground">
+                    {cadAnalysis.partClass === 'turned'
+                      ? `⌀${cadAnalysis.diameterMm} × ${cadAnalysis.axisLengthMm} mm bar`
+                      : `${cadAnalysis.lengthMm} × ${cadAnalysis.widthMm} × ${cadAnalysis.heightMm} mm billet`}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{cadAnalysis.stockVolumeCm3} cm³ raw</p>
+                </div>
+                <div className="bg-accent/40 border border-border p-3 rounded-lg">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Material yield</p>
+                  <p className="text-sm font-bold text-foreground">{Math.round((cadAnalysis.buyToFlyRatio ?? 0) * 100)}% buy-to-fly</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{cadAnalysis.removedVolumeCm3} cm³ removed as chips</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-accent/40 border border-border p-3.5 rounded-lg flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-foreground">Drilling / boring</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Hole &amp; bore count</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] text-muted-foreground block">Holes</span>
+                    <input
+                      type="number"
+                      className="w-14 bg-background border border-border rounded px-2 py-1 text-xs text-center font-bold"
+                      value={features.holeCount}
+                      onChange={(e) => setFeatures({ ...features, holeCount: Number(e.target.value) })}
+                    />
+                  </div>
+                </div>
+                <div className="bg-accent/40 border border-border p-3.5 rounded-lg flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-foreground">Setups</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Fixturings / re-orientations</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] text-muted-foreground block">Est.</span>
+                    <span className="text-lg font-bold text-foreground">{cadAnalysis.setups}</span>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground leading-relaxed border-t border-border pt-2.5">
+                Priced with the subtractive model: you buy the {cadAnalysis.partClass === 'turned' ? 'bar' : 'billet'} and machine
+                <strong className="text-foreground"> {cadAnalysis.removedVolumeCm3} cm³</strong> of it into chips. Material yield and setups
+                are the biggest cost levers — see the DFM notes below.
+              </p>
+            </div>
+          )}
+
+          {/* Operations Breakdown (sheet-metal legacy path) */}
+          {!isMachining && (
           <div className="bg-card border border-border p-5 rounded-xl space-y-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5">
               Detected Manufacturing Operations
@@ -462,6 +539,7 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
               </div>
             </div>
           </div>
+          )}
         </div>
       </div>
 

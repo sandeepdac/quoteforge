@@ -13,8 +13,9 @@ import { useQuotes } from '../../context/QuoteContext';
 import { useSettings } from '../../context/SettingsContext';
 import { calculateQuoteCosts } from '../../utils/estimator';
 import { calculateMachiningCosts } from '../../utils/cncEstimator';
+import { materialPropsFor } from '../../utils/materials';
 import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
-import { CostLineItem, PartFeatures } from '../../types';
+import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
 
 interface StepQuantityProps {
@@ -38,13 +39,19 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
 
   const { costs, lineItems } = useMemo(() => {
     if (isMachining && cadAnalysis) {
+      // Respect user edits from the extraction step: derive volume from the
+      // (possibly edited) weight, and use the edited surface area, so tweaks
+      // there flow into the machining price.
+      const density = materialPropsFor(currentMaterial.name).densityGCm3;
+      const volumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : cadAnalysis.volumeCm3 ?? 0;
+      const surfaceAreaCm2 = f.surfaceAreaM2 > 0 ? f.surfaceAreaM2 * 10000 : cadAnalysis.surfaceAreaCm2 ?? 0;
       const mc = calculateMachiningCosts(
         {
           partClass: cadAnalysis.partClass!,
           materialName: currentMaterial.name,
-          volumeCm3: cadAnalysis.volumeCm3 ?? 0,
-          surfaceAreaCm2: cadAnalysis.surfaceAreaCm2 ?? f.surfaceAreaM2 * 10000,
-          boundingBoxMm: { lengthMm: cadAnalysis.lengthMm, widthMm: cadAnalysis.widthMm, heightMm: cadAnalysis.heightMm },
+          volumeCm3,
+          surfaceAreaCm2,
+          boundingBoxMm: { lengthMm: f.lengthMm, widthMm: f.widthMm, heightMm: f.heightMm },
           diameterMm: cadAnalysis.diameterMm ?? 0,
           axisLengthMm: cadAnalysis.axisLengthMm ?? 0,
           holeCount: f.holeCount,
@@ -84,6 +91,7 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
 
   const maxItem = Math.max(...lineItems.map((li) => li.value), 0.0001);
+  const mc = isMachining ? (costs as MachiningCosts) : null;
   const fmt = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const quantityPresets = [1, 10, 50, 100, 500];
@@ -264,26 +272,26 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                   </div>
                 ))}
               </div>
-              {isMachining && cadAnalysis && (
+              {mc && cadAnalysis && (
                 <div className="rounded-md border border-border bg-muted/40 p-2.5 space-y-1">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="text-muted-foreground">
-                      {cadAnalysis.partClass === 'turned' ? 'Turned from ⌀' + cadAnalysis.diameterMm + ' bar' : 'Milled from billet'}
+                      {cadAnalysis.partClass === 'turned' ? `Turned from ⌀${cadAnalysis.diameterMm} bar` : 'Milled from billet'}
                     </span>
                     <span className="font-semibold text-foreground">
-                      {Math.round((cadAnalysis.buyToFlyRatio ?? 0) * 100)}% material yield
+                      {Math.round(mc.buyToFlyRatio * 100)}% material yield
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
                       <div
-                        className={cn('h-full rounded-full', (cadAnalysis.buyToFlyRatio ?? 0) < 0.15 ? 'bg-amber-500' : 'bg-emerald-500')}
-                        style={{ width: `${Math.max(3, Math.min(100, (cadAnalysis.buyToFlyRatio ?? 0) * 100))}%` }}
+                        className={cn('h-full rounded-full', mc.buyToFlyRatio < 0.15 ? 'bg-amber-500' : 'bg-emerald-500')}
+                        style={{ width: `${Math.max(3, Math.min(100, mc.buyToFlyRatio * 100))}%` }}
                       ></div>
                     </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground/80 leading-tight">
-                    {cadAnalysis.removedVolumeCm3} cm³ removed from {cadAnalysis.stockVolumeCm3} cm³ stock · {cadAnalysis.setups} setup{(cadAnalysis.setups ?? 1) > 1 ? 's' : ''} · buy-to-fly
+                    {mc.removedVolumeCm3} cm³ removed from {mc.stockVolumeCm3} cm³ stock · {mc.setups} setup{mc.setups > 1 ? 's' : ''} · buy-to-fly
                   </p>
                 </div>
               )}

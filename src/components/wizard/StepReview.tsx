@@ -14,9 +14,11 @@ import {
 import { useQuotes } from '../../context/QuoteContext';
 import { useSettings } from '../../context/SettingsContext';
 import { calculateQuoteCosts, calculateWinProbability } from '../../utils/estimator';
+import { calculateMachiningCosts } from '../../utils/cncEstimator';
+import { materialPropsFor } from '../../utils/materials';
 import { generatePartThumbnail } from '../../utils/partThumbnail';
 import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
-import { PartFeatures } from '../../types';
+import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
 
 interface StepReviewProps {
@@ -37,20 +39,57 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
   const customer = customers.find(c => c.id === data.config.customerId);
   const material = materials.find(m => m.id === data.features.materialId) || materials[0];
 
-  const costs = useMemo(() => {
-    return calculateQuoteCosts(
-      data.features as PartFeatures,
+  const f = data.features as PartFeatures;
+  const isMachining = !!cadAnalysis?.partClass;
+
+  const { costs, lineItems } = useMemo(() => {
+    if (isMachining && cadAnalysis) {
+      const density = materialPropsFor(material.name).densityGCm3;
+      const volumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : cadAnalysis.volumeCm3 ?? 0;
+      const surfaceAreaCm2 = f.surfaceAreaM2 > 0 ? f.surfaceAreaM2 * 10000 : cadAnalysis.surfaceAreaCm2 ?? 0;
+      const mc = calculateMachiningCosts(
+        {
+          partClass: cadAnalysis.partClass!,
+          materialName: material.name,
+          volumeCm3,
+          surfaceAreaCm2,
+          boundingBoxMm: { lengthMm: f.lengthMm, widthMm: f.widthMm, heightMm: f.heightMm },
+          diameterMm: cadAnalysis.diameterMm ?? 0,
+          axisLengthMm: cadAnalysis.axisLengthMm ?? 0,
+          holeCount: f.holeCount,
+          holeDetails: cadAnalysis.holeDetails ?? [],
+          setups: cadAnalysis.setups ?? 1,
+          materialPricePerKg: material.pricePerKg,
+        },
+        data.config.quantity,
+        data.config.isRush,
+        margin,
+        settings
+      );
+      return { costs: mc, lineItems: mc.lineItems };
+    }
+    const qc = calculateQuoteCosts(
+      f,
       data.config.quantity,
       data.config.isRush,
       margin,
       material.pricePerKg,
       settings
     );
-  }, [data, settings, material, margin]);
+    const items: CostLineItem[] = [
+      { key: 'material', name: 'Material Cost', driver: `${f.weightKg.toFixed(2)}kg @ $${material.pricePerKg.toFixed(2)}/kg`, value: qc.materialCost, color: '#2563eb' },
+      { key: 'laser', name: 'Laser Cutting', driver: `${f.perimeterMm}mm perimeter, ${f.pierceCount} pierces`, value: qc.laserCost, color: '#3b82f6' },
+      { key: 'bending', name: 'Bending & Forming', driver: `${f.bendCount} bends, ${f.isSimpleBending ? 'Simple' : 'Compound'}`, value: qc.bendCost, color: '#60a5fa' },
+      { key: 'weld', name: 'Welding & Assembly', driver: `${f.weldLengthMm}mm welding, ${f.holeCount} holes`, value: qc.weldCost + qc.assemblyCost, color: '#8b5cf6' },
+      { key: 'finish', name: 'Finishing (Applied)', driver: `${f.surfaceAreaM2.toFixed(3)}m² surface area`, value: qc.finishCost, color: '#93c5fd' },
+    ].filter((li) => li.value > 0.005);
+    return { costs: qc, lineItems: items };
+  }, [data, settings, material, margin, isMachining, cadAnalysis, f]);
 
   const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
   const winProb = calculateWinProbability(margin, data.config.leadTimeDays);
+  const mc = isMachining ? (costs as MachiningCosts) : null;
 
   const getWinProbColor = (prob: number) => {
     if (prob > 80) return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
@@ -112,13 +151,13 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
               <div className="flex gap-4">
                 <div className="w-16 h-16 bg-muted rounded border border-border overflow-hidden">
                   <img
-                    src={generatePartThumbnail(data.partName || 'Custom Fabricated Part', data.features)}
+                    src={generatePartThumbnail(data.partName || 'Custom Machined Part', data.features)}
                     alt={data.partName || 'Part'}
                     className="w-full h-full object-cover"
                   />
                 </div>
                 <div className="space-y-1">
-                  <p className="text-sm font-semibold">{data.partName || 'Custom Fabricated Part'}</p>
+                  <p className="text-sm font-semibold">{data.partName || 'Custom Machined Part'}</p>
                   <p className="text-xs text-muted-foreground">{material.name} {material.thicknessMm}mm</p>
                   <p className="text-xs text-muted-foreground">{data.features.lengthMm} x {data.features.widthMm} x {data.features.heightMm} mm</p>
                 </div>
@@ -131,6 +170,12 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
             <div className="p-4 bg-muted/30 border-b border-border space-y-1">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Detailed Cost Breakdown</h3>
               <p className="text-[11px] text-muted-foreground">Each line is priced from a dimension measured from your CAD file.</p>
+              {mc && (
+                <p className="text-[11px] text-muted-foreground">
+                  {cadAnalysis?.partClass === 'turned' ? 'Turned' : 'Milled'} · {mc.removedVolumeCm3} cm³ removed from {mc.stockVolumeCm3} cm³ stock
+                  · <strong className="text-foreground">{Math.round(mc.buyToFlyRatio * 100)}% material yield</strong> · {mc.setups} setup{mc.setups > 1 ? 's' : ''}.
+                </p>
+              )}
               {cadAnalysis?.formedPart && (
                 <div className="flex gap-2 mt-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2">
                   <AlertTriangle size={13} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
@@ -150,33 +195,15 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                <tr>
-                  <td className="px-4 py-3">Material Cost</td>
-                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.weightKg.toFixed(2)}kg @ ${material.pricePerKg.toFixed(2)}/kg</td>
-                  <td className="px-4 py-3 text-right font-medium">${costs.materialCost.toFixed(2)}</td>
-                </tr>
-                <tr>
-                  <td className="px-4 py-3">Laser Cutting</td>
-                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.perimeterMm}mm perimeter, {data.features.pierceCount} pierces</td>
-                  <td className="px-4 py-3 text-right font-medium">${costs.laserCost.toFixed(2)}</td>
-                </tr>
-                <tr>
-                  <td className="px-4 py-3">Bending & Forming</td>
-                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.bendCount} bends, {data.features.isSimpleBending ? 'Simple' : 'Compound'}</td>
-                  <td className="px-4 py-3 text-right font-medium">${costs.bendCost.toFixed(2)}</td>
-                </tr>
-                <tr>
-                  <td className="px-4 py-3">Welding & Assembly</td>
-                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.weldLengthMm}mm welding, {data.features.holeCount} holes</td>
-                  <td className="px-4 py-3 text-right font-medium">${(costs.weldCost + costs.assemblyCost).toFixed(2)}</td>
-                </tr>
-                <tr>
-                  <td className="px-4 py-3">Finishing (Applied)</td>
-                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.surfaceAreaM2.toFixed(3)}m² surface area</td>
-                  <td className="px-4 py-3 text-right font-medium">${costs.finishCost.toFixed(2)}</td>
-                </tr>
+                {lineItems.map((li) => (
+                  <tr key={li.key}>
+                    <td className="px-4 py-3">{li.name}</td>
+                    <td className="px-4 py-3 text-right text-muted-foreground">{li.driver}</td>
+                    <td className="px-4 py-3 text-right font-medium">${li.value.toFixed(2)}</td>
+                  </tr>
+                ))}
                 <tr className="bg-muted/10 font-semibold">
-                  <td className="px-4 py-3" colSpan={2}>Factory Subtotal (incl. {settings.overheadPercent*100}% overhead)</td>
+                  <td className="px-4 py-3" colSpan={2}>{isMachining ? 'Machining' : 'Factory'} Subtotal (incl. {settings.overheadPercent*100}% overhead)</td>
                   <td className="px-4 py-3 text-right">${(costs.subtotal + costs.overhead).toFixed(2)}</td>
                 </tr>
               </tbody>
