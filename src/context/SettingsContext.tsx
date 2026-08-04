@@ -19,6 +19,7 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
       ...newSettings,
       rates: { ...prev.rates, ...newSettings.rates },
       speeds: { ...prev.speeds, ...newSettings.speeds },
+      cnc: newSettings.cnc ? { ...(prev.cnc ?? DEFAULT_SHOP_SETTINGS.cnc!), ...newSettings.cnc } : prev.cnc,
     }));
   };
 

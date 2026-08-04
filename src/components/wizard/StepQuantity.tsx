@@ -28,7 +28,8 @@ interface StepQuantityProps {
 
 export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, onUpdate }: StepQuantityProps) {
   const { customers, materials } = useQuotes();
-  const { settings } = useSettings();
+  const { settings, updateSettings } = useSettings();
+  const efficiency = settings.cnc?.efficiencyFactor ?? 0.8;
 
   const currentMaterial = materials.find(m => m.id === data.features.materialId) || materials[0];
 
@@ -299,10 +300,58 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
               )}
             </div>
 
+            {/* Efficiency factor — the primary calibration control (live recalc) */}
+            {mc && (
+              <div className="space-y-2 border-t border-border pt-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Shop efficiency</span>
+                  <span className="text-sm font-bold text-primary tabular-nums">{Math.round(efficiency * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.6}
+                  max={1.0}
+                  step={0.05}
+                  value={efficiency}
+                  onChange={(e) => updateSettings({ cnc: { ...settings.cnc!, efficiencyFactor: Number(e.target.value) } })}
+                  className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+                />
+                <p className="text-[10px] text-muted-foreground/80 leading-tight">
+                  Calibrate to a job you know: actual time = book time ÷ efficiency. Every quote recalculates live.
+                  Current cycle ~{mc.cycleTimeSec}s.
+                </p>
+              </div>
+            )}
+
+            {/* Batch quantity curve — setup amortisation */}
+            {mc && (
+              <div className="space-y-2 border-t border-border pt-4">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Price per part by quantity</span>
+                <div className="space-y-1.5">
+                  {mc.batchCurve.map((pt) => {
+                    const maxUp = Math.max(...mc.batchCurve.map((p) => p.unitPrice), 0.0001);
+                    const isCurrent = pt.quantity === data.config.quantity;
+                    return (
+                      <div key={pt.quantity} className="flex items-center gap-2">
+                        <span className={cn('text-[10px] w-8 tabular-nums shrink-0', isCurrent ? 'font-bold text-primary' : 'text-muted-foreground')}>×{pt.quantity}</span>
+                        <div className="flex-1 h-3 bg-muted rounded overflow-hidden">
+                          <div className={cn('h-full rounded', isCurrent ? 'bg-primary' : 'bg-primary/40')} style={{ width: `${(pt.unitPrice / maxUp) * 100}%` }}></div>
+                        </div>
+                        <span className={cn('text-[10px] w-14 text-right tabular-nums shrink-0', isCurrent ? 'font-bold text-foreground' : 'text-muted-foreground')}>${fmt(pt.unitPrice)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground/80 leading-tight">
+                  Setup ({mc.setupTimeMin} min) is amortised over the batch — dominant at low qty, negligible at high.
+                </p>
+              </div>
+            )}
+
             {/* Roll-up to the unit price */}
             <div className="space-y-2 border-t border-border pt-4">
               <div className="flex justify-between text-sm text-muted-foreground">
-                <span>Manufacturing subtotal</span>
+                <span>{isMachining ? 'Machining subtotal' : 'Manufacturing subtotal'}</span>
                 <span className="tabular-nums">${fmt(costs.subtotal)}</span>
               </div>
               <div className="flex justify-between text-sm text-muted-foreground">
