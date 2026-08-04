@@ -8,7 +8,12 @@ import {
   MeshMeasurements,
 } from './occtLoader';
 import { analyzeDrawingWithAI, AiDrawingData } from './aiExtractor';
-import { analyzeDfm, DfmReport } from './dfm';
+import { DfmReport } from './dfm';
+import { analyzeCncDfm } from './dfmCnc';
+import { classifyPart, PartClass } from './partClass';
+import { stockVolumeCm3, MachiningInput } from './cncEstimator';
+import { materialPropsFor } from './materials';
+import { DEFAULT_CNC_SETTINGS } from '../constants';
 
 export type MeasurementSource = 'solid' | 'estimated' | 'ai-drawing' | 'manual';
 
@@ -43,13 +48,30 @@ export interface ExtractedCadAnalysis {
   featuresNeedReview?: boolean;
   /**
    * True when the solid is a FORMED (folded) sheet-metal part rather than a flat
-   * blank. For these, the perimeter/surface area measured from the folded 3D shape
-   * understate the true flat-pattern cut length — the flat DXF/drawing is needed
-   * for an accurate cut cost.
+   * blank. Retained for sheet-metal inputs; always false for machined solids.
    */
   formedPart?: boolean;
   /** Advisory Design-for-Manufacturing findings from the measured geometry. */
   dfm?: DfmReport;
+  // --- CNC machining metrics (subtractive) --------------------------------
+  /** Turned (round bar) vs milled (billet) — drives the machining cost model. */
+  partClass?: PartClass;
+  /** Round-bar ⌀ (turned parts). */
+  diameterMm?: number;
+  /** Length along the turning axis (turned parts). */
+  axisLengthMm?: number;
+  /** Measured enclosed volume of the finished part (cm³). */
+  volumeCm3?: number;
+  /** Measured wetted surface area of the finished part (cm²). */
+  surfaceAreaCm2?: number;
+  /** Raw stock volume the part is machined from (cm³). */
+  stockVolumeCm3?: number;
+  /** Stock volume removed as chips (cm³). */
+  removedVolumeCm3?: number;
+  /** part volume ÷ stock volume — material yield (buy-to-fly), 0–1. */
+  buyToFlyRatio?: number;
+  /** Estimated number of machine setups (fixturings / re-orientations). */
+  setups?: number;
   pdfData?: CadPdfMetadata;
   pdfUrl?: string; // Object URL / static path to the actual PDF/image for inline rendering
 }
@@ -177,17 +199,54 @@ async function analyzeSolid(
       ? Math.round(Math.min(60, Math.max(0.4, meanWallMm)) * 10) / 10
       : (meas.heightMm < 12 ? Math.max(1.5, meas.heightMm) : 3.0);
 
-    // A folded part stands much taller than its material is thick (or has detected
-    // bends). Its folded-envelope perimeter/area understate the flat-blank cut length.
-    const formedPart = bendCount > 0 || meas.heightMm > thicknessMm * 2.5;
+    // Machining is subtractive: classify the solid as turned (round bar) or milled
+    // (billet), then derive stock and material yield (buy-to-fly) from the measured
+    // volume — the headline cost/risk driver for a machine shop.
+    const pc = classifyPart({
+      lengthMm: meas.lengthMm,
+      widthMm: meas.widthMm,
+      heightMm: meas.heightMm,
+      volumeCm3: meas.volumeCm3,
+    });
+    // Setups: a turned part is usually one hit (two if it has cross/second-op
+    // features); a milled part needs ~2, or 3 when features wrap several faces.
+    const boxiness = Math.min(meas.widthMm, meas.heightMm) / Math.max(meas.lengthMm, 1);
+    const setups = pc.partClass === 'turned'
+      ? (holeCount > 0 ? 2 : 1)
+      : (boxiness > 0.5 ? 3 : 2);
 
-    // Advisory DFM checks from the measured geometry (positions/radii from the B-Rep).
-    const dfm = analyzeDfm({
+    const machiningInput: MachiningInput = {
+      partClass: pc.partClass,
+      materialName,
+      volumeCm3: meas.volumeCm3,
+      surfaceAreaCm2: meas.surfaceAreaCm2,
+      boundingBoxMm: { lengthMm: meas.lengthMm, widthMm: meas.widthMm, heightMm: meas.heightMm },
+      diameterMm: pc.diameterMm,
+      axisLengthMm: pc.axisLengthMm,
+      holeCount,
+      holeDetails,
+      setups,
+      materialPricePerKg: 0, // not needed for the stock-VOLUME calc below
+    };
+    const stockVol = stockVolumeCm3(machiningInput, DEFAULT_CNC_SETTINGS);
+    const removedVol = Math.max(0, stockVol - meas.volumeCm3);
+    const buyToFlyRatio = stockVol > 0 ? Math.round((meas.volumeCm3 / stockVol) * 100) / 100 : 0;
+    const machinability = materialPropsFor(materialName).machinability;
+
+    // This product line quotes machined parts, not folded sheet metal.
+    const formedPart = false;
+
+    // Advisory Design-for-Manufacturing checks for CNC machining.
+    const dfm = analyzeCncDfm({
+      partClass: pc.partClass,
       thicknessMm,
       boundingBoxMm: { lengthMm: meas.lengthMm, widthMm: meas.widthMm, heightMm: meas.heightMm },
+      diameterMm: pc.diameterMm,
+      axisLengthMm: pc.axisLengthMm,
       holeDetails,
-      holes: geo?.holes,
-      bends: geo?.bends,
+      buyToFlyRatio,
+      setups,
+      tolerances: 'Standard ISO 2768-m (±0.2mm)',
       hasGeometry: !!geo,
     });
 
@@ -214,24 +273,31 @@ async function analyzeSolid(
       tolerances: 'Standard ISO 2768-m (±0.2mm)',
       aiNotes: [
         `Measured directly from the solid model — bounding box ${meas.lengthMm} × ${meas.widthMm} × ${meas.heightMm} mm.`,
-        `Material thickness measured at ${thicknessMm} mm (mean wall from volume ÷ surface area), not assumed.`,
-        `Enclosed volume ${meas.volumeCm3} cm³ → weight ${weightKg} kg in ${materialName} (density ${density} g/cm³).`,
+        pc.partClass === 'turned'
+          ? `Classified as a TURNED part (round-bar): ⌀${pc.diameterMm} × ${pc.axisLengthMm} mm. ${pc.reason}`
+          : `Classified as a MILLED part (billet). ${pc.reason}`,
+        `Finished volume ${meas.volumeCm3} cm³ → weight ${weightKg} kg in ${materialName} (density ${density} g/cm³, machinability ${machinability}× mild steel).`,
+        `Machined from ${stockVol.toFixed(1)} cm³ of stock — ${removedVol.toFixed(1)} cm³ removed as chips (material yield ${Math.round(buyToFlyRatio * 100)}%), ${setups} setup${setups > 1 ? 's' : ''}.`,
         geo
-          ? `${holeCount} holes (${holeSummary})${boreCount ? ` + ${boreCount} bores` : ''} and ${bendCount} bends detected geometrically from the solid faces.`
-          : `Wetted surface area ${surfaceAreaM2} m² sets finishing cost; ${holeCount} holes and ${bendCount} bends from topology.`,
-        ...(formedPart
-          ? [
-              `Formed part: it stands ${meas.heightMm} mm tall on ${thicknessMm} mm stock, so this is a folded assembly. The ${perimeterMm} mm perimeter and ${surfaceAreaM2} m² area are measured from the FOLDED shape and understate the flat blank the laser actually cuts — upload the flat-pattern DXF or the 2D drawing for an accurate cut/laser cost.`,
-            ]
-          : []),
+          ? `${holeCount} holes (${holeSummary})${boreCount ? ` + ${boreCount} bores` : ''} detected geometrically from the solid faces.`
+          : `Wetted surface area ${surfaceAreaM2} m² sets finishing time; ${holeCount} holes from topology.`,
       ],
-      confidenceScore: formedPart ? 80 : 98,
+      confidenceScore: 98,
       stepData,
       stepMesh: mesh,
       measurementSource: 'solid',
-      featuresNeedReview: formedPart,
+      featuresNeedReview: false,
       formedPart,
       dfm,
+      partClass: pc.partClass,
+      diameterMm: pc.diameterMm,
+      axisLengthMm: pc.axisLengthMm,
+      volumeCm3: meas.volumeCm3,
+      surfaceAreaCm2: meas.surfaceAreaCm2,
+      stockVolumeCm3: Math.round(stockVol * 10) / 10,
+      removedVolumeCm3: Math.round(removedVol * 10) / 10,
+      buyToFlyRatio,
+      setups,
     };
   }
 

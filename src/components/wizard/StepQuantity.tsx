@@ -12,8 +12,9 @@ import {
 import { useQuotes } from '../../context/QuoteContext';
 import { useSettings } from '../../context/SettingsContext';
 import { calculateQuoteCosts } from '../../utils/estimator';
+import { calculateMachiningCosts } from '../../utils/cncEstimator';
 import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
-import { PartFeatures } from '../../types';
+import { CostLineItem, PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
 
 interface StepQuantityProps {
@@ -30,31 +31,57 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
 
   const currentMaterial = materials.find(m => m.id === data.features.materialId) || materials[0];
 
-  const costs = useMemo(() => {
-    return calculateQuoteCosts(
-      data.features as PartFeatures,
+  const f = data.features as PartFeatures;
+  // A machined solid was measured (turned/milled) → price it with the subtractive
+  // CNC model (stock + material removal + setups). Otherwise use the legacy path.
+  const isMachining = !!cadAnalysis?.partClass;
+
+  const { costs, lineItems } = useMemo(() => {
+    if (isMachining && cadAnalysis) {
+      const mc = calculateMachiningCosts(
+        {
+          partClass: cadAnalysis.partClass!,
+          materialName: currentMaterial.name,
+          volumeCm3: cadAnalysis.volumeCm3 ?? 0,
+          surfaceAreaCm2: cadAnalysis.surfaceAreaCm2 ?? f.surfaceAreaM2 * 10000,
+          boundingBoxMm: { lengthMm: cadAnalysis.lengthMm, widthMm: cadAnalysis.widthMm, heightMm: cadAnalysis.heightMm },
+          diameterMm: cadAnalysis.diameterMm ?? 0,
+          axisLengthMm: cadAnalysis.axisLengthMm ?? 0,
+          holeCount: f.holeCount,
+          holeDetails: cadAnalysis.holeDetails ?? [],
+          setups: cadAnalysis.setups ?? 1,
+          materialPricePerKg: currentMaterial.pricePerKg,
+        },
+        data.config.quantity,
+        data.config.isRush,
+        settings.defaultMargin,
+        settings
+      );
+      return { costs: mc, lineItems: mc.lineItems };
+    }
+
+    const qc = calculateQuoteCosts(
+      f,
       data.config.quantity,
       data.config.isRush,
-      settings.defaultMargin, // Logic is handled in context or here
+      settings.defaultMargin,
       currentMaterial.pricePerKg,
       settings
     );
-  }, [data, settings, currentMaterial]);
+    // Each process cost tied back to the measured feature that drives it.
+    const items: CostLineItem[] = [
+      { key: 'material', name: 'Material', driver: `${f.weightKg} kg × $${currentMaterial.pricePerKg.toFixed(2)}/kg (+${(settings.scrapFactor * 100).toFixed(0)}% scrap)`, value: qc.materialCost, color: '#2563eb' },
+      { key: 'laser', name: 'Laser cutting', driver: `${Math.round(f.perimeterMm)} mm cut path · ${f.pierceCount} pierces`, value: qc.laserCost, color: '#3b82f6' },
+      { key: 'bending', name: 'Press brake', driver: f.bendCount > 0 ? `${f.bendCount} bend${f.bendCount > 1 ? 's' : ''} (${f.isSimpleBending ? 'simple' : 'compound'}) + setup` : 'no bends', value: qc.bendCost, color: '#60a5fa' },
+      { key: 'welding', name: 'Welding', driver: `${Math.round(f.weldLengthMm)} mm · ${f.weldCount} joint${f.weldCount === 1 ? '' : 's'}`, value: qc.weldCost, color: '#8b5cf6' },
+      { key: 'handling', name: 'Handling / assembly', driver: `${f.holeCount} hole${f.holeCount === 1 ? '' : 's'} + base handling`, value: qc.assemblyCost, color: '#a78bfa' },
+      { key: 'finish', name: 'Finishing', driver: `${f.surfaceAreaM2.toFixed(3)} m² surface`, value: qc.finishCost, color: '#93c5fd' },
+    ].filter((li) => li.value > 0.005);
+    return { costs: qc, lineItems: items };
+  }, [data, settings, currentMaterial, isMachining, cadAnalysis, f]);
 
   const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
-
-  const f = data.features as PartFeatures;
-  // Each process cost tied back to the measured feature that drives it, so the
-  // estimate is traceable to the geometry rather than a single opaque number.
-  const lineItems = [
-    { key: 'material', name: 'Material', driver: `${f.weightKg} kg × $${currentMaterial.pricePerKg.toFixed(2)}/kg (+${(settings.scrapFactor * 100).toFixed(0)}% scrap)`, value: costs.materialCost, color: '#2563eb' },
-    { key: 'laser', name: 'Laser cutting', driver: `${Math.round(f.perimeterMm)} mm cut path · ${f.pierceCount} pierces`, value: costs.laserCost, color: '#3b82f6' },
-    { key: 'bending', name: 'Press brake', driver: f.bendCount > 0 ? `${f.bendCount} bend${f.bendCount > 1 ? 's' : ''} (${f.isSimpleBending ? 'simple' : 'compound'}) + setup` : 'no bends', value: costs.bendCost, color: '#60a5fa' },
-    { key: 'welding', name: 'Welding', driver: `${Math.round(f.weldLengthMm)} mm · ${f.weldCount} joint${f.weldCount === 1 ? '' : 's'}`, value: costs.weldCost, color: '#8b5cf6' },
-    { key: 'handling', name: 'Handling / assembly', driver: `${f.holeCount} hole${f.holeCount === 1 ? '' : 's'} + base handling`, value: costs.assemblyCost, color: '#a78bfa' },
-    { key: 'finish', name: 'Finishing', driver: `${f.surfaceAreaM2.toFixed(3)} m² surface`, value: costs.finishCost, color: '#93c5fd' },
-  ].filter((li) => li.value > 0.005);
 
   const maxItem = Math.max(...lineItems.map((li) => li.value), 0.0001);
   const fmt = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -237,6 +264,29 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                   </div>
                 ))}
               </div>
+              {isMachining && cadAnalysis && (
+                <div className="rounded-md border border-border bg-muted/40 p-2.5 space-y-1">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-muted-foreground">
+                      {cadAnalysis.partClass === 'turned' ? 'Turned from ⌀' + cadAnalysis.diameterMm + ' bar' : 'Milled from billet'}
+                    </span>
+                    <span className="font-semibold text-foreground">
+                      {Math.round((cadAnalysis.buyToFlyRatio ?? 0) * 100)}% material yield
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={cn('h-full rounded-full', (cadAnalysis.buyToFlyRatio ?? 0) < 0.15 ? 'bg-amber-500' : 'bg-emerald-500')}
+                        style={{ width: `${Math.max(3, Math.min(100, (cadAnalysis.buyToFlyRatio ?? 0) * 100))}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground/80 leading-tight">
+                    {cadAnalysis.removedVolumeCm3} cm³ removed from {cadAnalysis.stockVolumeCm3} cm³ stock · {cadAnalysis.setups} setup{(cadAnalysis.setups ?? 1) > 1 ? 's' : ''} · buy-to-fly
+                  </p>
+                </div>
+              )}
               {cadAnalysis?.formedPart && (
                 <div className="flex gap-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5">
                   <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />

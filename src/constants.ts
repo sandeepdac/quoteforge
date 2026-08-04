@@ -1,4 +1,27 @@
-import { ShopSettings } from './types';
+import { CncSettings, ShopSettings } from './types';
+
+/**
+ * CNC machining defaults tuned for a small-part precision shop (sliding-head
+ * turning + turn-mill), machining metals and plastics. Rates are per-minute;
+ * ~£75/hr spindle ≈ 1.25/min. Removal/finishing rates are the MILD-STEEL
+ * baseline and get scaled by each material's machinability. Advisory — a shop
+ * tunes these to its own machines.
+ */
+export const DEFAULT_CNC_SETTINGS: CncSettings = {
+  machineRatePerMin: 1.25,
+  setupRatePerMin: 1.10,
+  setupTimeMin: 20,
+  baseRemovalRateCm3PerMin: 8,     // mild steel; brass ≈ 28, aluminium ≈ 24, stainless ≈ 3.6
+  baseFinishingRateCm2PerMin: 20,  // mild steel; scaled by machinability
+  drillTimePerHoleMin: 0.5,
+  millingStockAllowanceMm: 3,
+  turningStockAllowanceMm: 2,
+  turningFacingAllowanceMm: 5,
+  inspectionBaseMin: 3,
+  inspectionPerHoleMin: 0.4,
+  deburrBaseMin: 1.5,
+  deburrPerHoleMin: 0.3,
+};
 
 export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   name: 'ForgeFab Dynamics',
@@ -22,4 +45,5 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   defaultMargin: 0.25,
   rushPremiumPercent: 0.20,
   scrapFactor: 0.15,
+  cnc: DEFAULT_CNC_SETTINGS,
 };
