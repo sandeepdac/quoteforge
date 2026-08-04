@@ -98,57 +98,85 @@ export interface CostLineItem {
   color: string;
 }
 
-/** Cost breakdown for a CNC-machined (subtractive) part. */
+/** Per-part price at a given batch quantity (setup amortised over the batch). */
+export interface BatchPricePoint {
+  quantity: number;
+  unitPrice: number;
+  /** Setup portion of the unit price at this quantity (for the curve annotation). */
+  setupPerUnit: number;
+}
+
+/**
+ * Cost breakdown for a TURNED part, driven by cycle time.
+ * The op-level detail (facing/rough/finish/drill/…) lives in `lineItems`.
+ */
 export interface MachiningCosts {
-  stockCost: number;
-  roughingCost: number;
-  finishingCost: number;
-  holeOpsCost: number;
+  materialCost: number;
+  machineCost: number;
   setupCost: number;
-  inspectionCost: number;
-  deburrCost: number;
+  toolingCost: number;
   subtotal: number;
   overhead: number;
   marginAmount: number;
   rushPremium: number;
-  /** Itemised lines (positive-cost only) for direct, traceable rendering. */
+  /** Itemised lines (positive-cost only), each with a time/geometry driver. */
   lineItems: CostLineItem[];
-  // --- measured metrics behind the numbers ---
+  // --- metrics behind the numbers ---
   partVolumeCm3: number;
   stockVolumeCm3: number;
   removedVolumeCm3: number;
-  /** part volume ÷ stock volume — the "buy-to-fly" material yield (0–1). */
+  /** part volume ÷ stock volume — "buy-to-fly" material yield (0–1). */
   buyToFlyRatio: number;
-  machineTimeMin: number;
+  /** Standard bar diameter selected (mm). */
+  barDiameterMm: number;
+  /** Per-part cycle time (spindle + air), after the efficiency factor (s). */
+  cycleTimeSec: number;
+  /** Total setup time for the job (min), amortised over the batch. */
+  setupTimeMin: number;
   setups: number;
+  efficiencyFactor: number;
+  /** Price per part across standard batch sizes (setup amortisation curve). */
+  batchCurve: BatchPricePoint[];
 }
 
-/** Shop rates/speeds for CNC machining (turning + milling). Advisory defaults. */
+/**
+ * Shop rates/speeds for CNC TURNING. Advisory defaults; the efficiency factor
+ * is the primary calibration control.
+ */
 export interface CncSettings {
-  /** Charge-out rate for spindle time. */
+  /** Charge-out for spindle time (per minute). */
   machineRatePerMin: number;
-  /** Charge-out rate for setup / load / offset time. */
+  /** Charge-out for setup labour (per minute). */
   setupRatePerMin: number;
-  /** Minutes per setup (fixturing, tool touch-off, first-off check). */
-  setupTimeMin: number;
-  /** Baseline roughing removal rate for MILD STEEL (cm³/min); scaled by machinability. */
-  baseRemovalRateCm3PerMin: number;
-  /** Baseline finishing rate for MILD STEEL (cm²/min of finished surface); scaled by machinability. */
-  baseFinishingRateCm2PerMin: number;
-  /** Minutes per hole (drill/bore); tapped holes add half again. */
-  drillTimePerHoleMin: number;
-  /** Machining stock allowance added to each face of a milled billet (mm). */
-  millingStockAllowanceMm: number;
-  /** Diameter allowance over the part ⌀ for round bar (mm). */
-  turningStockAllowanceMm: number;
-  /** Facing/parting allowance added to bar length (mm). */
-  turningFacingAllowanceMm: number;
-  /** Inspection: base minutes + minutes per hole. */
-  inspectionBaseMin: number;
-  inspectionPerHoleMin: number;
-  /** Deburr: base minutes + minutes per hole. */
-  deburrBaseMin: number;
-  deburrPerHoleMin: number;
+  /** Baseline first-op setup (min): fixturing, tool touch-off, first-off check. */
+  setupTimeFirstOpMin: number;
+  /** Added setup per distinct tool (min). */
+  setupTimePerToolMin: number;
+  /** Added setup for a second op (back-face / turn-around) (min). */
+  secondOpSetupMin: number;
+  /**
+   * Shop efficiency factor (0.6–1.0). actual_time = theoretical_time / factor.
+   * The single most important calibration parameter — expose it prominently.
+   */
+  efficiencyFactor: number;
+  /** Spindle rpm ceiling. */
+  maxRpm: number;
+  /** Turret index / tool-change time (s each). */
+  toolChangeSec: number;
+  /** Load / unload / bar-feed time per part (s). */
+  barLoadSec: number;
+  /** Consumable tooling allowance per operation. */
+  toolingCostPerOp: number;
+  /** Radial stock allowance over the OD before choosing the next standard bar (mm). */
+  radialStockAllowanceMm: number;
+  /** Extra bar length for facing both ends (mm). */
+  facingAllowanceMm: number;
+  /** Material lost to the parting tool (mm). */
+  partingWidthMm: number;
+  /** Bar length held in the collet / lost to grip (mm). */
+  gripLengthMm: number;
+  /** Fraction of swarf value recovered (0–1). */
+  scrapRecovery: number;
 }
 
 export interface ShopSettings {

@@ -40,24 +40,18 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
   const material = materials.find(m => m.id === data.features.materialId) || materials[0];
 
   const f = data.features as PartFeatures;
-  const isMachining = !!cadAnalysis?.partClass;
+  const isMachining = !!(cadAnalysis?.isTurned && cadAnalysis?.turningProfile);
 
   const { costs, lineItems } = useMemo(() => {
-    if (isMachining && cadAnalysis) {
+    if (isMachining && cadAnalysis?.turningProfile) {
       const density = materialPropsFor(material.name).densityGCm3;
       const volumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : cadAnalysis.volumeCm3 ?? 0;
-      const surfaceAreaCm2 = f.surfaceAreaM2 > 0 ? f.surfaceAreaM2 * 10000 : cadAnalysis.surfaceAreaCm2 ?? 0;
       const mc = calculateMachiningCosts(
         {
-          partClass: cadAnalysis.partClass!,
+          isTurned: true,
           materialName: material.name,
           volumeCm3,
-          surfaceAreaCm2,
-          boundingBoxMm: { lengthMm: f.lengthMm, widthMm: f.widthMm, heightMm: f.heightMm },
-          diameterMm: cadAnalysis.diameterMm ?? 0,
-          axisLengthMm: cadAnalysis.axisLengthMm ?? 0,
-          holeCount: f.holeCount,
-          holeDetails: cadAnalysis.holeDetails ?? [],
+          profile: cadAnalysis.turningProfile,
           setups: cadAnalysis.setups ?? 1,
           materialPricePerKg: material.pricePerKg,
         },
@@ -172,7 +166,7 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
               <p className="text-[11px] text-muted-foreground">Each line is priced from a dimension measured from your CAD file.</p>
               {mc && (
                 <p className="text-[11px] text-muted-foreground">
-                  {cadAnalysis?.partClass === 'turned' ? 'Turned' : 'Milled'} · {mc.removedVolumeCm3} cm³ removed from {mc.stockVolumeCm3} cm³ stock
+                  Turned from ⌀{mc.barDiameterMm} bar · ~{mc.cycleTimeSec}s cycle @ {Math.round(mc.efficiencyFactor * 100)}% efficiency
                   · <strong className="text-foreground">{Math.round(mc.buyToFlyRatio * 100)}% material yield</strong> · {mc.setups} setup{mc.setups > 1 ? 's' : ''}.
                 </p>
               )}

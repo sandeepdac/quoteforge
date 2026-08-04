@@ -124,7 +124,8 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
   }
 
   const selectedMatObj = materials.find(m => m.id === features.materialId) || materials[0];
-  const isMachining = !!cadAnalysis?.partClass;
+  const isTurned = !!(cadAnalysis?.isTurned && cadAnalysis?.turningProfile);
+  const notRotational = !!(cadAnalysis?.measurementSource === 'solid' && cadAnalysis?.isTurned === false);
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 animate-in slide-in-from-bottom-4 duration-500 pb-10">
@@ -160,6 +161,19 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
           Confidence: {cadAnalysis?.confidenceScore ?? 94}%
         </div>
       </div>
+
+      {/* Out-of-scope: not a turned part */}
+      {notRotational && (
+        <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-xl flex gap-3">
+          <AlertCircle size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="text-xs font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider">Not a turned part — outside scope</p>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              {cadAnalysis?.notRotationalReason || 'This part is not rotationally symmetric, so the turning cycle-time model does not apply. Estimate it manually or in your CAM system.'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Layout: Left Viewer + Right Feature Inspector */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
@@ -252,7 +266,7 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
             </ul>
 
             <p className="text-[11px] text-muted-foreground leading-relaxed border-t border-border pt-2.5">
-              {isMachining ? (
+              {isTurned ? (
                 <>
                   These measurements drive the quote: <strong className="text-foreground">stock volume</strong> → material cost,
                   <strong className="text-foreground"> volume removed</strong> → roughing time,
@@ -354,24 +368,24 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
           </div>
 
           {/* Machining drivers (turning / milling) */}
-          {isMachining && cadAnalysis && (
+          {isTurned && cadAnalysis && (
             <div className="bg-card border border-border p-5 rounded-xl space-y-4">
               <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5 flex items-center justify-between">
-                <span>Machining Plan &amp; Stock</span>
+                <span>Turning Plan &amp; Stock</span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                  {cadAnalysis.partClass === 'turned' ? 'TURNED' : 'MILLED'}
+                  TURNED
                 </span>
               </h3>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-accent/40 border border-border p-3 rounded-lg">
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Stock</p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Bar stock</p>
                   <p className="text-sm font-bold text-foreground">
-                    {cadAnalysis.partClass === 'turned'
-                      ? `⌀${cadAnalysis.diameterMm} × ${cadAnalysis.axisLengthMm} mm bar`
-                      : `${cadAnalysis.lengthMm} × ${cadAnalysis.widthMm} × ${cadAnalysis.heightMm} mm billet`}
+                    ⌀{cadAnalysis.barDiameterMm ?? cadAnalysis.diameterMm} × {cadAnalysis.axisLengthMm} mm
                   </p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{cadAnalysis.stockVolumeCm3} cm³ raw</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    part ⌀{cadAnalysis.diameterMm} · {cadAnalysis.stockVolumeCm3} cm³ raw
+                  </p>
                 </div>
                 <div className="bg-accent/40 border border-border p-3 rounded-lg">
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Material yield</p>
@@ -381,43 +395,45 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div className="bg-accent/40 border border-border p-3.5 rounded-lg flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-bold text-foreground">Drilling / boring</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">Hole &amp; bore count</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-[10px] text-muted-foreground block">Holes</span>
-                    <input
-                      type="number"
-                      className="w-14 bg-background border border-border rounded px-2 py-1 text-xs text-center font-bold"
-                      value={features.holeCount}
-                      onChange={(e) => setFeatures({ ...features, holeCount: Number(e.target.value) })}
-                    />
-                  </div>
+                <div className="bg-accent/40 border border-border p-3.5 rounded-lg">
+                  <p className="text-xs font-bold text-foreground">Bore</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {cadAnalysis.turningProfile?.boreDiaMm
+                      ? `⌀${cadAnalysis.turningProfile.boreDiaMm} × ${cadAnalysis.turningProfile.boreDepthMm} mm — drill + bore`
+                      : 'Solid — no central bore'}
+                  </p>
                 </div>
                 <div className="bg-accent/40 border border-border p-3.5 rounded-lg flex items-center justify-between">
                   <div>
                     <p className="text-xs font-bold text-foreground">Setups</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">Fixturings / re-orientations</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">First op{cadAnalysis.setups && cadAnalysis.setups > 1 ? ' + turn-around' : ''}</p>
                   </div>
                   <div className="text-right">
-                    <span className="text-[10px] text-muted-foreground block">Est.</span>
                     <span className="text-lg font-bold text-foreground">{cadAnalysis.setups}</span>
                   </div>
                 </div>
               </div>
 
+              {cadAnalysis.crossFeatures && (
+                <div className="flex gap-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5">
+                  <AlertCircle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Off-axis features detected (cross-holes / flats). These need <strong className="text-foreground">live tooling or a second op</strong> and
+                    are <strong className="text-foreground">not</strong> in the cycle-time estimate — add them manually.
+                  </p>
+                </div>
+              )}
+
               <p className="text-[11px] text-muted-foreground leading-relaxed border-t border-border pt-2.5">
-                Priced with the subtractive model: you buy the {cadAnalysis.partClass === 'turned' ? 'bar' : 'billet'} and machine
-                <strong className="text-foreground"> {cadAnalysis.removedVolumeCm3} cm³</strong> of it into chips. Material yield and setups
-                are the biggest cost levers — see the DFM notes below.
+                Priced from <strong className="text-foreground">cycle time</strong>: facing, roughing, finishing, drilling and part-off from the
+                turned profile, at rates for {cadAnalysis.materialName}. This estimates time only —
+                <strong className="text-foreground"> it does not generate toolpaths</strong>.
               </p>
             </div>
           )}
 
           {/* Operations Breakdown (sheet-metal legacy path) */}
-          {!isMachining && (
+          {!isTurned && (
           <div className="bg-card border border-border p-5 rounded-xl space-y-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5">
               Detected Manufacturing Operations

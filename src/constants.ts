@@ -1,26 +1,27 @@
 import { CncSettings, ShopSettings } from './types';
 
 /**
- * CNC machining defaults tuned for a small-part precision shop (sliding-head
- * turning + turn-mill), machining metals and plastics. Rates are per-minute;
- * ~£75/hr spindle ≈ 1.25/min. Removal/finishing rates are the MILD-STEEL
- * baseline and get scaled by each material's machinability. Advisory — a shop
- * tunes these to its own machines.
+ * CNC TURNING defaults for a small-part precision shop (sliding-head, bar-fed),
+ * metals and plastics. Rates per minute (~£75/hr spindle ≈ 1.25/min). Cutting
+ * speeds/feeds live in the material table; the efficiency factor calibrates the
+ * book-vs-reality gap uniformly. Advisory — a shop tunes these to its machines.
  */
 export const DEFAULT_CNC_SETTINGS: CncSettings = {
   machineRatePerMin: 1.25,
-  setupRatePerMin: 1.10,
-  setupTimeMin: 20,
-  baseRemovalRateCm3PerMin: 8,     // mild steel; brass ≈ 28, aluminium ≈ 24, stainless ≈ 3.6
-  baseFinishingRateCm2PerMin: 20,  // mild steel; scaled by machinability
-  drillTimePerHoleMin: 0.5,
-  millingStockAllowanceMm: 3,
-  turningStockAllowanceMm: 2,
-  turningFacingAllowanceMm: 5,
-  inspectionBaseMin: 3,
-  inspectionPerHoleMin: 0.4,
-  deburrBaseMin: 1.5,
-  deburrPerHoleMin: 0.3,
+  setupRatePerMin: 0.80,
+  setupTimeFirstOpMin: 35,
+  setupTimePerToolMin: 3,
+  secondOpSetupMin: 20,
+  efficiencyFactor: 0.8, // actual = theoretical / 0.8 (real shops run below book)
+  maxRpm: 6000,
+  toolChangeSec: 3,
+  barLoadSec: 8,
+  toolingCostPerOp: 0.5,
+  radialStockAllowanceMm: 2,
+  facingAllowanceMm: 2,
+  partingWidthMm: 3,
+  gripLengthMm: 20,
+  scrapRecovery: 0,
 };
 
 export const DEFAULT_SHOP_SETTINGS: ShopSettings = {

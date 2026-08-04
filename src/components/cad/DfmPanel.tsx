@@ -1,6 +1,6 @@
 import React from 'react';
 import { ShieldCheck, AlertTriangle, XCircle, CheckCircle2, Info } from 'lucide-react';
-import { DfmReport, DfmSeverity } from '../../utils/dfm';
+import { DfmReport, DfmSeverity } from '../../utils/dfmTypes';
 
 const SEVERITY: Record<DfmSeverity, { icon: typeof Info; color: string; ring: string }> = {
   fail: { icon: XCircle, color: 'text-red-600 dark:text-red-400', ring: 'bg-red-500/10 border-red-500/30' },

@@ -8,10 +8,11 @@ import {
   MeshMeasurements,
 } from './occtLoader';
 import { analyzeDrawingWithAI, AiDrawingData } from './aiExtractor';
-import { DfmReport } from './dfm';
+import { DfmReport } from './dfmTypes';
 import { analyzeCncDfm } from './dfmCnc';
 import { classifyPart, PartClass } from './partClass';
-import { stockVolumeCm3, MachiningInput } from './cncEstimator';
+import { computeStock } from './cncEstimator';
+import { TurningProfile } from './turning';
 import { materialPropsFor } from './materials';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
 
@@ -53,9 +54,19 @@ export interface ExtractedCadAnalysis {
   formedPart?: boolean;
   /** Advisory Design-for-Manufacturing findings from the measured geometry. */
   dfm?: DfmReport;
-  // --- CNC machining metrics (subtractive) --------------------------------
-  /** Turned (round bar) vs milled (billet) — drives the machining cost model. */
+  // --- CNC turning metrics ------------------------------------------------
+  /** Turned (round bar) vs milled/prismatic (out of scope). */
   partClass?: PartClass;
+  /** True when the solid is rotationally symmetric and can be costed as a turned part. */
+  isTurned?: boolean;
+  /** Why a part was judged non-rotational (out of scope) — set when isTurned is false. */
+  notRotationalReason?: string;
+  /** The turned profile used for the cycle-time estimate. */
+  turningProfile?: TurningProfile;
+  /** Standard bar diameter selected (mm). */
+  barDiameterMm?: number;
+  /** Off-axis features present → needs a second op / live tooling. */
+  crossFeatures?: boolean;
   /** Round-bar ⌀ (turned parts). */
   diameterMm?: number;
   /** Length along the turning axis (turned parts). */
@@ -199,56 +210,72 @@ async function analyzeSolid(
       ? Math.round(Math.min(60, Math.max(0.4, meanWallMm)) * 10) / 10
       : (meas.heightMm < 12 ? Math.max(1.5, meas.heightMm) : 3.0);
 
-    // Machining is subtractive: classify the solid as turned (round bar) or milled
-    // (billet), then derive stock and material yield (buy-to-fly) from the measured
-    // volume — the headline cost/risk driver for a machine shop.
+    // Turning is priced from cycle time, so first classify the solid as a body of
+    // revolution (turned, round bar) or not (out of scope — flag, do not cost).
     const pc = classifyPart({
       lengthMm: meas.lengthMm,
       widthMm: meas.widthMm,
       heightMm: meas.heightMm,
       volumeCm3: meas.volumeCm3,
     });
-    // Setups: a turned part is usually one hit (two if it has cross/second-op
-    // features); a milled part needs ~2, or 3 when features wrap several faces.
-    const boxiness = Math.min(meas.widthMm, meas.heightMm) / Math.max(meas.lengthMm, 1);
-    const setups = pc.partClass === 'turned'
-      ? (holeCount > 0 ? 2 : 1)
-      : (boxiness > 0.5 ? 3 : 2);
-
-    const machiningInput: MachiningInput = {
-      partClass: pc.partClass,
-      materialName,
-      volumeCm3: meas.volumeCm3,
-      surfaceAreaCm2: meas.surfaceAreaCm2,
-      boundingBoxMm: { lengthMm: meas.lengthMm, widthMm: meas.widthMm, heightMm: meas.heightMm },
-      diameterMm: pc.diameterMm,
-      axisLengthMm: pc.axisLengthMm,
-      holeCount,
-      holeDetails,
-      setups,
-      materialPricePerKg: 0, // not needed for the stock-VOLUME calc below
-    };
-    const stockVol = stockVolumeCm3(machiningInput, DEFAULT_CNC_SETTINGS);
-    const removedVol = Math.max(0, stockVol - meas.volumeCm3);
-    const buyToFlyRatio = stockVol > 0 ? Math.round((meas.volumeCm3 / stockVol) * 100) / 100 : 0;
+    const isTurned = pc.partClass === 'turned';
     const machinability = materialPropsFor(materialName).machinability;
 
-    // This product line quotes machined parts, not folded sheet metal.
+    // Build a turned PROFILE from the measured geometry. This is a pragmatic
+    // approximation (a full B-Rep profile-sectioning engine is the next phase):
+    //   • the largest hole is treated as a central bore; any others are off-axis
+    //     "cross features" → flagged for a second op / live tooling, not costed.
+    //   • grooves/threads aren't recognised from geometry yet (read from drawing).
+    const sortedHoles = [...holeDetails].sort((a, b) => b.diameterMm - a.diameterMm);
+    const bore = sortedHoles[0];
+    const otherHoleCount = sortedHoles.slice(1).reduce((s, h) => s + h.count, 0)
+      + (bore ? Math.max(0, bore.count - 1) : 0);
+    const crossFeatures = otherHoleCount > 0;
+    const turningProfile: TurningProfile = {
+      odMm: pc.diameterMm,
+      lengthMm: pc.axisLengthMm,
+      boreDiaMm: bore && bore.diameterMm < pc.diameterMm * 0.85 ? bore.diameterMm : 0,
+      boreDepthMm: bore && bore.diameterMm < pc.diameterMm * 0.85 ? Math.round(pc.axisLengthMm * 0.8) : 0,
+      grooveCount: 0,
+      threadCount: 0,
+      faceCount: 2,
+      crossFeatures,
+    };
+
+    // Setups: single op for a plain turned part; a second op (back-face /
+    // turn-around) when off-axis features exist.
+    const setups = crossFeatures ? 2 : 1;
+
+    // Stock (next standard bar) and material yield (buy-to-fly).
+    const { barDiameterMm, stockVolumeCm3: stockVol } = computeStock(turningProfile, DEFAULT_CNC_SETTINGS);
+    const removedVol = Math.max(0, stockVol - meas.volumeCm3);
+    const buyToFlyRatio = stockVol > 0 ? Math.round((meas.volumeCm3 / stockVol) * 100) / 100 : 0;
+
+    // Sheet-metal concepts don't apply to machined parts.
     const formedPart = false;
 
-    // Advisory Design-for-Manufacturing checks for CNC machining.
-    const dfm = analyzeCncDfm({
-      partClass: pc.partClass,
-      thicknessMm,
-      boundingBoxMm: { lengthMm: meas.lengthMm, widthMm: meas.widthMm, heightMm: meas.heightMm },
-      diameterMm: pc.diameterMm,
-      axisLengthMm: pc.axisLengthMm,
-      holeDetails,
-      buyToFlyRatio,
-      setups,
-      tolerances: 'Standard ISO 2768-m (±0.2mm)',
-      hasGeometry: !!geo,
-    });
+    // Advisory DFM for turning (only meaningful for a turned part).
+    const dfm = isTurned
+      ? analyzeCncDfm({
+          partClass: 'turned',
+          thicknessMm,
+          boundingBoxMm: { lengthMm: meas.lengthMm, widthMm: meas.widthMm, heightMm: meas.heightMm },
+          diameterMm: pc.diameterMm,
+          axisLengthMm: pc.axisLengthMm,
+          holeDetails,
+          buyToFlyRatio,
+          setups,
+          crossFeatures,
+          boreDiaMm: turningProfile.boreDiaMm,
+          boreDepthMm: turningProfile.boreDepthMm,
+          tolerances: 'Standard ISO 2768-m (±0.2mm)',
+          hasGeometry: !!geo,
+        })
+      : undefined;
+
+    const notRotationalReason = isTurned
+      ? undefined
+      : `Not rotationally symmetric — ${pc.reason} Prismatic/milled parts are outside this tool's scope (turned parts only); estimate manually or in your CAM system.`;
 
     return {
       partName: baseName(fileName),
@@ -271,33 +298,44 @@ async function analyzeSolid(
       surfaceAreaM2,
       finishCallout: 'Deburr & De-grease',
       tolerances: 'Standard ISO 2768-m (±0.2mm)',
-      aiNotes: [
-        `Measured directly from the solid model — bounding box ${meas.lengthMm} × ${meas.widthMm} × ${meas.heightMm} mm.`,
-        pc.partClass === 'turned'
-          ? `Classified as a TURNED part (round-bar): ⌀${pc.diameterMm} × ${pc.axisLengthMm} mm. ${pc.reason}`
-          : `Classified as a MILLED part (billet). ${pc.reason}`,
-        `Finished volume ${meas.volumeCm3} cm³ → weight ${weightKg} kg in ${materialName} (density ${density} g/cm³, machinability ${machinability}× mild steel).`,
-        `Machined from ${stockVol.toFixed(1)} cm³ of stock — ${removedVol.toFixed(1)} cm³ removed as chips (material yield ${Math.round(buyToFlyRatio * 100)}%), ${setups} setup${setups > 1 ? 's' : ''}.`,
-        geo
-          ? `${holeCount} holes (${holeSummary})${boreCount ? ` + ${boreCount} bores` : ''} detected geometrically from the solid faces.`
-          : `Wetted surface area ${surfaceAreaM2} m² sets finishing time; ${holeCount} holes from topology.`,
-      ],
-      confidenceScore: 98,
+      aiNotes: isTurned
+        ? [
+            `Measured directly from the solid — bounding box ${meas.lengthMm} × ${meas.widthMm} × ${meas.heightMm} mm.`,
+            `Classified as a TURNED part: ⌀${pc.diameterMm} × ${pc.axisLengthMm} mm (${Math.round(pc.confidence * 100)}% confidence). ${pc.reason}`,
+            `Stock: ⌀${barDiameterMm} bar (next standard size) — ${stockVol.toFixed(1)} cm³, ${removedVol.toFixed(1)} cm³ removed (material yield ${Math.round(buyToFlyRatio * 100)}%). ${materialName}, machinability ${machinability}× medium-carbon steel.`,
+            turningProfile.boreDiaMm > 0
+              ? `Central bore ⌀${turningProfile.boreDiaMm} detected → drill + bore.`
+              : `Solid part — no central bore detected.`,
+            crossFeatures
+              ? `${otherHoleCount} off-axis feature${otherHoleCount === 1 ? '' : 's'} detected — flagged as requiring a second op / live tooling and NOT included in the cycle-time estimate.`
+              : `No off-axis features detected.`,
+            `Estimates cycle time only — this does not generate toolpaths (your CAM stays in place).`,
+          ]
+        : [
+            `Measured directly from the solid — bounding box ${meas.lengthMm} × ${meas.widthMm} × ${meas.heightMm} mm.`,
+            notRotationalReason!,
+          ],
+      confidenceScore: isTurned ? (crossFeatures ? 70 : Math.round(85 + pc.confidence * 13)) : 30,
       stepData,
       stepMesh: mesh,
       measurementSource: 'solid',
-      featuresNeedReview: false,
+      featuresNeedReview: crossFeatures || !isTurned,
       formedPart,
       dfm,
       partClass: pc.partClass,
+      isTurned,
+      notRotationalReason,
+      turningProfile,
       diameterMm: pc.diameterMm,
       axisLengthMm: pc.axisLengthMm,
       volumeCm3: meas.volumeCm3,
       surfaceAreaCm2: meas.surfaceAreaCm2,
       stockVolumeCm3: Math.round(stockVol * 10) / 10,
       removedVolumeCm3: Math.round(removedVol * 10) / 10,
+      barDiameterMm,
       buyToFlyRatio,
       setups,
+      crossFeatures,
     };
   }
 

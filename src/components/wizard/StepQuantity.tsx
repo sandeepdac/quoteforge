@@ -33,29 +33,22 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
   const currentMaterial = materials.find(m => m.id === data.features.materialId) || materials[0];
 
   const f = data.features as PartFeatures;
-  // A machined solid was measured (turned/milled) → price it with the subtractive
-  // CNC model (stock + material removal + setups). Otherwise use the legacy path.
-  const isMachining = !!cadAnalysis?.partClass;
+  // A turned solid was measured → price it from cycle time (turning model).
+  // Non-rotational parts fall back to the legacy path (and are flagged upstream).
+  const isMachining = !!(cadAnalysis?.isTurned && cadAnalysis?.turningProfile);
 
   const { costs, lineItems } = useMemo(() => {
-    if (isMachining && cadAnalysis) {
-      // Respect user edits from the extraction step: derive volume from the
-      // (possibly edited) weight, and use the edited surface area, so tweaks
-      // there flow into the machining price.
+    if (isMachining && cadAnalysis?.turningProfile) {
+      // Respect user edits: derive volume from the (possibly edited) weight so
+      // tweaks in the extraction step flow into the cycle-time price.
       const density = materialPropsFor(currentMaterial.name).densityGCm3;
       const volumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : cadAnalysis.volumeCm3 ?? 0;
-      const surfaceAreaCm2 = f.surfaceAreaM2 > 0 ? f.surfaceAreaM2 * 10000 : cadAnalysis.surfaceAreaCm2 ?? 0;
       const mc = calculateMachiningCosts(
         {
-          partClass: cadAnalysis.partClass!,
+          isTurned: true,
           materialName: currentMaterial.name,
           volumeCm3,
-          surfaceAreaCm2,
-          boundingBoxMm: { lengthMm: f.lengthMm, widthMm: f.widthMm, heightMm: f.heightMm },
-          diameterMm: cadAnalysis.diameterMm ?? 0,
-          axisLengthMm: cadAnalysis.axisLengthMm ?? 0,
-          holeCount: f.holeCount,
-          holeDetails: cadAnalysis.holeDetails ?? [],
+          profile: cadAnalysis.turningProfile,
           setups: cadAnalysis.setups ?? 1,
           materialPricePerKg: currentMaterial.pricePerKg,
         },
@@ -291,7 +284,7 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                     </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground/80 leading-tight">
-                    {mc.removedVolumeCm3} cm³ removed from {mc.stockVolumeCm3} cm³ stock · {mc.setups} setup{mc.setups > 1 ? 's' : ''} · buy-to-fly
+                    ~{mc.cycleTimeSec}s cycle · {mc.removedVolumeCm3} cm³ removed from {mc.stockVolumeCm3} cm³ bar · {mc.setups} setup{mc.setups > 1 ? 's' : ''} · buy-to-fly
                   </p>
                 </div>
               )}
