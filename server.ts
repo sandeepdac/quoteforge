@@ -121,6 +121,27 @@ Return ONLY valid JSON.`;
     }
   });
 
+  // Turned-profile extraction — forward to the Python geometry service (OCP).
+  // Optional: if the service isn't running, return ok:false and the web app
+  // falls back to its built-in mesh approximation.
+  const GEOMETRY_URL = process.env.GEOMETRY_URL || 'http://127.0.0.1:8000';
+  app.post('/api/extract-profile-b64', async (req, res) => {
+    try {
+      const { fileBase64, fileName } = req.body;
+      if (!fileBase64) return res.json({ ok: false, error: 'no data' });
+      const upstream = await fetch(`${GEOMETRY_URL}/extract-profile-b64`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileBase64, fileName }),
+      });
+      const json = await upstream.json();
+      return res.json(json);
+    } catch (err: any) {
+      // Service down / unreachable — honest fallback signal for the client.
+      return res.json({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -141,6 +162,7 @@ Return ONLY valid JSON.`;
     console.log(`Server running on http://0.0.0.0:${PORT}`);
     console.log(`AI vision (Gemini): GEMINI_API_KEY ${keyOk ? 'configured ✓' : 'NOT configured ✗ (PDF/image will fall back to manual)'}`);
     console.log('Note: open the app on THIS port (the Express server) so /api/analyze-cad is available — not the bare Vite port.');
+    console.log(`Geometry service (turned-profile extraction): forwarding to ${GEOMETRY_URL} — optional; app falls back to mesh approximation if it's not running.`);
   });
 }
 
