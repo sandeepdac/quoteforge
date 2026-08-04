@@ -3,14 +3,16 @@
 **Prepared for:** Turncircuit — Precision CNC Machining
 **Prepared by:** Delivery Team
 **Date:** 4 August 2026
-**Version:** 2.0
-**Engagement:** AI-assisted quoting tool for precision CNC machining (turning + turn-mill)
+**Version:** 3.0
+**Engagement:** AI-assisted quoting tool for precision CNC **turning**
 **Duration:** 2 weeks · **Rate:** GBP 22.00 / hour (ex. VAT)
 
-> **Revision note (v2.0):** rescoped from sheet-metal fabrication to **precision CNC
-> machining** following Turncircuit's feedback. Sheet-metal forming (laser/press-brake/
-> unfolding) is well served by other software and is explicitly out of scope. The
-> measurement engine carries over; the cost model and DFM are now machining-specific.
+> **Revision note (v3.0):** narrowed and sharpened to **turned parts only**, driven by a
+> **cycle-time** cost model with **batch-quantity** pricing and a **shop efficiency
+> calibration factor**. The tool **estimates cycle time; it does not generate toolpaths —
+> your CAM (SolidCAM) stays in place.** Milled/prismatic parts, sheet-metal fabrication and
+> G-code generation are explicitly out of scope. (v1 quoted sheet-metal fabrication; v2
+> broadened to machining generally; this v3 reflects the agreed turning PoC scope.)
 
 ---
 
@@ -19,136 +21,121 @@
 Turncircuit produces intricate precision components on modern **sliding-head (Swiss)
 turning and turn-mill** equipment, in **metals and plastics**, for demanding sectors —
 aircraft interiors, musical instruments, flow-control, marine, sanitary brass, security
-systems. Quoting these parts today is **manual, slow, and inconsistent**:
+systems. Quoting these parts is **manual, slow, and inconsistent**:
 
-- An estimator opens each model or drawing, reads dimensions, decides bar or billet,
-  judges how much material is cut away, guesses cycle time and setups, and keys numbers
-  into a spreadsheet. A single quote takes 20–60 minutes.
-- Different estimators price the same part differently, and there is no audit trail
-  linking a price to the geometry it came from — quotes are hard to defend or review.
-- Machinability varies enormously (free-cutting brass and aluminium vs stainless,
-  titanium, PEEK), and it's easy to under-price a slow material or a low-yield part.
-- Manufacturability problems — a slender turned part that will chatter, a micro-drilled
-  hole, a part that's 95% chips — surface **on the machine**, as scrap and lost time,
-  instead of at quote time.
+- An estimator opens each model, reads dimensions, picks a bar, judges cycle time and
+  setups, and keys numbers into a spreadsheet. A single quote takes 20–60 minutes.
+- Most shops receive **more RFQs than they can properly estimate**, and cherry-pick badly.
+- For a machinist, **price is dominated by how long the part occupies the machine** — and
+  **batch quantity changes the answer completely**: a 5-off is mostly setup and
+  programming; a 500-off is almost entirely cycle time. Same drawing, same customer.
+- Machinability varies ~5× across materials (brass/aluminium vs stainless, titanium,
+  PEEK), so it's easy to under-price a slow material.
 
-Turncircuit needs a tool that **reads the part, sizes the stock, explains what it
-measured, and produces a defensible machining quote in minutes — without fabricating any
-number it cannot stand behind.**
+The tool's job is **triage and consistency**, not replacing the estimator: produce a fast,
+defensible rough number on **every** RFQ so the estimator can choose which deserve real
+attention. The tool proposes; the estimator confirms or overrides; every override is a
+data point.
 
 ---
 
-## 2. Scope
+## 2. Scope — turned parts
 
-The engagement delivers **QuoteForge**, a browser-based quoting application for CNC
-machining, covering:
+**IN SCOPE: rotationally-symmetric (turned) parts** — shafts, bushes, spacers, flanges,
+pins, adaptors — where a 2D profile revolved about an axis makes cycle time close to
+deterministic.
 
 **CAD ingestion & measurement**
-- Upload 3D solids (STEP / STP / IGES / BREP) and measure geometry directly from the
-  B-Rep — bounding box, volume → weight, surface area — using OpenCascade.
-- **Part-class detection**: classify each solid as **turned** (round-bar) or **milled**
-  (billet) from its geometry, which drives the whole cost model.
-- Upload 2D drawings (PDF / image) and extract dimensions via **AI vision (Google
-  Gemini)** when a key is configured, clearly flagged "read from drawing — verify".
-- Honest fallback to manual confirmation for anything that can't be measured or read —
-  **no invented dimensions**.
+- Upload 3D solids (STEP / STP / IGES / BREP); measure geometry from the B-Rep (bounding
+  box, volume → weight, surface area) with OpenCascade.
+- **Rotational-symmetry detection** — classify the solid as turned or not; **if it is not
+  a turned part, say so clearly and do not produce a number.**
+- 2D drawings (PDF/image): AI vision reads **tolerances, surface finish (Ra), thread specs,
+  material, heat-treat/plating notes** — flagged "verify". Manual confirmation otherwise.
 
-**Machining cost model (subtractive)**
-- **Stock sizing**: round bar (⌀ + allowance, length + facing) for turned parts;
-  rectangular billet (grown faces) for milled parts.
-- **Material removal (roughing)**: cost of turning `stock − part` volume into chips, at a
-  removal rate **scaled by each material's machinability**.
-- **Finishing, drilling/boring, setups, inspection and deburr** — each an itemised,
-  traceable line tied to a measured driver.
-- **Buy-to-fly (material yield)** — part volume ÷ stock volume — surfaced on every quote
-  as a headline cost/waste indicator.
-- **Material library for metals *and* plastics** (aluminium, brass, bronze, stainless,
-  titanium, acetal, nylon, PEEK, PTFE …) with density and machinability.
+**Cycle-time cost model** (the core)
+- **Stock**: next standard bar over OD + allowance; cutoff/facing/parting loss; removal
+  volume; buy-to-fly material yield.
+- **Cycle time** built op-by-op: facing, roughing (MRR), finishing (rpm/feed per segment),
+  drilling (peck penalty on deep holes), boring, grooving, threading, part-off, plus
+  **non-cutting time** (tool changes, rapids, bar load).
+- **Material tables** (cutting speed, feed, depth of cut, density, machinability) for
+  free-cutting/medium-carbon/alloy steel, SS 303/316, Al 6082/7075, brass, and plastics.
+- **Setup time amortised over batch quantity**, shown as a **price-per-part curve**
+  (qty 1/5/25/100/500).
+- **Shop efficiency factor** (`actual = theoretical ÷ factor`) as the prominent, live
+  calibration control — designed for consistency, corrected with one slider.
+- Every cost line shows its driver **with time** (e.g. "Roughing — 34.2 cm³ @ 62 cm³/min —
+  33 s — £14.20").
 
-**Machining DFM (advisory)**
-- Buy-to-fly waste, **turned slenderness (L/D)**, **sliding-head bar-diameter limit**,
-  machine-envelope fit, small/micro holes, thin walls, tight-tolerance and multi-setup
-  cost flags — each derived from the measured geometry, with a manufacturability score.
+**Turning DFM (advisory)**
+- Buy-to-fly waste, **slenderness (L/D)**, bar-diameter/envelope limits, deep bores,
+  small/micro holes, thin walls, **tight tolerance/fine finish → grinding flag**, and
+  **off-axis features → second-op / live-tooling flag** (detected, not costed).
 
-**Quoting, data & UX**
-- Shop-configurable machine rates, removal/finishing rates, setup times, margins and
-  overhead; quantity, lead-time, rush handling; quote statuses; PDF export.
-- Parts, materials (editable prices), customers, and quote history (local-first).
-- Dashboard & analytics with real KPIs (win rate, margin, pipeline) and estimator
-  accuracy (estimate vs recorded actual).
-- Light/dark theming, responsive layout, top-level error boundary.
-
-**Quality**
-- Automated unit tests for the estimator, part-class detection, DFM and parsers; CI on
-  push; production build.
+**Kept from the existing build:** STEP ingestion & measurement, 3D viewer, quote lifecycle
+(draft/sent/won/lost), PDF export, parts/materials/customers, shop-configurable rates &
+margins, **local-first persistence** (client data never leaves their machine), analytics.
 
 ---
 
 ## 3. Out of Scope
 
-Explicitly **not** included in this 2-week engagement (available as future phases):
+Explicitly **not** included in this turning PoC:
 
-- **Sheet-metal fabrication** — laser/plasma cutting, press-brake bending, flat-pattern
-  unfolding, welding. This is a different process with mature dedicated software; it is
-  not Turncircuit's business and is out of scope.
-- **True CNC/G-code generation** (turning/milling posts, tool libraries, work offsets) —
-  safety-critical and out of domain. QuoteForge estimates cost/time; it does not program
-  the machines.
-- **Automatic feature recognition of pockets/threads/grooves** beyond holes/bores and the
-  turned-vs-milled classification (cost model uses volume/area/holes/setups).
-- **Nesting / bar-utilisation optimisation** across multiple parts per bar.
-- **Server-side database, multi-user accounts, authentication and roles** — persistence is
-  local-first (browser) for this phase.
-- **ERP / MRP / accounting integrations** and automated RFQ email intake.
-- **Bespoke AI model training** — the tool uses a hosted vision model (Gemini) via API.
+- **Milled / prismatic parts** (arbitrary 3D geometry; setup planning is a hard problem).
+  Detected and flagged, not costed.
+- **5-axis** anything.
+- **Live tooling / driven-tool features** (cross-drilling, flats, keyways) — **detected and
+  flagged as second-op / live-tooling, not costed.**
+- **G-code / toolpath generation** — the tool **estimates cycle time; it does not generate
+  toolpaths. SolidCAM stays in place.** This is stated in the UI and generated docs.
+- **Sheet-metal fabrication**, flat patterns, nesting, DXF export.
+- **Server-side database, multi-user accounts, authentication** — persistence is
+  local-first (browser) this phase.
+- **ERP / MRP / accounting integrations** and automated RFQ intake.
+- **Bespoke AI model training** — a hosted vision model (Gemini) is used via API.
 
 ---
 
 ## 4. Solution
 
-QuoteForge is a single-page web application (React + TypeScript + Vite, Tailwind) with a
-thin Node/Express API for AI extraction.
+A single-page web application (React + TypeScript + Vite, Tailwind) with a thin
+Node/Express API for AI extraction.
 
-**A tiered, honest measurement pipeline** — the core principle is *never present a number
-the tool cannot justify*:
+**Honest, measured-first pipeline** — never present a number the tool cannot justify:
 
-| Input | Path | Accuracy | Notes |
-|---|---|---|---|
-| **STEP / IGES / BREP (3D solid)** | Tessellate (OpenCascade) → measure geometry → classify turned/milled → cost | **Authoritative** | No AI; exact measurement. **Preferred input.** |
-| **PDF / image (2D drawing)** | Google Gemini vision → structured extraction → **verify** | Indicative | Requires API key; values flagged for human confirmation. |
-| **Unreadable / unknown** | Manual confirmation | User-entered | Zeroed, honest — no fabrication. |
+| Input | Path | Result |
+|---|---|---|
+| **STEP / IGES / BREP (turned solid)** | Tessellate → measure → confirm rotational → profile → **cycle-time cost** | Authoritative, calibratable. **Preferred.** |
+| **STEP solid, not rotational** | Detected & **flagged out of scope** | No number — quote manually / in CAM. |
+| **PDF / image (drawing)** | Gemini vision reads tolerance/finish/thread/material | Indicative; flagged "verify". |
+| **Unreadable** | Manual confirmation | User-entered; no fabrication. |
 
-**From geometry to a defensible price:** the solid is classified as turned or milled;
-stock is sized (bar or billet); the volume removed, surface area, holes and setups feed a
-transparent subtractive estimator using Turncircuit's own rates and each material's
-machinability. Every quote line shows the driver it was priced from, buy-to-fly shows how
-much of the bar becomes chips, and DFM findings surface cost/risk drivers *before* the job
-reaches the machine.
-
-**Recommended intake policy:** **prefer STEP solids** (exact, no-AI measurement); accept
-PDF via AI + verification; use manual confirmation as the honest fallback.
+**The demo tells the story in four beats:** (1) measurement panel — stock, removal, feature
+list the machinist verifies by eye; (2) operation breakdown with time and cost per line;
+(3) the **batch-quantity curve** — the moment they recognise their own business; (4) the
+**efficiency slider** — calibrate against one part they know cold until it matches, and
+every quote on screen recalibrates. That turns "your number is wrong" into "your model just
+needs my rate."
 
 ---
 
-## 5. Timeline (2 weeks)
+## 5. Timeline (2 weeks) — build order
 
-Ten working days, delivered in short increments with a reviewable build at each phase.
-
-| Day | Phase | Deliverable |
+| Phase | Work | Deliverable |
 |---|---|---|
-| 1 | Foundation & CAD intake | Scaffolding, upload flow, STEP tessellation & exact measurement |
-| 2 | Measurement & classification | Volume→weight, surface area, turned-vs-milled detection, 3D viewer |
-| 3 | Stock & material model | Bar/billet stock sizing, material library (metals + plastics), machinability, buy-to-fly |
-| 4 | Machining cost engine | Removal/roughing, finishing, drilling, setups, inspection, deburr — itemised & traceable |
-| 5 | Machining DFM | Slenderness, bar/envelope limits, small holes, thin walls, tolerance/setups + score |
-| 6 | AI drawing path | Gemini PDF/image extraction, verify state, manual fallback |
-| 7 | Quote lifecycle | Draft/sent/won/lost, quote PDF export, quantity & logistics |
-| 8 | Data & analytics | Parts/materials/customers, dashboard & analytics, estimator accuracy |
-| 9 | Hardening | Theming, error boundary, validation, tests + CI, cross-page polish |
-| 10 | UAT & handover | Bug-fix from review, documentation, deployment notes, walkthrough |
+| 1 | Strip sheet-metal | Remove sheet-metal cost/DFM/bend; keep ingestion, measurement, viewer, lifecycle |
+| 2 | Geometry | Rotational-symmetry detection + profile extraction from the B-Rep |
+| 3 | Profile → ops | Segment the profile into turning operations (OD steps, faces, grooves, bores) |
+| 4 | Cycle-time engine | Op-by-op time + material cutting tables |
+| 5 | Cost & batch | Stock, setup model, cost roll-up, **batch-quantity curve** |
+| 6 | Calibration & trust | **Efficiency slider**, assumptions panel, confidence indicators |
+| 7 | Turning DFM | Deep bores, thin walls, small holes, tolerance→grinding, cross-features→2nd op |
+| 8 | Validation | Compare against Fusion 360 cycle times on 8–10 parts; report mean **and spread** |
 
-**Milestones:** end of Week 1 — CAD measured, classified, costed with DFM; end of Week 2 —
-full quoting flow, analytics, tested and handed over.
+**Highest-risk work is phases 2–3** (profile extraction and operation inference). OCCT
+handles the sectioning; the inference rules need real iteration — budgeted accordingly.
 
 ---
 
@@ -162,45 +149,62 @@ full quoting flow, analytics, tested and handed over.
 | **Estimated total** | **GBP 1,540 – 1,760** (ex. VAT) |
 
 **Notes**
-- Billed on **actual hours worked**, reported against the timeline above; the range
-  reflects final scope and review effort.
-- Estimate excludes VAT and any third-party costs — notably **Google Gemini API usage**
-  (PDF path), billed to the client at cost.
-- **Payment terms:** to be agreed — suggested 50% on commencement, 50% on handover, net 14 days.
-- Scope changes are handled via a short written change note at the same hourly rate.
+- Billed on **actual hours worked** against the timeline; the range reflects final scope
+  and the phase 2–3 iteration.
+- Excludes VAT and third-party costs — notably **Google Gemini API usage** (drawing path),
+  billed to the client at cost.
+- **Payment terms:** to be agreed — suggested 50% on commencement, 50% on handover, net 14.
+- Scope changes via a short written change note at the same hourly rate.
 
 ---
 
-## 7. Assumptions & Risks
+## 7. Validation & acceptance
+
+No client data required — ground truth is built in-house:
+
+1. Take 8–10 representative turned parts (GrabCAD / McMaster / modelled).
+2. Program each in **Fusion 360** (free tier) with realistic tooling for a CAM cycle time.
+3. Run QuoteForge on the same STEP files.
+4. Report **mean error and the standard deviation of error** — the spread matters more
+   than the mean.
+
+**Acceptance target:** after fitting the efficiency factor on 3 parts, **≥ 70% of the
+remaining parts within ±25%**, with consistent direction of error (a uniform bias is one
+slider adjustment; random spread is not). Reported honestly in the demo — a stated error
+bar earns more trust than an unsupported accuracy claim.
+
+---
+
+## 8. Assumptions & Risks
 
 **Assumptions**
-- **STEP is the primary quoting input.** 3D solids give exact, no-AI measurement; PDFs are
-  a secondary, verified path. (See §4.)
-- Turncircuit provides **machine rates, removal/finishing rates, setup times, margins and
-  material prices** — the tool ships with sensible defaults, tuned during UAT to
-  Turncircuit's machines (sliding-head, turn-mill) and materials.
-- The client provides a **Google Gemini API key** for the PDF/image path; usage is billed
-  to the client. Without it, drawings route to manual entry.
-- Representative **sample parts** are provided across the mix Turncircuit actually quotes
-  (turned brass, plastics, small milled components).
-- Persistence is **local-first (browser)** for this phase; no server database or
-  multi-user accounts required yet.
-- One primary stakeholder is available for **daily review/UAT** decisions.
+- **Turned parts are the target.** Non-rotational parts are flagged, not costed.
+- The tool **estimates cycle time, not toolpaths** — it complements SolidCAM, not replaces
+  it, and does not replace the estimator (triage + consistency).
+- Turncircuit provides **machine rates, setup times, margins and material prices**; the
+  tool ships with public-catalogue cutting-data defaults, calibrated via the efficiency
+  factor during UAT.
+- The client provides a **Gemini API key** for the drawing path (billed to the client).
+- Persistence is **local-first (browser)** this phase.
+- One primary stakeholder is available for daily review/UAT, and can supply one known part
+  with its actual cycle time for calibration.
 
 **Risks**
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| **Cycle-time estimation** is volume/area-based, not a true CAM simulation | Over/under-quoting complex parts | Rates tuned to real jobs in UAT; estimate-vs-actual analytics improve it over time |
-| **Part-class edge cases** (a milled part that looks round, or vice-versa) | Wrong stock model | Confidence score + user can override turned/milled and stock in the review step |
-| **Machinability defaults** are generic per material family | Cost drift on specific alloys/tempers | Shop-tunable factors; refined against Turncircuit's own timings |
-| **PDF extraction accuracy** — AI misreads a drawing | Wrong dimensions | Values flagged "verify"; mandatory human confirmation; prefer STEP |
-| **Very slender / thin-wall / low-yield parts** | Machining risk & cost | Flagged by DFM (L/D, thin wall, buy-to-fly) at quote time, not on the machine |
-| **Gemini API** availability, latency, cost or key limits | PDF path degraded | Graceful fallback to manual; STEP path unaffected |
-| **Scope creep** into CAM/nesting/ERP/sheet-metal within 2 weeks | Timeline slip | Explicit Out-of-Scope list; change-note process |
+| **Profile extraction / operation inference** (phases 2–3) is the hard part | Wrong op list → wrong time | Budgeted iteration; confidence indicator; estimator can override any value |
+| **Cycle time is a model, not a CAM simulation** | Over/under on complex parts | Efficiency factor calibrates the bias uniformly; validated against Fusion 360 |
+| **Rotational-symmetry edge cases** | Mis-classification | Confidence score; non-rotational parts flagged out of scope, never silently costed |
+| **Cutting-data defaults** are generic per family | Cost drift on specific alloys/tempers | Shop-tunable; calibrated on real jobs |
+| **Off-axis / live-tooling features** | Under-quoting | Detected and flagged as 2nd-op / live-tooling; not silently costed |
+| **Tight tolerance / fine finish** | Missing a grinding op | DFM flags it for a secondary operation and inspection |
+| **Gemini API** availability/cost | Drawing path degraded | Graceful fallback to manual; STEP path unaffected |
+| **Scope creep** into milling/CAM/5-axis/ERP | Timeline slip | Explicit Out-of-Scope list; change-note process |
 
 ---
 
-*This document reflects the honest, measured-first design principle applied throughout
-QuoteForge: the tool measures what it can, clearly states confidence, and never fabricates
-a number it cannot justify.*
+*Design principle throughout: measure what we can, state confidence, flag what we can't,
+and never fabricate a number we cannot justify. The efficiency factor makes the model
+**consistent** — being 25% low on every part is one slider; being randomly ±25% is
+unfixable.*
