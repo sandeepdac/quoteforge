@@ -1,10 +1,61 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
+import { spawn, ChildProcess } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+/**
+ * Optionally launch the Python geometry service (turned-profile extraction) as a
+ * managed child process, so `npm run dev` runs everything with one command. It's
+ * a separate process (Python/OpenCASCADE can't run inside Node), but the app owns
+ * its lifecycle and shuts it down on exit. Skipped when the venv isn't installed,
+ * when something is already serving the port, or when GEOMETRY_AUTOSTART=false —
+ * in all those cases the app still works via the mesh-approximation fallback.
+ */
+async function startGeometryService(geometryUrl: string): Promise<ChildProcess | null> {
+  if (process.env.GEOMETRY_AUTOSTART === 'false') return null;
+
+  // Already up? (e.g. started manually) — don't double-launch.
+  try {
+    const ping = await fetch(`${geometryUrl}/health`);
+    if (ping.ok) {
+      console.log(`Geometry service: already running at ${geometryUrl} ✓`);
+      return null;
+    }
+  } catch {
+    /* not running yet — we'll start it */
+  }
+
+  const dir = path.join(process.cwd(), 'services', 'geometry');
+  const uvicorn = path.join(dir, '.venv', 'bin', 'uvicorn');
+  if (!fs.existsSync(uvicorn)) {
+    console.log('Geometry service: venv not found — skipping auto-start (app uses mesh fallback).');
+    console.log('  To enable exact B-Rep profiles: cd services/geometry && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt');
+    return null;
+  }
+
+  const port = (() => { try { return new URL(geometryUrl).port || '8000'; } catch { return '8000'; } })();
+  const child = spawn(uvicorn, ['main:app', '--host', '127.0.0.1', '--port', port], {
+    cwd: dir,
+    env: { ...process.env, PYTHONPATH: dir },
+  });
+  child.stdout.on('data', (d) => process.stdout.write(`[geometry] ${d}`));
+  child.stderr.on('data', (d) => process.stdout.write(`[geometry] ${d}`));
+  child.on('exit', (code) => console.log(`[geometry] service exited (code ${code})`));
+
+  // Tear the child down with the parent so we don't leak a process.
+  const stop = () => { try { child.kill(); } catch { /* ignore */ } };
+  process.on('exit', stop);
+  process.on('SIGINT', () => { stop(); process.exit(0); });
+  process.on('SIGTERM', () => { stop(); process.exit(0); });
+
+  console.log(`Geometry service: launching on port ${port} …`);
+  return child;
+}
 
 async function startServer() {
   const app = express();
@@ -162,7 +213,8 @@ Return ONLY valid JSON.`;
     console.log(`Server running on http://0.0.0.0:${PORT}`);
     console.log(`AI vision (Gemini): GEMINI_API_KEY ${keyOk ? 'configured ✓' : 'NOT configured ✗ (PDF/image will fall back to manual)'}`);
     console.log('Note: open the app on THIS port (the Express server) so /api/analyze-cad is available — not the bare Vite port.');
-    console.log(`Geometry service (turned-profile extraction): forwarding to ${GEOMETRY_URL} — optional; app falls back to mesh approximation if it's not running.`);
+    // Bring up the turned-profile geometry service alongside the app.
+    void startGeometryService(GEOMETRY_URL);
   });
 }
 
