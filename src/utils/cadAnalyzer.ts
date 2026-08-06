@@ -13,6 +13,7 @@ import { analyzeCncDfm } from './dfmCnc';
 import { classifyPart, PartClass } from './partClass';
 import { computeStock } from './cncEstimator';
 import { TurningProfile } from './turning';
+import { MilledProfile } from './milledEstimator';
 import { materialPropsFor } from './materials';
 import { extractTurnedProfile, arrayBufferToBase64, GeometryResult } from './geometryService';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
@@ -56,14 +57,18 @@ export interface ExtractedCadAnalysis {
   /** Advisory Design-for-Manufacturing findings from the measured geometry. */
   dfm?: DfmReport;
   // --- CNC turning metrics ------------------------------------------------
-  /** Turned (round bar) vs milled/prismatic (out of scope). */
+  /** Turned (round bar) vs milled/prismatic. */
   partClass?: PartClass;
+  /** Which machining route this part is costed on. */
+  machineClass?: 'turn' | 'mill';
   /** True when the solid is rotationally symmetric and can be costed as a turned part. */
   isTurned?: boolean;
-  /** Why a part was judged non-rotational (out of scope) — set when isTurned is false. */
+  /** Why a part was judged non-rotational — set when isTurned is false (informational). */
   notRotationalReason?: string;
   /** The turned profile used for the cycle-time estimate. */
   turningProfile?: TurningProfile;
+  /** The milled/prismatic profile (the 3 AAG rules) — set for milled parts. */
+  milledProfile?: MilledProfile;
   /** Standard bar diameter selected (mm). */
   barDiameterMm?: number;
   /** Off-axis features present → needs a second op / live tooling. */
@@ -281,9 +286,47 @@ async function analyzeSolid(
 
     const machinability = materialPropsFor(materialName).machinability;
 
+    // Milled/prismatic profile (the 3 AAG rules: setups from access-direction
+    // clustering, pockets/bosses from edge concavity, deep-pocket reach). Built
+    // from the geometry service when available; otherwise a bbox-billet approximation.
+    let milledProfile: MilledProfile | undefined;
+    if (!isTurned) {
+      if (useSvc && svc!.milled) {
+        const mm = svc!.milled;
+        milledProfile = {
+          stockMm: mm.stockMm,
+          stockVolumeCm3: mm.stockVolumeCm3,
+          partVolumeCm3: mm.partVolumeCm3 || volumeCm3,
+          removedVolumeCm3: mm.removedVolumeCm3,
+          surfaceAreaCm2,
+          setupCount: mm.setupCount,
+          pocketCount: mm.pocketCount,
+          bossCount: mm.bossCount,
+          deepPocketCount: mm.deepPocketCount,
+          holeCount: mm.holeCount,
+        };
+      } else {
+        // Approximation: billet = bounding box; setups guessed from holes/faces.
+        const stockVolMm = (meas.lengthMm * meas.widthMm * meas.heightMm) / 1000;
+        milledProfile = {
+          stockMm: { x: meas.lengthMm, y: meas.widthMm, z: meas.heightMm },
+          stockVolumeCm3: Math.round(stockVolMm * 10) / 10,
+          partVolumeCm3: volumeCm3,
+          removedVolumeCm3: Math.round(Math.max(0, stockVolMm - volumeCm3) * 10) / 10,
+          surfaceAreaCm2,
+          setupCount: Math.min(3, 1 + (holeCount > 0 ? 1 : 0) + (bendCount > 0 ? 1 : 0)),
+          pocketCount: 0,
+          bossCount: 0,
+          deepPocketCount: 0,
+          holeCount,
+        };
+      }
+    }
+
     // Setups: single op for a plain turned part; a second op (back-face /
-    // turn-around) when off-axis features exist.
-    const setups = crossFeatures ? 2 : 1;
+    // turn-around) when off-axis features exist. Milled parts use the access-
+    // direction count from the geometry analysis.
+    const setups = milledProfile ? Math.max(1, milledProfile.setupCount) : (crossFeatures ? 2 : 1);
 
     // Stock (next standard bar) and material yield (buy-to-fly).
     const { barDiameterMm, stockVolumeCm3: stockVol } = computeStock(turningProfile, DEFAULT_CNC_SETTINGS);
@@ -312,9 +355,12 @@ async function analyzeSolid(
         })
       : undefined;
 
-    const notRotationalReason = isTurned
-      ? undefined
-      : `${pcReason} Prismatic/milled parts are outside this tool's scope (turned parts only); estimate manually or in your CAM system.`;
+    // Informational only — milled parts are now costed on the prismatic route,
+    // not treated as out of scope.
+    const notRotationalReason = isTurned ? undefined : pcReason;
+
+    // Milled confidence: prefer the geometry service's, else a moderate default.
+    const milledConfidence = useSvc && svc!.milled ? svc!.milled.confidence : 0.5;
 
     return {
       partName: baseName(fileName),
@@ -354,19 +400,34 @@ async function analyzeSolid(
           ]
         : [
             `Measured directly from the solid — bounding box ${meas.lengthMm} × ${meas.widthMm} × ${meas.heightMm} mm.`,
-            notRotationalReason!,
-          ],
-      confidenceScore: isTurned ? (crossFeatures ? 70 : Math.round(70 + pcConfidence * 28)) : 30,
+            profileSource === 'brep-service'
+              ? `Prismatic / MILLED part (${Math.round(milledConfidence * 100)}% confidence). ${pcReason}`
+              : `Prismatic / MILLED part (bbox approximation). ${pcReason}`,
+            milledProfile
+              ? `Billet ${milledProfile.stockMm.x}×${milledProfile.stockMm.y}×${milledProfile.stockMm.z} mm — ${milledProfile.removedVolumeCm3.toFixed(1)} cm³ removed (yield ${Math.round((milledProfile.partVolumeCm3 / Math.max(0.01, milledProfile.stockVolumeCm3)) * 100)}%).`
+              : '',
+            milledProfile
+              ? `${setups} setup${setups === 1 ? '' : 's'} (distinct tool-access directions), ${milledProfile.pocketCount} pocket${milledProfile.pocketCount === 1 ? '' : 's'}${milledProfile.deepPocketCount > 0 ? ` (${milledProfile.deepPocketCount} deep)` : ''}, ${milledProfile.holeCount} hole${milledProfile.holeCount === 1 ? '' : 's'}. Setups are the biggest cost lever.`
+              : '',
+            `Estimates cost and cycle time only — this does not generate toolpaths (your CAM stays in place).`,
+          ].filter(Boolean),
+      confidenceScore: isTurned
+        ? (crossFeatures ? 70 : Math.round(70 + pcConfidence * 28))
+        : Math.round(45 + milledConfidence * 40),
       stepData,
       stepMesh: mesh,
       measurementSource: 'solid',
-      featuresNeedReview: crossFeatures || !isTurned,
+      featuresNeedReview: isTurned
+        ? crossFeatures
+        : (profileSource !== 'brep-service' || (milledProfile?.deepPocketCount ?? 0) > 0 || setups >= 3),
       formedPart,
       dfm,
       partClass,
+      machineClass: isTurned ? 'turn' : 'mill',
       isTurned,
       notRotationalReason,
       turningProfile,
+      milledProfile,
       diameterMm,
       axisLengthMm,
       volumeCm3,

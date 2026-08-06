@@ -19,6 +19,17 @@ estimator.
   known surface types; off-axis holes are *flagged*, not disqualifying.
 - **Profile extraction** (option 1): from the B-Rep faces — OD steps, central bore
   (diameter + depth), grooves, and cross features — plus exact volume & surface area.
+- **Milled / prismatic analysis** (`milled` block, always computed) — the three
+  high-leverage geometric rules that drive a milling quote:
+  1. **Setup count** — cluster the tool-access directions of the real features
+     (pocket-floor normals + hole axes) into distinct unit directions. Setups are
+     the single biggest cost lever.
+  2. **Cavity vs. boss** — classify every shared edge as concave (inside corner →
+     pocket) or convex (outside corner → boss) via an orientation-free dihedral
+     test; a pocket floor is a concave-ringed face reachable straight down its own
+     normal (a solid-classifier ray separates floors from walls).
+  3. **Z-accessible depth** — pocket depth ÷ min width; a high ratio flags a deep
+     pocket (long, slow tool). Plus billet stock (bounding box) and removed volume.
 
 ## Setup
 

@@ -38,6 +38,27 @@ def build(outdir):
     # ⌀20×60 shaft with a ⌀5 cross hole through X.
     cross = BRepAlgoAPI_Cut(cyl(10, 60), cyl(2.5, 60, x=-30, z=30, dx=1, dy=0, dz=0)).Shape()
     paths["cross"] = write(cross, os.path.join(outdir, "cross.step"))
+
+    # --- Milled samples ----------------------------------------------------
+    # Block 60×40×20 with a single open pocket 30×20 × 10 deep, cut from the top.
+    block = BRepPrimAPI_MakeBox(60, 40, 20).Shape()
+    pocket_tool = BRepPrimAPI_MakeBox(gp_Pnt(15, 10, 10), 30, 20, 20).Shape()
+    pocketed = BRepAlgoAPI_Cut(block, pocket_tool).Shape()
+    paths["pocket"] = write(pocketed, os.path.join(outdir, "pocket.step"))
+
+    # Block 40×40×60 with a narrow deep slot 8 wide × 40 deep (high depth ratio).
+    tall = BRepPrimAPI_MakeBox(40, 40, 60).Shape()
+    deep_tool = BRepPrimAPI_MakeBox(gp_Pnt(16, 5, 20), 8, 30, 60).Shape()
+    deep = BRepAlgoAPI_Cut(tall, deep_tool).Shape()
+    paths["deep"] = write(deep, os.path.join(outdir, "deep.step"))
+
+    # Block 60×60×20 with a pocket on top AND two holes drilled from a side
+    # face → two access directions → 2+ setups.
+    multi = BRepPrimAPI_MakeBox(60, 60, 20).Shape()
+    multi = BRepAlgoAPI_Cut(multi, BRepPrimAPI_MakeBox(gp_Pnt(15, 15, 12), 30, 30, 20).Shape()).Shape()
+    multi = BRepAlgoAPI_Cut(multi, cyl(3, 60, x=-1, y=20, z=10, dx=1, dy=0, dz=0)).Shape()
+    multi = BRepAlgoAPI_Cut(multi, cyl(3, 60, x=-1, y=40, z=10, dx=1, dy=0, dz=0)).Shape()
+    paths["multi"] = write(multi, os.path.join(outdir, "multi.step"))
     return paths
 
 

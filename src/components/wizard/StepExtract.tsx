@@ -125,7 +125,12 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
 
   const selectedMatObj = materials.find(m => m.id === features.materialId) || materials[0];
   const isTurned = !!(cadAnalysis?.isTurned && cadAnalysis?.turningProfile);
-  const notRotational = !!(cadAnalysis?.measurementSource === 'solid' && cadAnalysis?.isTurned === false);
+  const isMilled = !!(cadAnalysis?.milledProfile && !cadAnalysis?.isTurned);
+  const isMachined = isTurned || isMilled;
+  const mp = cadAnalysis?.milledProfile;
+  const milledYield = mp && mp.stockVolumeCm3 > 0 ? mp.partVolumeCm3 / mp.stockVolumeCm3 : 0;
+  // Only truly out of scope when we couldn't build any machining profile.
+  const notRotational = !!(cadAnalysis?.measurementSource === 'solid' && cadAnalysis?.isTurned === false && !isMilled);
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 animate-in slide-in-from-bottom-4 duration-500 pb-10">
@@ -273,6 +278,14 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
                   <strong className="text-foreground"> surface area</strong> → finishing, and
                   <strong className="text-foreground"> holes &amp; setups</strong> → drilling and machine time. Adjust any value on the right
                   and the price updates in the next step.
+                </>
+              ) : isMilled ? (
+                <>
+                  These measurements drive the quote: <strong className="text-foreground">billet volume</strong> → material cost,
+                  <strong className="text-foreground"> volume removed</strong> → roughing time,
+                  <strong className="text-foreground"> surface area</strong> → finishing, and
+                  <strong className="text-foreground"> setups (tool-access directions)</strong> → the biggest cost lever. Adjust any value on the
+                  right and the price updates in the next step.
                 </>
               ) : (
                 <>
@@ -432,8 +445,77 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
             </div>
           )}
 
+          {/* Machining drivers (milling / prismatic) */}
+          {isMilled && cadAnalysis && mp && (
+            <div className="bg-card border border-border p-5 rounded-xl space-y-4">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5 flex items-center justify-between">
+                <span>Milling Plan &amp; Stock</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                  MILLED
+                </span>
+              </h3>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-accent/40 border border-border p-3 rounded-lg">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Billet stock</p>
+                  <p className="text-sm font-bold text-foreground">
+                    {mp.stockMm.x} × {mp.stockMm.y} × {mp.stockMm.z} mm
+                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {mp.stockVolumeCm3} cm³ raw · {cadAnalysis.materialName}
+                  </p>
+                </div>
+                <div className="bg-accent/40 border border-border p-3 rounded-lg">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Material yield</p>
+                  <p className="text-sm font-bold text-foreground">{Math.round(milledYield * 100)}% buy-to-fly</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{mp.removedVolumeCm3} cm³ removed as chips</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-accent/40 border border-border p-3.5 rounded-lg flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-foreground">Setups</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Access dir.</p>
+                  </div>
+                  <span className="text-lg font-bold text-foreground">{mp.setupCount}</span>
+                </div>
+                <div className="bg-accent/40 border border-border p-3.5 rounded-lg flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-foreground">Pockets</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{mp.deepPocketCount > 0 ? `${mp.deepPocketCount} deep` : mp.bossCount > 0 ? `${mp.bossCount} boss` : 'cavities'}</p>
+                  </div>
+                  <span className="text-lg font-bold text-foreground">{mp.pocketCount}</span>
+                </div>
+                <div className="bg-accent/40 border border-border p-3.5 rounded-lg flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-foreground">Holes</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">drilled</p>
+                  </div>
+                  <span className="text-lg font-bold text-foreground">{mp.holeCount}</span>
+                </div>
+              </div>
+
+              {mp.deepPocketCount > 0 && (
+                <div className="flex gap-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5">
+                  <AlertCircle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    {mp.deepPocketCount} <strong className="text-foreground">deep pocket{mp.deepPocketCount === 1 ? '' : 's'}</strong> detected — long, thin tools
+                    run slow to avoid chatter, so roughing and finishing carry a reach penalty.
+                  </p>
+                </div>
+              )}
+
+              <p className="text-[11px] text-muted-foreground leading-relaxed border-t border-border pt-2.5">
+                Priced from <strong className="text-foreground">cycle time</strong>: hog-out (volume removed), wall/floor finishing, drilling, plus
+                <strong className="text-foreground"> {mp.setupCount} setup{mp.setupCount === 1 ? '' : 's'}</strong> — setups are the biggest cost lever. This estimates
+                time only — <strong className="text-foreground">it does not generate toolpaths</strong>.
+              </p>
+            </div>
+          )}
+
           {/* Operations Breakdown (sheet-metal legacy path) */}
-          {!isTurned && (
+          {!isMachined && (
           <div className="bg-card border border-border p-5 rounded-xl space-y-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5">
               Detected Manufacturing Operations

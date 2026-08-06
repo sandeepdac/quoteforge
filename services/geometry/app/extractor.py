@@ -41,6 +41,8 @@ from OCP.BRepGProp import BRepGProp
 from OCP.Bnd import Bnd_Box
 from OCP.BRepBndLib import BRepBndLib
 
+from .milling import analyze_milling
+
 ROT_TYPES = {GeomAbs_Cylinder, GeomAbs_Cone, GeomAbs_Torus, GeomAbs_Sphere}
 KNOWN_TYPES = ROT_TYPES | {GeomAbs_Plane}
 
@@ -238,11 +240,17 @@ def extract(path: str) -> dict:
         + [{"type": "cross", **c} for c in cross_cyls]
     )
 
+    # Milled/prismatic analysis (the 3 AAG rules) — always computed so the app
+    # has a full picture and can choose the cheaper machining route / machine.
+    milled = analyze_milling(shape)
+
     return {
         "ok": True,
         "is_turned": is_turned,
+        "part_class": "turned" if is_turned else "milled",
         "confidence": confidence,
         "reason": reason,
+        "milled": milled,
         "axis": {"origin": [round(x, 3) for x in origin.tolist()],
                  "dir": [round(x, 4) for x in axis_dir.tolist()]},
         "profile": {

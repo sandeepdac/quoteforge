@@ -13,6 +13,7 @@ import { useQuotes } from '../../context/QuoteContext';
 import { useSettings } from '../../context/SettingsContext';
 import { calculateQuoteCosts } from '../../utils/estimator';
 import { calculateMachiningCosts } from '../../utils/cncEstimator';
+import { calculateMilledCosts } from '../../utils/milledEstimator';
 import { materialPropsFor } from '../../utils/materials';
 import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
@@ -34,12 +35,14 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
   const currentMaterial = materials.find(m => m.id === data.features.materialId) || materials[0];
 
   const f = data.features as PartFeatures;
-  // A turned solid was measured → price it from cycle time (turning model).
-  // Non-rotational parts fall back to the legacy path (and are flagged upstream).
-  const isMachining = !!(cadAnalysis?.isTurned && cadAnalysis?.turningProfile);
+  // A machined solid was measured → price it from cycle time. Turned parts use the
+  // turning model; milled/prismatic parts use the milling model (the 3 AAG rules).
+  const isTurnedPart = !!(cadAnalysis?.isTurned && cadAnalysis?.turningProfile);
+  const isMilledPart = !!(cadAnalysis?.milledProfile && !cadAnalysis?.isTurned);
+  const isMachining = isTurnedPart || isMilledPart;
 
   const { costs, lineItems } = useMemo(() => {
-    if (isMachining && cadAnalysis?.turningProfile) {
+    if (isTurnedPart && cadAnalysis?.turningProfile) {
       // Respect user edits: derive volume from the (possibly edited) weight so
       // tweaks in the extraction step flow into the cycle-time price.
       const density = materialPropsFor(currentMaterial.name).densityGCm3;
@@ -53,6 +56,26 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
           setups: cadAnalysis.setups ?? 1,
           materialPricePerKg: currentMaterial.pricePerKg,
         },
+        data.config.quantity,
+        data.config.isRush,
+        settings.defaultMargin,
+        settings
+      );
+      return { costs: mc, lineItems: mc.lineItems };
+    }
+
+    if (isMilledPart && cadAnalysis?.milledProfile) {
+      // Respect edits: recompute part/removed volume from the (possibly edited) weight.
+      const density = materialPropsFor(currentMaterial.name).densityGCm3;
+      const base = cadAnalysis.milledProfile;
+      const partVolumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : base.partVolumeCm3;
+      const profile = {
+        ...base,
+        partVolumeCm3,
+        removedVolumeCm3: Math.max(0, base.stockVolumeCm3 - partVolumeCm3),
+      };
+      const mc = calculateMilledCosts(
+        { materialName: currentMaterial.name, profile, materialPricePerKg: currentMaterial.pricePerKg },
         data.config.quantity,
         data.config.isRush,
         settings.defaultMargin,
@@ -79,7 +102,7 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
       { key: 'finish', name: 'Finishing', driver: `${f.surfaceAreaM2.toFixed(3)} m² surface`, value: qc.finishCost, color: '#93c5fd' },
     ].filter((li) => li.value > 0.005);
     return { costs: qc, lineItems: items };
-  }, [data, settings, currentMaterial, isMachining, cadAnalysis, f]);
+  }, [data, settings, currentMaterial, isTurnedPart, isMilledPart, cadAnalysis, f]);
 
   const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
@@ -270,7 +293,11 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                 <div className="rounded-md border border-border bg-muted/40 p-2.5 space-y-1">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="text-muted-foreground">
-                      {cadAnalysis.partClass === 'turned' ? `Turned from ⌀${cadAnalysis.diameterMm} bar` : 'Milled from billet'}
+                      {cadAnalysis.partClass === 'turned'
+                        ? `Turned from ⌀${cadAnalysis.diameterMm} bar`
+                        : mc.stockMm
+                          ? `Milled from ${mc.stockMm.x}×${mc.stockMm.y}×${mc.stockMm.z} billet`
+                          : 'Milled from billet'}
                     </span>
                     <span className="font-semibold text-foreground">
                       {Math.round(mc.buyToFlyRatio * 100)}% material yield
@@ -285,7 +312,9 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                     </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground/80 leading-tight">
-                    ~{mc.cycleTimeSec}s cycle · {mc.removedVolumeCm3} cm³ removed from {mc.stockVolumeCm3} cm³ bar · {mc.setups} setup{mc.setups > 1 ? 's' : ''} · buy-to-fly
+                    {mc.machineClass === 'mill'
+                      ? `~${mc.cycleTimeSec}s cycle · ${mc.removedVolumeCm3} cm³ removed from ${mc.stockVolumeCm3} cm³ billet · ${mc.setups} setup${mc.setups > 1 ? 's' : ''} · ${mc.pocketCount ?? 0} pocket${(mc.pocketCount ?? 0) === 1 ? '' : 's'}${(mc.deepPocketCount ?? 0) > 0 ? ` (${mc.deepPocketCount} deep)` : ''} · ${mc.holeCount ?? 0} hole${(mc.holeCount ?? 0) === 1 ? '' : 's'}`
+                      : `~${mc.cycleTimeSec}s cycle · ${mc.removedVolumeCm3} cm³ removed from ${mc.stockVolumeCm3} cm³ bar · ${mc.setups} setup${mc.setups > 1 ? 's' : ''} · buy-to-fly`}
                   </p>
                 </div>
               )}

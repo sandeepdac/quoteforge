@@ -15,6 +15,7 @@ import { useQuotes } from '../../context/QuoteContext';
 import { useSettings } from '../../context/SettingsContext';
 import { calculateQuoteCosts, calculateWinProbability } from '../../utils/estimator';
 import { calculateMachiningCosts } from '../../utils/cncEstimator';
+import { calculateMilledCosts } from '../../utils/milledEstimator';
 import { materialPropsFor } from '../../utils/materials';
 import { generatePartThumbnail } from '../../utils/partThumbnail';
 import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
@@ -40,10 +41,12 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
   const material = materials.find(m => m.id === data.features.materialId) || materials[0];
 
   const f = data.features as PartFeatures;
-  const isMachining = !!(cadAnalysis?.isTurned && cadAnalysis?.turningProfile);
+  const isTurnedPart = !!(cadAnalysis?.isTurned && cadAnalysis?.turningProfile);
+  const isMilledPart = !!(cadAnalysis?.milledProfile && !cadAnalysis?.isTurned);
+  const isMachining = isTurnedPart || isMilledPart;
 
   const { costs, lineItems } = useMemo(() => {
-    if (isMachining && cadAnalysis?.turningProfile) {
+    if (isTurnedPart && cadAnalysis?.turningProfile) {
       const density = materialPropsFor(material.name).densityGCm3;
       const volumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : cadAnalysis.volumeCm3 ?? 0;
       const mc = calculateMachiningCosts(
@@ -55,6 +58,25 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
           setups: cadAnalysis.setups ?? 1,
           materialPricePerKg: material.pricePerKg,
         },
+        data.config.quantity,
+        data.config.isRush,
+        margin,
+        settings
+      );
+      return { costs: mc, lineItems: mc.lineItems };
+    }
+
+    if (isMilledPart && cadAnalysis?.milledProfile) {
+      const density = materialPropsFor(material.name).densityGCm3;
+      const base = cadAnalysis.milledProfile;
+      const partVolumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : base.partVolumeCm3;
+      const profile = {
+        ...base,
+        partVolumeCm3,
+        removedVolumeCm3: Math.max(0, base.stockVolumeCm3 - partVolumeCm3),
+      };
+      const mc = calculateMilledCosts(
+        { materialName: material.name, profile, materialPricePerKg: material.pricePerKg },
         data.config.quantity,
         data.config.isRush,
         margin,
@@ -78,7 +100,7 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
       { key: 'finish', name: 'Finishing (Applied)', driver: `${f.surfaceAreaM2.toFixed(3)}m² surface area`, value: qc.finishCost, color: '#93c5fd' },
     ].filter((li) => li.value > 0.005);
     return { costs: qc, lineItems: items };
-  }, [data, settings, material, margin, isMachining, cadAnalysis, f]);
+  }, [data, settings, material, margin, isTurnedPart, isMilledPart, cadAnalysis, f]);
 
   const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
@@ -164,7 +186,14 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
             <div className="p-4 bg-muted/30 border-b border-border space-y-1">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Detailed Cost Breakdown</h3>
               <p className="text-[11px] text-muted-foreground">Each line is priced from a dimension measured from your CAD file.</p>
-              {mc && (
+              {mc && mc.machineClass === 'mill' && (
+                <p className="text-[11px] text-muted-foreground">
+                  Milled from {mc.stockMm?.x}×{mc.stockMm?.y}×{mc.stockMm?.z} billet · ~{mc.cycleTimeSec}s cycle @ {Math.round(mc.efficiencyFactor * 100)}% efficiency
+                  · <strong className="text-foreground">{Math.round(mc.buyToFlyRatio * 100)}% material yield</strong> · {mc.setups} setup{mc.setups > 1 ? 's' : ''}
+                  · {mc.pocketCount ?? 0} pocket{(mc.pocketCount ?? 0) === 1 ? '' : 's'}{(mc.deepPocketCount ?? 0) > 0 ? ` (${mc.deepPocketCount} deep)` : ''} · {mc.holeCount ?? 0} hole{(mc.holeCount ?? 0) === 1 ? '' : 's'}.
+                </p>
+              )}
+              {mc && mc.machineClass !== 'mill' && (
                 <p className="text-[11px] text-muted-foreground">
                   Turned from ⌀{mc.barDiameterMm} bar · ~{mc.cycleTimeSec}s cycle @ {Math.round(mc.efficiencyFactor * 100)}% efficiency
                   · <strong className="text-foreground">{Math.round(mc.buyToFlyRatio * 100)}% material yield</strong> · {mc.setups} setup{mc.setups > 1 ? 's' : ''}.

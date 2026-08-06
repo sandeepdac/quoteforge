@@ -20,9 +20,33 @@ export interface GeometryProfile {
   crossFeatures: boolean;
 }
 
+/** Milled/prismatic analysis (the 3 AAG rules) — present alongside the turned verdict. */
+export interface GeometryMilled {
+  setupCount: number;
+  accessDirections: number[][];
+  pocketCount: number;
+  bossCount: number;
+  deepPocketCount: number;
+  maxDepthRatio: number;
+  holeCount: number;
+  concaveEdges: number;
+  convexEdges: number;
+  stockMm: { x: number; y: number; z: number };
+  stockVolumeCm3: number;
+  partVolumeCm3: number;
+  removedVolumeCm3: number;
+  removalRatio: number;
+  pockets: Array<{ depthMm: number; widthMm: number; depthRatio: number; accessDir: number[] }>;
+  confidence: number;
+  reason: string;
+  counts?: Record<string, number>;
+}
+
 export interface GeometryResult {
   ok: boolean;
   is_turned: boolean;
+  /** 'turned' | 'milled' — the service's headline route recommendation. */
+  part_class?: 'turned' | 'milled';
   confidence: number;
   reason: string;
   axis?: { origin: number[]; dir: number[] };
@@ -30,6 +54,8 @@ export interface GeometryResult {
   measured: { volumeCm3: number; surfaceAreaCm2: number; boundingBoxMm: { x: number; y: number; z: number } };
   counts?: Record<string, number>;
   segments?: Array<{ type: string; radiusMm: number; zStartMm: number; zEndMm: number }>;
+  /** Milled analysis, always computed by the service. */
+  milled?: GeometryMilled;
 }
 
 /** Base64-encode an ArrayBuffer in the browser without blowing the call stack. */

@@ -137,6 +137,15 @@ export interface MachiningCosts {
   efficiencyFactor: number;
   /** Price per part across standard batch sizes (setup amortisation curve). */
   batchCurve: BatchPricePoint[];
+  // --- milled-part metadata (present when machineClass === 'mill') ---
+  /** Which machining route this quote costed. */
+  machineClass?: 'turn' | 'mill';
+  /** Billet stock dimensions (mm) for a milled part. */
+  stockMm?: { x: number; y: number; z: number };
+  pocketCount?: number;
+  bossCount?: number;
+  deepPocketCount?: number;
+  holeCount?: number;
 }
 
 /**
