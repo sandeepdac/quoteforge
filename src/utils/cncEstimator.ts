@@ -70,12 +70,15 @@ export function calculateMachiningCosts(
   quantity: number,
   isRush: boolean,
   marginPercent: number,
-  settings: ShopSettings
+  settings: ShopSettings,
+  /** Machine charge-out multiplier from the selected machine (see machineSelection). */
+  machineRateMultiplier = 1
 ): MachiningCosts {
   const cnc = settings.cnc ?? DEFAULT_CNC_SETTINGS;
   const { overheadPercent, rushPremiumPercent } = settings;
   const m = materialPropsFor(input.materialName);
   const eff = cnc.efficiencyFactor > 0 ? cnc.efficiencyFactor : 0.8;
+  const machineRatePerMin = cnc.machineRatePerMin * (machineRateMultiplier > 0 ? machineRateMultiplier : 1);
   const qty = Math.max(1, Math.round(quantity || 1));
 
   // --- Stock & material ----------------------------------------------------
@@ -93,10 +96,10 @@ export function calculateMachiningCosts(
     roughFraction: 0.9,
   });
   // Per-op actual seconds and cost (efficiency applied to cutting/air alike).
-  const ratePerSec = cnc.machineRatePerMin / 60;
+  const ratePerSec = machineRatePerMin / 60;
   const opCost = (sec: number) => (sec / eff) * ratePerSec;
   const cycleTimeSec = t.cuttingSec / eff + t.airSec / eff + cnc.barLoadSec;
-  const machineCost = (cycleTimeSec / 60) * cnc.machineRatePerMin;
+  const machineCost = (cycleTimeSec / 60) * machineRatePerMin;
 
   // --- Setup (amortised over the batch) ------------------------------------
   const setups = Math.max(1, Math.round(input.setups || 1));

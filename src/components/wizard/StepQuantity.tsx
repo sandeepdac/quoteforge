@@ -59,7 +59,8 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
         data.config.quantity,
         data.config.isRush,
         settings.defaultMargin,
-        settings
+        settings,
+        cadAnalysis.machineRecommendation?.rateMultiplier ?? 1
       );
       return { costs: mc, lineItems: mc.lineItems };
     }
@@ -79,7 +80,8 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
         data.config.quantity,
         data.config.isRush,
         settings.defaultMargin,
-        settings
+        settings,
+        cadAnalysis.machineRecommendation?.rateMultiplier ?? 1
       );
       return { costs: mc, lineItems: mc.lineItems };
     }
@@ -291,6 +293,12 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
               </div>
               {mc && cadAnalysis && (
                 <div className="rounded-md border border-border bg-muted/40 p-2.5 space-y-1">
+                  {cadAnalysis.machineRecommendation && (
+                    <div className="flex items-center justify-between text-[11px] pb-1 mb-1 border-b border-border/60">
+                      <span className="text-muted-foreground">Machine</span>
+                      <span className="font-semibold text-foreground text-right">{cadAnalysis.machineRecommendation.recommendedName}</span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="text-muted-foreground">
                       {cadAnalysis.partClass === 'turned'

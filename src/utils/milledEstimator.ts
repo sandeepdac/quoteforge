@@ -77,12 +77,15 @@ export function calculateMilledCosts(
   quantity: number,
   isRush: boolean,
   marginPercent: number,
-  settings: ShopSettings
+  settings: ShopSettings,
+  /** Machine charge-out multiplier from the selected machine (see machineSelection). */
+  machineRateMultiplier = 1
 ): MachiningCosts {
   const cnc = settings.cnc ?? DEFAULT_CNC_SETTINGS;
   const { overheadPercent, rushPremiumPercent } = settings;
   const m = materialPropsFor(input.materialName);
   const eff = cnc.efficiencyFactor > 0 ? cnc.efficiencyFactor : 0.8;
+  const machineRatePerMin = cnc.machineRatePerMin * (machineRateMultiplier > 0 ? machineRateMultiplier : 1);
   const qty = Math.max(1, Math.round(quantity || 1));
   const p = input.profile;
 
@@ -121,10 +124,10 @@ export function calculateMilledCosts(
   const cuttingSec = roughSec + facingSec + finishSec + drillSec;
   const toolCount = [roughSec, facingSec, finishSec, drillSec].filter((t) => t > 0).length + p.pocketCount;
   const airSec = toolCount * cnc.toolChangeSec + cuttingSec * 0.08; // rapids between features
-  const ratePerSec = cnc.machineRatePerMin / 60;
+  const ratePerSec = machineRatePerMin / 60;
   const opCost = (sec: number) => (sec / eff) * ratePerSec;
   const cycleTimeSec = cuttingSec / eff + airSec / eff;
-  const machineCost = (cycleTimeSec / 60) * cnc.machineRatePerMin;
+  const machineCost = (cycleTimeSec / 60) * machineRatePerMin;
 
   // --- Setup (amortised over the batch) — Rule 1 is the driver -------------
   const setups = Math.max(1, Math.round(p.setupCount || 1));

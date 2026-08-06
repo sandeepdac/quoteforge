@@ -9,7 +9,9 @@ import {
   Box,
   FileText,
   Sliders,
-  CheckSquare
+  CheckSquare,
+  Cpu,
+  XCircle
 } from 'lucide-react';
 import { useQuotes } from '../../context/QuoteContext';
 import { PartFeatures } from '../../types';
@@ -17,6 +19,7 @@ import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import CadViewer3D from '../cad/CadViewer3D';
 import CadPdfViewer from '../cad/CadPdfViewer';
 import DfmPanel from '../cad/DfmPanel';
+import { cn } from '../../utils/cn';
 
 interface StepExtractProps {
   cadAnalysis?: ExtractedCadAnalysis;
@@ -379,6 +382,62 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
               </div>
             </div>
           </div>
+
+          {/* Machine selection — the most efficient capable machine, and why */}
+          {isMachined && cadAnalysis?.machineRecommendation && (() => {
+            const mr = cadAnalysis.machineRecommendation!;
+            return (
+              <div className="bg-card border border-border p-5 rounded-xl space-y-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5"><Cpu size={14} className="text-primary" /> Recommended Machine</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                    {Math.round(mr.rateMultiplier * 100)}% rate
+                  </span>
+                </h3>
+
+                <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
+                  <p className="text-sm font-bold text-foreground">{mr.recommendedName}</p>
+                  <ul className="mt-1.5 space-y-1">
+                    {mr.reasons.map((r, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-[11px] text-muted-foreground leading-relaxed">
+                        <span className="text-primary font-bold mt-px">•</span><span>{r}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {mr.secondOpNote && (
+                  <div className="flex gap-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5">
+                    <AlertCircle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">{mr.secondOpNote}</p>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Machine options considered</p>
+                  {mr.candidates.map((c) => {
+                    const isPick = c.id === mr.recommended;
+                    return (
+                      <div key={c.id} className={cn('flex items-start gap-2 rounded-md p-2 text-[11px] border', isPick ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-accent/30 border-border')}>
+                        {c.capable
+                          ? <CheckCircle2 size={13} className="text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                          : <XCircle size={13} className="text-muted-foreground shrink-0 mt-0.5" />}
+                        <div className="min-w-0">
+                          <span className={cn('font-semibold', isPick ? 'text-foreground' : 'text-muted-foreground')}>
+                            {c.name}{isPick ? ' — chosen' : c.capable ? '' : ' — not capable'}
+                          </span>
+                          <p className="text-muted-foreground/80 leading-tight">{c.reason}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
+                  The chosen machine's charge-out ({Math.round(mr.rateMultiplier * 100)}% of the base spindle rate) is applied to the cycle-time price.
+                </p>
+              </div>
+            );
+          })()}
 
           {/* Machining drivers (turning / milling) */}
           {isTurned && cadAnalysis && (

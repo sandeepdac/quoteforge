@@ -14,6 +14,7 @@ import { classifyPart, PartClass } from './partClass';
 import { computeStock } from './cncEstimator';
 import { TurningProfile } from './turning';
 import { MilledProfile } from './milledEstimator';
+import { selectMachine, MachineRecommendation } from './machineSelection';
 import { materialPropsFor } from './materials';
 import { extractTurnedProfile, arrayBufferToBase64, GeometryResult } from './geometryService';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
@@ -69,6 +70,8 @@ export interface ExtractedCadAnalysis {
   turningProfile?: TurningProfile;
   /** The milled/prismatic profile (the 3 AAG rules) — set for milled parts. */
   milledProfile?: MilledProfile;
+  /** Recommended machine (sliding-head / 2-axis / turn-mill / mill) + reasoning. */
+  machineRecommendation?: MachineRecommendation;
   /** Standard bar diameter selected (mm). */
   barDiameterMm?: number;
   /** Off-axis features present → needs a second op / live tooling. */
@@ -333,6 +336,19 @@ async function analyzeSolid(
     const removedVol = Math.max(0, stockVol - volumeCm3);
     const buyToFlyRatio = stockVol > 0 ? Math.round((volumeCm3 / stockVol) * 100) / 100 : 0;
 
+    // Machine selection — the most efficient machine (sliding-head / 2-axis /
+    // turn-mill / mill) that can make this part, and why.
+    const machineRecommendation = selectMachine({
+      isTurned,
+      odMm: diameterMm,
+      barDiameterMm,
+      lengthMm: axisLengthMm,
+      crossFeatures,
+      setupCount: milledProfile?.setupCount,
+      pocketCount: milledProfile?.pocketCount,
+      bossCount: milledProfile?.bossCount,
+    });
+
     // Sheet-metal concepts don't apply to machined parts.
     const formedPart = false;
 
@@ -428,6 +444,7 @@ async function analyzeSolid(
       notRotationalReason,
       turningProfile,
       milledProfile,
+      machineRecommendation,
       diameterMm,
       axisLengthMm,
       volumeCm3,
