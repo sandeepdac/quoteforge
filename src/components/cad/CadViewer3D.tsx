@@ -5,10 +5,12 @@ import {
   Eye, 
   Box, 
   Layers, 
-  Maximize2, 
-  Sparkles, 
-  Ruler, 
-  Sun, 
+  Maximize2,
+  Minimize2,
+  Sparkles,
+  Ruler,
+  Crosshair,
+  Sun,
   Moon,
   CheckCircle,
   HelpCircle
@@ -75,6 +77,36 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
   const [isAutoRotate, setIsAutoRotate] = useState(true);
   const [measurementMode, setMeasurementMode] = useState(false);
   const [measuredDistance, setMeasuredDistance] = useState<number | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Refs used by the click-to-measure tool (read inside the render effect without
+  // forcing a scene rebuild on every toggle).
+  const measurementModeRef = useRef(false);
+  const measurePointsRef = useRef<THREE.Vector3[]>([]);
+  const measureGroupRef = useRef<THREE.Group | null>(null);
+  const mainMeshRef = useRef<THREE.Mesh | null>(null);
+
+  const clearMeasurement = () => {
+    const g = measureGroupRef.current;
+    if (g) while (g.children.length) g.remove(g.children[0]);
+    measurePointsRef.current = [];
+    setMeasuredDistance(null);
+  };
+
+  // Keep the ref in sync and reset picks when measurement is switched off.
+  useEffect(() => {
+    measurementModeRef.current = measurementMode;
+    if (!measurementMode) clearMeasurement();
+    if (measurementMode) setIsAutoRotate(false); // stop spin so points don't move
+  }, [measurementMode]);
+
+  // Collapse fullscreen on Escape.
+  useEffect(() => {
+    if (!isExpanded) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsExpanded(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isExpanded]);
 
   // Build a three.js geometry from the pre-tessellated B-Rep mesh (produced during
   // extraction). No re-computation here — the viewer just consumes the mesh.
@@ -211,6 +243,7 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
       // ---- Exact tessellated B-Rep from the STEP solid ----
       const mainMesh = new THREE.Mesh(realGeometry, cadMaterial);
       objectGroup.add(mainMesh);
+      mainMeshRef.current = mainMesh;
 
       // Real CAD edges derived from the actual faces (feature-angle filtered).
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(realGeometry, 20), lineMat);
@@ -220,6 +253,7 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
       const boxGeo = new THREE.BoxGeometry(lengthMm, thickness, widthMm, 8, 2, 8);
       const mainMesh = new THREE.Mesh(boxGeo, cadMaterial);
       objectGroup.add(mainMesh);
+      mainMeshRef.current = mainMesh;
 
       const edgesGeo = new THREE.EdgesGeometry(boxGeo);
       const lineSegments = new THREE.LineSegments(edgesGeo, lineMat);
@@ -342,6 +376,11 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
       addDim(new V(hx, -hy - off, -hz), new V(hx, -hy - off, hz), new V(0, 1, 0), `${dz} mm`, 0x60a5fa, '#60a5fa');
     }
 
+    // Group that holds measurement markers/lines so they rotate WITH the model.
+    const measureGroup = new THREE.Group();
+    objectGroup.add(measureGroup);
+    measureGroupRef.current = measureGroup;
+
     scene.add(objectGroup);
 
     // Mouse Controls (Simple Orbit Drag)
@@ -349,8 +388,42 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
     let previousMousePosition = { x: 0, y: 0 };
 
     const domElem = mountRef.current;
+    const raycaster = new THREE.Raycaster();
+
+    // Click-to-measure: pick two surface points; the straight-line distance
+    // between them (in mm) is shown. A third click starts a fresh measurement.
+    const handleMeasureClick = (e: MouseEvent) => {
+      if (!cameraRef.current || !mainMeshRef.current || !measureGroupRef.current) return;
+      const rect = domElem.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      raycaster.setFromCamera(ndc, cameraRef.current);
+      const hits = raycaster.intersectObject(mainMeshRef.current, true);
+      if (!hits.length) return;
+      const local = objectGroup.worldToLocal(hits[0].point.clone());
+      if (measurePointsRef.current.length >= 2) clearMeasurement();
+      measurePointsRef.current.push(local);
+
+      const dotGeo = new THREE.SphereGeometry(Math.max(1.2, (Math.max(axisDims.x, axisDims.y, axisDims.z) || 100) * 0.008), 12, 12);
+      const dot = new THREE.Mesh(dotGeo, new THREE.MeshBasicMaterial({ color: 0xf59e0b, depthTest: false }));
+      dot.position.copy(local);
+      measureGroupRef.current.add(dot);
+
+      if (measurePointsRef.current.length === 2) {
+        const [a, b] = measurePointsRef.current;
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([a, b]),
+          new THREE.LineBasicMaterial({ color: 0xf59e0b, depthTest: false })
+        );
+        measureGroupRef.current.add(line);
+        setMeasuredDistance(a.distanceTo(b));
+      }
+    };
 
     const handleMouseDown = (e: MouseEvent) => {
+      if (measurementModeRef.current) { handleMeasureClick(e); return; } // pick, don't rotate
       isDragging = true;
       previousMousePosition = { x: e.clientX, y: e.clientY };
     };
@@ -389,7 +462,7 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
     const animate = () => {
       animationFrameRef.current = requestAnimationFrame(animate);
 
-      if (objectGroupRef.current && isAutoRotate && !isDragging) {
+      if (objectGroupRef.current && isAutoRotate && !isDragging && !measurementModeRef.current) {
         objectGroupRef.current.rotation.y += 0.005;
       }
 
@@ -424,7 +497,7 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
         domElem.removeChild(rendererRef.current.domElement);
       }
     };
-  }, [cadData, theme, isWireframe, showBoundingBox, showHoles, showDimensions, isAutoRotate, realGeometry, axisDims]);
+  }, [cadData, theme, isWireframe, showBoundingBox, showHoles, showDimensions, isAutoRotate, realGeometry, axisDims, isExpanded]);
 
   const handleResetView = () => {
     if (objectGroupRef.current) {
@@ -433,7 +506,11 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
   };
 
   return (
-    <div className={`relative rounded-xl border border-border overflow-hidden bg-card flex flex-col ${className}`}>
+    <div className={
+      isExpanded
+        ? 'fixed inset-0 z-50 bg-card flex flex-col'
+        : `relative rounded-xl border border-border overflow-hidden bg-card flex flex-col ${className}`
+    }>
       {/* CAD Toolbar */}
       <div className="bg-slate-900/90 backdrop-blur-md px-4 py-2.5 flex items-center justify-between border-b border-slate-800 text-slate-200 text-xs">
         <div className="flex items-center gap-3">
@@ -491,6 +568,17 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
           </button>
 
           <button
+            onClick={() => setMeasurementMode(!measurementMode)}
+            className={`px-2.5 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
+              measurementMode ? 'bg-amber-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+            }`}
+            title="Measure distance between two points on the model"
+          >
+            <Crosshair size={13} />
+            Measure
+          </button>
+
+          <button
             onClick={() => setIsAutoRotate(!isAutoRotate)}
             className={`px-2.5 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
               isAutoRotate ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
@@ -499,6 +587,15 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
           >
             <RotateCcw size={13} className={isAutoRotate ? 'animate-spin' : ''} />
             Spin
+          </button>
+
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="px-2.5 py-1 rounded text-[11px] font-medium flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            title={isExpanded ? 'Collapse viewer' : 'Expand viewer to full screen'}
+          >
+            {isExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            {isExpanded ? 'Close' : 'Expand'}
           </button>
 
           <div className="h-4 w-px bg-slate-700 mx-1"></div>
@@ -525,9 +622,9 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
       </div>
 
       {/* 3D WebGL Canvas Area */}
-      <div 
-        ref={mountRef} 
-        className="w-full h-[360px] relative cursor-grab active:cursor-grabbing select-none"
+      <div
+        ref={mountRef}
+        className={`w-full relative select-none ${isExpanded ? 'flex-1' : 'h-[360px]'} ${measurementMode ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
       >
         {/* Dimension Callouts Overlay */}
         {showDimensions && (
@@ -571,9 +668,21 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
           </div>
         </div>
 
+        {/* Measurement panel */}
+        {measurementMode && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-amber-500/15 border border-amber-500/40 backdrop-blur-md text-amber-100 px-4 py-2 rounded-lg text-xs shadow-xl flex items-center gap-3">
+            <Crosshair size={14} className="text-amber-400" />
+            {measuredDistance != null ? (
+              <span>Distance: <strong className="text-white font-mono text-sm">{measuredDistance.toFixed(2)} mm</strong> <span className="text-amber-200/70">· click to start a new measurement</span></span>
+            ) : (
+              <span>{measurePointsRef.current.length === 1 ? 'Click the second point…' : 'Click two points on the model to measure'}</span>
+            )}
+          </div>
+        )}
+
         {/* Drag Guidance */}
         <div className="absolute bottom-3 right-3 text-[10px] text-slate-400 bg-slate-900/60 px-2.5 py-1 rounded backdrop-blur">
-          Click & Drag to Rotate | Scroll to Zoom
+          {measurementMode ? 'Click points to Measure | Scroll to Zoom' : 'Click & Drag to Rotate | Scroll to Zoom'}
         </div>
       </div>
     </div>

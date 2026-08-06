@@ -40,6 +40,8 @@ export interface MilledProfile {
   /** Pockets whose depth/width ratio needs a long, slow tool (Rule 3). */
   deepPocketCount: number;
   holeCount: number;
+  /** Part fills a small fraction of its bbox → solid-billet cost is an upper bound. */
+  sparseBillet?: boolean;
 }
 
 export interface MilledMachiningInput {

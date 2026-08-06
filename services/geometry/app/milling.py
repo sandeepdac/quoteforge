@@ -142,7 +142,9 @@ def analyze_milling(shape) -> dict:
     n_faces = 0
     n_planar = 0
     n_cyl = 0
+    n_holes = 0  # internal (concave) cylinders only — a real drilled/bored hole
     cyl_axes: List[np.ndarray] = []
+    hole_axes: List[np.ndarray] = []
     fexp = TopExp_Explorer(shape, TopAbs_FACE)
     while fexp.More():
         face = TopoDS.Face_s(fexp.Current())
@@ -155,7 +157,15 @@ def analyze_milling(shape) -> dict:
             planar_faces.append(face)
         elif st == GeomAbs_Cylinder:
             n_cyl += 1
-            cyl_axes.append(_unit(_np(ad.Cylinder().Axis().Direction())))
+            ax = _unit(_np(ad.Cylinder().Axis().Direction()))
+            cyl_axes.append(ax)
+            # A hole/bore is an INTERNAL cylinder (material outside → the face is
+            # REVERSED) of modest radius. Convex external rounds/fillets — which
+            # inflate a naive cylinder count — are FORWARD and are excluded.
+            r = ad.Cylinder().Radius()
+            if face.Orientation() == TopAbs_REVERSED and r <= 0.4 * max(diag, 1.0):
+                n_holes += 1
+                hole_axes.append(ax)
         fexp.Next()
 
     def _fid(f) -> int:
@@ -275,7 +285,7 @@ def analyze_milling(shape) -> dict:
                 access_dirs.append(normal)
 
     # Hole access directions (both senses count toward re-fixturing).
-    for ax in cyl_axes:
+    for ax in hole_axes:
         if _cluster_direction(access_dirs, ax) < 0 and _cluster_direction(access_dirs, -ax) < 0:
             access_dirs.append(ax)
 
@@ -293,10 +303,20 @@ def analyze_milling(shape) -> dict:
     confidence = round(max(0.0, min(1.0, 0.4 + 0.4 * clean_ratio +
                                     (0.2 if (pocket_count or boss_count or n_cyl) else 0.0))), 2)
 
+    # A part that fills only a small fraction of its bounding box is almost
+    # certainly NOT machined from a solid billet — it comes from plate, a
+    # weldment, an extrusion, or a near-net casting/forging. Flag it so the
+    # solid-billet cost (which would be enormous) is treated as an upper bound.
+    sparse_billet = removal_ratio > 0.85
+
     reason = (f"Prismatic estimate: {setup_count} setup(s), "
-              f"{pocket_count} pocket(s), {boss_count} boss(es), {n_cyl} hole/round face(s); "
+              f"{pocket_count} pocket(s), {boss_count} boss(es), {n_holes} hole(s); "
               f"stock {bx:.0f}×{by:.0f}×{bz:.0f} mm, {int(removal_ratio*100)}% removed"
               + (f", {deep_pockets} deep pocket(s)" if deep_pockets else "")
+              + (". NOTE: part fills only "
+                 f"{int((1 - removal_ratio) * 100)}% of its bounding box — a solid billet is "
+                 "likely the wrong stock (plate / weldment / near-net); estimate is an upper bound"
+                 if sparse_billet else "")
               + ".")
 
     return {
@@ -306,7 +326,9 @@ def analyze_milling(shape) -> dict:
         "bossCount": boss_count,
         "deepPocketCount": deep_pockets,
         "maxDepthRatio": round(max_depth_ratio, 2),
-        "holeCount": n_cyl,
+        "holeCount": n_holes,
+        "roundFaceCount": n_cyl,
+        "sparseBillet": sparse_billet,
         "concaveEdges": concave_edges,
         "convexEdges": convex_edges,
         "stockMm": {"x": round(bx, 3), "y": round(by, 3), "z": round(bz, 3)},
@@ -317,5 +339,5 @@ def analyze_milling(shape) -> dict:
         "pockets": pockets,
         "confidence": confidence,
         "reason": reason,
-        "counts": {"faces": n_faces, "planar": n_planar, "cylindrical": n_cyl},
+        "counts": {"faces": n_faces, "planar": n_planar, "cylindrical": n_cyl, "holes": n_holes},
     }

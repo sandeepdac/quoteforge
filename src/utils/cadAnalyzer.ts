@@ -307,6 +307,7 @@ async function analyzeSolid(
           bossCount: mm.bossCount,
           deepPocketCount: mm.deepPocketCount,
           holeCount: mm.holeCount,
+          sparseBillet: mm.sparseBillet,
         };
       } else {
         // Approximation: billet = bounding box; setups guessed from holes/faces.
@@ -322,9 +323,13 @@ async function analyzeSolid(
           bossCount: 0,
           deepPocketCount: 0,
           holeCount,
+          sparseBillet: stockVolMm > 0 && (stockVolMm - volumeCm3) / stockVolMm > 0.85,
         };
       }
     }
+    // A part that fills only a small fraction of its bounding box is not made
+    // from a solid billet — the solid-billet cost is an upper bound, not a quote.
+    const sparseBillet = !!milledProfile?.sparseBillet;
 
     // Setups: single op for a plain turned part; a second op (back-face /
     // turn-around) when off-axis features exist. Milled parts use the access-
@@ -425,17 +430,20 @@ async function analyzeSolid(
             milledProfile
               ? `${setups} setup${setups === 1 ? '' : 's'} (distinct tool-access directions), ${milledProfile.pocketCount} pocket${milledProfile.pocketCount === 1 ? '' : 's'}${milledProfile.deepPocketCount > 0 ? ` (${milledProfile.deepPocketCount} deep)` : ''}, ${milledProfile.holeCount} hole${milledProfile.holeCount === 1 ? '' : 's'}. Setups are the biggest cost lever.`
               : '',
+            sparseBillet
+              ? `⚠️ The part fills only ${Math.round((milledProfile!.partVolumeCm3 / Math.max(0.01, milledProfile!.stockVolumeCm3)) * 100)}% of its bounding box — machining it from a solid billet would hog away ${milledProfile!.removedVolumeCm3.toFixed(0)} cm³. Real stock is almost certainly plate / a weldment / a near-net casting or forging; this price is an UPPER BOUND and needs review.`
+              : '',
             `Estimates cost and cycle time only — this does not generate toolpaths (your CAM stays in place).`,
           ].filter(Boolean),
       confidenceScore: isTurned
         ? (crossFeatures ? 70 : Math.round(70 + pcConfidence * 28))
-        : Math.round(45 + milledConfidence * 40),
+        : sparseBillet ? 25 : Math.round(45 + milledConfidence * 40),
       stepData,
       stepMesh: mesh,
       measurementSource: 'solid',
       featuresNeedReview: isTurned
         ? crossFeatures
-        : (profileSource !== 'brep-service' || (milledProfile?.deepPocketCount ?? 0) > 0 || setups >= 3),
+        : (sparseBillet || profileSource !== 'brep-service' || (milledProfile?.deepPocketCount ?? 0) > 0 || setups >= 3),
       formedPart,
       dfm,
       partClass,

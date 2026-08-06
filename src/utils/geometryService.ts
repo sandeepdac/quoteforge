@@ -29,6 +29,10 @@ export interface GeometryMilled {
   deepPocketCount: number;
   maxDepthRatio: number;
   holeCount: number;
+  /** Total cylindrical faces (incl. fillets/rounds) — a superset of holeCount. */
+  roundFaceCount?: number;
+  /** Part fills a small fraction of its bbox → a solid billet is the wrong stock. */
+  sparseBillet?: boolean;
   concaveEdges: number;
   convexEdges: number;
   stockMm: { x: number; y: number; z: number };

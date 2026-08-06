@@ -555,6 +555,19 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
                 </div>
               </div>
 
+              {mp.sparseBillet && (
+                <div className="flex gap-2 bg-red-500/10 border border-red-500/40 rounded-md p-2.5">
+                  <AlertCircle size={14} className="text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    <strong className="text-red-600 dark:text-red-400">Solid-billet assumption is wrong for this part.</strong> It fills only
+                    {' '}{Math.round(milledYield * 100)}% of its {mp.stockMm.x}×{mp.stockMm.y}×{mp.stockMm.z} mm envelope, so milling from a solid block would
+                    hog away <strong className="text-foreground">{mp.removedVolumeCm3.toFixed(0)} cm³</strong>. Real stock is almost certainly
+                    <strong className="text-foreground"> plate / a weldment / a near-net casting or forging</strong> — this price is an
+                    <strong className="text-foreground"> upper bound</strong> and needs review with the right stock.
+                  </p>
+                </div>
+              )}
+
               {mp.deepPocketCount > 0 && (
                 <div className="flex gap-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5">
                   <AlertCircle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
