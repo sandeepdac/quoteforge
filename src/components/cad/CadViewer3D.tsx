@@ -485,9 +485,18 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
 
     window.addEventListener('resize', handleResize);
 
+    // Keep the canvas synced to its CONTAINER, not just the window — the panel's
+    // width settles after layout/animation and on expand, and a stale width is
+    // what leaves the model crammed to one side with empty space beside it.
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(domElem);
+    // Re-measure on the next frame too, in case the first measure was pre-layout.
+    requestAnimationFrame(handleResize);
+
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       domElem.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
@@ -512,7 +521,7 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
         : `relative rounded-xl border border-border overflow-hidden bg-card flex flex-col ${className}`
     }>
       {/* CAD Toolbar */}
-      <div className="bg-slate-900/90 backdrop-blur-md px-4 py-2.5 flex items-center justify-between border-b border-slate-800 text-slate-200 text-xs">
+      <div className="bg-slate-900/90 backdrop-blur-md px-4 py-2.5 flex flex-wrap items-center justify-between gap-y-2 border-b border-slate-800 text-slate-200 text-xs">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 font-bold text-sky-400">
             <Box size={16} />
