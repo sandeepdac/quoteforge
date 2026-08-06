@@ -8,7 +8,8 @@ import StepReview from '../components/wizard/StepReview';
 import { useQuotes } from '../context/QuoteContext';
 import { useSettings } from '../context/SettingsContext';
 import { Quote, Part } from '../types';
-import { calculateQuoteCosts, calculateWinProbability } from '../utils/estimator';
+import { calculateWinProbability } from '../utils/estimator';
+import { resolveQuoteCosts } from '../utils/quoteCosts';
 import { generateQuoteNumber, generateId } from '../utils/idGenerator';
 import { generatePartThumbnail } from '../utils/partThumbnail';
 import { ExtractedCadAnalysis } from '../utils/cadAnalyzer';
@@ -128,17 +129,20 @@ export default function NewQuotePage() {
     // the shop's live settings — so the saved quote matches what was previewed.
     const margin = opts?.margin ?? settings.defaultMargin;
 
-    const costs = calculateQuoteCosts(
-      quoteData.features,
-      quoteData.config.quantity,
-      quoteData.config.isRush,
+    // Price through the SAME resolver the preview/review use, so the saved quote
+    // matches exactly — turned parts on the turning model, milled on the milling
+    // model, everything else on the fabrication model.
+    const resolved = resolveQuoteCosts({
+      cadAnalysis,
+      features: quoteData.features,
+      materialName: material.name,
+      materialPricePerKg: material.pricePerKg,
+      quantity: quoteData.config.quantity,
+      isRush: quoteData.config.isRush,
       margin,
-      material.pricePerKg,
-      settings
-    );
-
-    const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
-    const grandTotal = (unitPrice * quoteData.config.quantity) + costs.rushPremium;
+      settings,
+    });
+    const { costs, unitPrice, grandTotal, machiningCosts, machineClass } = resolved;
 
     // Persist the actual measured part so the quote references its real geometry,
     // and it shows up in the Parts catalog — instead of pointing at a mock part.
@@ -173,7 +177,9 @@ export default function NewQuotePage() {
       costs,
       totalUnitPrice: unitPrice,
       grandTotal,
-      winProbability: calculateWinProbability(margin, quoteData.config.leadTimeDays)
+      winProbability: calculateWinProbability(margin, quoteData.config.leadTimeDays),
+      machineClass,
+      machiningCosts,
     };
 
     addQuote(newQuote);

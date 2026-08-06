@@ -259,11 +259,23 @@ export default function QuoteDetailPage() {
              <div className="pt-4 space-y-4">
                 <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Cost Breakdown</h4>
                 <div className="space-y-2">
-                  <BreakdownRow label="Material" value={quote.costs.materialCost} />
-                  <BreakdownRow label="Laser Processing" value={quote.costs.laserCost} />
-                  <BreakdownRow label="Fabrication/Bending" value={quote.costs.bendCost + quote.costs.weldCost} />
-                  <BreakdownRow label="Assembly & Finish" value={quote.costs.assemblyCost + quote.costs.finishCost} />
-                  <BreakdownRow label="Overhead" value={quote.costs.overhead} />
+                  {quote.machineClass ? (
+                    <>
+                      <BreakdownRow label="Material / stock" value={quote.costs.materialCost} />
+                      <BreakdownRow label="Machine time (cycle)" value={quote.costs.laserCost} />
+                      <BreakdownRow label="Setup (amortised)" value={quote.costs.bendCost} />
+                      <BreakdownRow label="Tooling / fixture" value={quote.costs.assemblyCost} />
+                      <BreakdownRow label="Overhead" value={quote.costs.overhead} />
+                    </>
+                  ) : (
+                    <>
+                      <BreakdownRow label="Material" value={quote.costs.materialCost} />
+                      <BreakdownRow label="Laser Processing" value={quote.costs.laserCost} />
+                      <BreakdownRow label="Fabrication/Bending" value={quote.costs.bendCost + quote.costs.weldCost} />
+                      <BreakdownRow label="Assembly & Finish" value={quote.costs.assemblyCost + quote.costs.finishCost} />
+                      <BreakdownRow label="Overhead" value={quote.costs.overhead} />
+                    </>
+                  )}
                   {quote.costs.rushPremium > 0 && (
                     <BreakdownRow label="Rush Premium (order)" value={quote.costs.rushPremium} />
                   )}

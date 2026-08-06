@@ -73,6 +73,10 @@ export interface Quote {
   actualLeadTimeDays?: number;
   /** Recorded actual factory cost for a completed job — powers estimator-accuracy analytics. */
   actualCost?: number;
+  /** Set for CNC machining quotes so the detail view labels the breakdown correctly. */
+  machineClass?: 'turn' | 'mill';
+  /** Full machining cost breakdown (cycle-time model) when this is a machining quote. */
+  machiningCosts?: MachiningCosts;
 }
 
 export interface QuoteCosts {
