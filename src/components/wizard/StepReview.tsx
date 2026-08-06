@@ -18,6 +18,8 @@ import { calculateMachiningCosts } from '../../utils/cncEstimator';
 import { calculateMilledCosts } from '../../utils/milledEstimator';
 import { materialPropsFor } from '../../utils/materials';
 import { generatePartThumbnail } from '../../utils/partThumbnail';
+import { generateTurningToolpath } from '../../utils/toolpath';
+import ToolpathPreview from '../cad/ToolpathPreview';
 import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
@@ -108,6 +110,13 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
   const winProb = calculateWinProbability(margin, data.config.leadTimeDays);
   const mc = isMachining ? (costs as MachiningCosts) : null;
+
+  // Reference turning toolpath (preview + downloadable G-code) for turned parts.
+  const toolpath = useMemo(() => {
+    if (!isTurnedPart || !cadAnalysis?.turningProfile) return null;
+    const bar = cadAnalysis.barDiameterMm ?? cadAnalysis.turningProfile.odMm + 4;
+    return generateTurningToolpath(cadAnalysis.turningProfile, bar, materialPropsFor(material.name));
+  }, [isTurnedPart, cadAnalysis, material]);
 
   const getWinProbColor = (prob: number) => {
     if (prob > 80) return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
@@ -240,6 +249,10 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
               </tbody>
             </table>
           </div>
+
+          {toolpath && (
+            <ToolpathPreview toolpath={toolpath} partName={data.partName} materialName={material.name} />
+          )}
 
           <div className="space-y-3">
             <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Notes for customer</label>
