@@ -115,9 +115,9 @@ export default function MachiningPlanPanel({ plan, setupTimeMin, currency = '$' 
       <div className="px-4 pb-3 pt-1 flex items-start gap-2">
         <AlertTriangle size={13} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
         <p className="text-[10px] text-muted-foreground leading-relaxed">
-          Operations and tools are <strong className="text-foreground">inferred from the geometry</strong>, not read from a posted
-          toolpath. The number of setups is measured, but which feature falls in which setup is an even split — treat the per-setup
-          times as indicative and the <strong className="text-foreground">total</strong> as the estimate.
+          Operations and tools are <strong className="text-foreground">inferred from the geometry</strong> and your tool library, not
+          read from a posted toolpath. The setup count is measured; where a part needs several setups the work is split across them
+          evenly. Treat the per-operation times as indicative and the <strong className="text-foreground">total</strong> as the estimate.
         </p>
       </div>
     </div>

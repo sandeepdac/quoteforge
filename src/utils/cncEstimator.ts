@@ -15,9 +15,13 @@ import {
   BatchPricePoint,
   CostLineItem,
   MachiningCosts,
+  MachiningPlan,
+  PlanOperation,
   ShopSettings,
+  ShopTool,
+  TurningOp,
 } from '../types';
-import { DEFAULT_CNC_SETTINGS } from '../constants';
+import { DEFAULT_CNC_SETTINGS, DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor, nextStandardBar } from './materials';
 import { estimateTurningTimes, TurningProfile } from './turning';
 
@@ -139,6 +143,51 @@ export function calculateMachiningCosts(
     { key: 'tooling', name: 'Tooling / consumables', driver: `${t.toolCount} operations`, value: toolingCost, color: COLORS.tooling },
   ].filter((li) => li.value > 0.005);
 
+  // --- Per-setup / per-operation plan (a turning job sheet) ----------------
+  // Same seconds as the line items, grouped the way a turner reads a job. A
+  // bar-fed / sliding-head part runs in ONE setup; a second op (back-face /
+  // cross features) is listed but not itemised because those features are not
+  // in the cycle-time estimate. Tools come from the shop turning library.
+  const tools: ShopTool[] = settings.cnc?.toolLibrary ?? DEFAULT_TURNING_TOOLS;
+  const toolFor = (op: TurningOp, fallback: string) =>
+    tools.find((tl) => tl.op === op)?.description ?? fallback;
+  const p = input.profile;
+  const opSrc: Array<{ name: string; sec: number; tool: string; driver: string; color: string }> = [
+    { name: 'Facing', sec: t.facingSec, tool: toolFor('face', 'OD turning tool'), driver: `${p.faceCount} face${p.faceCount === 1 ? '' : 's'}`, color: COLORS.facing },
+    { name: 'Rough turning', sec: t.roughSec, tool: toolFor('rough', 'OD turning tool'), driver: `${r1(removedVol)} cm³ removed`, color: COLORS.rough },
+    { name: 'Drilling', sec: t.drillSec, tool: toolFor('drill', 'Carbide drill'), driver: `⌀${p.boreDiaMm} × ${p.boreDepthMm} mm`, color: COLORS.drill },
+    { name: 'Boring', sec: t.boreSec, tool: toolFor('bore', 'Boring bar'), driver: `bore to ⌀${p.boreDiaMm}`, color: COLORS.bore },
+    { name: 'Finish turning', sec: t.finishSec, tool: toolFor('finish', 'OD finishing tool'), driver: `${r1(p.lengthMm)} mm OD`, color: COLORS.finish },
+    { name: 'Grooving', sec: t.grooveSec, tool: 'Grooving tool', driver: `${p.grooveCount} groove${p.grooveCount === 1 ? '' : 's'}`, color: COLORS.groove },
+    { name: 'Threading', sec: t.threadSec, tool: 'Threading tool', driver: `${p.threadCount} thread${p.threadCount === 1 ? '' : 's'}`, color: COLORS.thread },
+    { name: 'Part-off', sec: t.partingSec, tool: toolFor('partoff', 'Parting blade'), driver: 'cut to length', color: COLORS.parting },
+  ];
+  const planOps: PlanOperation[] = opSrc
+    .filter((o) => o.sec > 0.5)
+    .map((o) => ({ name: o.name, tool: o.tool, seconds: o.sec / eff, cost: opCost(o.sec), driver: o.driver, color: o.color }));
+  const changeSec = t.toolCount * cnc.toolChangeSec;
+  const setup1Sec = planOps.reduce((a, o) => a + o.seconds, 0) + changeSec / eff + cnc.barLoadSec;
+  const setup1Cost = planOps.reduce((a, o) => a + o.cost, 0) + opCost(changeSec) + cnc.barLoadSec * ratePerSec;
+  const planSetups = [
+    { index: 1, name: setups > 1 ? 'Setup 1 — main turning' : 'Setup 1', operations: planOps, seconds: setup1Sec, cost: setup1Cost, toolChanges: t.toolCount },
+  ];
+  if (setups > 1) {
+    planSetups.push({ index: 2, name: 'Setup 2 — second op (back-face / cross features)', operations: [], seconds: 0, cost: 0, toolChanges: 0 });
+  }
+  const planToolAgg = new Map<string, { name: string; ops: number; seconds: number }>();
+  for (const o of planOps) {
+    const cur = planToolAgg.get(o.tool) ?? { name: o.tool, ops: 0, seconds: 0 };
+    cur.ops += 1;
+    cur.seconds += o.seconds;
+    planToolAgg.set(o.tool, cur);
+  }
+  const plan: MachiningPlan = {
+    setups: planSetups,
+    tools: [...planToolAgg.values()].sort((a, b) => b.seconds - a.seconds),
+    totalSeconds: planSetups.reduce((a, s) => a + s.seconds, 0),
+    totalCost: planSetups.reduce((a, s) => a + s.cost, 0),
+  };
+
   // --- Batch quantity curve (setup amortisation) ---------------------------
   const batchCurve: BatchPricePoint[] = STANDARD_BATCH_QTYS.map((q) => {
     const sPer = setupCostTotal / q;
@@ -168,5 +217,7 @@ export function calculateMachiningCosts(
     setups,
     efficiencyFactor: eff,
     batchCurve,
+    plan,
+    machineClass: 'turn',
   };
 }

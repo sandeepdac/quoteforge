@@ -95,3 +95,37 @@ describe('calculateMachiningCosts (turning cycle-time)', () => {
     expect(slow.machineCost).toBeGreaterThan(costs.machineCost);
   });
 });
+
+describe('turning machining plan', () => {
+  const costs = calculateMachiningCosts(brass, 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+
+  it('emits a per-operation plan for a turned part', () => {
+    expect(costs.plan).toBeDefined();
+    expect(costs.plan!.setups.length).toBeGreaterThanOrEqual(1);
+    const ops = costs.plan!.setups[0].operations.map((o) => o.name);
+    // A bored, faced bar → facing, roughing, drilling, boring, finishing, part-off.
+    expect(ops).toContain('Facing');
+    expect(ops).toContain('Rough turning');
+    expect(ops).toContain('Drilling');
+    expect(ops).toContain('Part-off');
+  });
+
+  it('names the real cutter from the shop tool library on each op', () => {
+    const rough = costs.plan!.setups[0].operations.find((o) => o.name === 'Rough turning')!;
+    expect(rough.tool).toMatch(/CNMG|DCLNR|turning/i); // default library rougher
+    expect(rough.seconds).toBeGreaterThan(0);
+    expect(rough.cost).toBeGreaterThan(0);
+  });
+
+  it("the plan's setup total is positive and finite", () => {
+    expect(costs.plan!.totalSeconds).toBeGreaterThan(0);
+    expect(Number.isFinite(costs.plan!.totalCost)).toBe(true);
+  });
+
+  it('adds a second (un-itemised) setup only when the part needs a turn-around', () => {
+    const single = calculateMachiningCosts({ ...brass, setups: 1 }, 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const twoOp = calculateMachiningCosts({ ...brass, setups: 2 }, 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    expect(single.plan!.setups.length).toBe(1);
+    expect(twoOp.plan!.setups.length).toBe(2);
+  });
+});
