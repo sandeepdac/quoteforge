@@ -23,7 +23,7 @@ import {
 } from '../types';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
 import { materialPropsFor } from './materials';
-import { millingMrrCm3PerMin, finishingRateCm2PerMin, MillingToolConfig } from './milling';
+import { millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, MillingToolConfig } from './milling';
 
 /** A milled part reduced to the drivers a cycle-time model needs. */
 export interface MilledProfile {
@@ -119,8 +119,11 @@ export function calculateMilledCosts(
   const deepMult = 1 + Math.min(1.2, DEEP_POCKET_PENALTY * deep);
 
   // --- Roughing: remove the bulk at a real milling MRR (ae·ap·vf) ----------
+  // The roughing cutter is sized to the part, not fixed: it dominates MRR, and a
+  // big open plate takes a far heavier cut than a small contoured one.
+  const minDimMm = Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z) || 20;
   const millCfg: MillingToolConfig = {
-    toolDiaMm: cnc.millToolDiaMm ?? 10,
+    toolDiaMm: cnc.millToolDiaMm ?? roughingToolDiaMm(minDimMm),
     flutes: 3,
     radialFactor: 0.35,
     axialFactor: 0.8,

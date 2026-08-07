@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { millingRpm, millingMrrCm3PerMin, finishingRateCm2PerMin, DEFAULT_MILLING_TOOL } from './milling';
+import { millingRpm, millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, DEFAULT_MILLING_TOOL } from './milling';
 import { materialPropsFor } from './materials';
 
 const alu = materialPropsFor('Aluminium 6082');
@@ -64,5 +64,22 @@ describe('finishingRateCm2PerMin', () => {
     // got 4× steel's finishing rate. Feed and the rpm ceiling bound it well below that.
     const ratio = finishingRateCm2PerMin(alu) / finishingRateCm2PerMin(steel);
     expect(ratio).toBeLessThan(4);
+  });
+});
+
+describe('roughingToolDiaMm', () => {
+  it('sizes the cutter to the part, within stocked sizes', () => {
+    expect(roughingToolDiaMm(23.1)).toBe(6);    // small contoured part
+    expect(roughingToolDiaMm(150)).toBe(20);    // big open plate
+    expect(roughingToolDiaMm(48)).toBe(12);     // mid
+  });
+
+  it('drives an order-of-magnitude spread in removal rate', () => {
+    // Two reference CAM quotes implied ~23 cm³/min on a small putter and
+    // ~134 cm³/min on a large plate. One fixed cutter cannot describe both.
+    const alu = materialPropsFor('Aluminium 6082');
+    const small = millingMrrCm3PerMin(alu, { ...DEFAULT_MILLING_TOOL, toolDiaMm: roughingToolDiaMm(23.1) });
+    const big = millingMrrCm3PerMin(alu, { ...DEFAULT_MILLING_TOOL, toolDiaMm: roughingToolDiaMm(150) });
+    expect(big / small).toBeGreaterThan(4);
   });
 });

@@ -41,7 +41,8 @@ export const DEFAULT_CNC_SETTINGS: CncSettings = {
   // much faster, an ATC change is slower than a turret index, and clamping a
   // billet (vise/soft jaws, tram, probe, touch-off) takes longer than bar-feeding.
   millMaxRpm: 12000,
-  millToolDiaMm: 10,
+  // millToolDiaMm intentionally unset — the roughing cutter is sized to the part
+  // (see roughingToolDiaMm). Set it only to pin every job to one cutter.
   millToolChangeSec: 10,
   millSetupFirstOpMin: 60,
   millSetupPerExtraOpMin: 45,

@@ -150,7 +150,11 @@ export function nextStandardPlate(requiredMm: number): number {
  */
 export function milledBilletMm(
   bboxMm: { x: number; y: number; z: number },
-  allowanceMm = 1.5
+  // Per face. Kept modest deliberately: this only decides WHICH plate to buy, and
+  // the chosen plate usually supplies more clean-up than this anyway. Too large an
+  // allowance tips a part over a size boundary for the sake of a fraction of a
+  // millimetre — a 150 mm part wants 6" plate (1.2 mm/face of skim), not 7".
+  allowanceMm = 1.0
 ): { x: number; y: number; z: number } {
   const dims: Array<['x' | 'y' | 'z', number]> = [
     ['x', bboxMm.x], ['y', bboxMm.y], ['z', bboxMm.z],

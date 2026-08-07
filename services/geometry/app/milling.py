@@ -37,6 +37,8 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+import math
+
 import numpy as np
 
 from OCP.TopExp import TopExp_Explorer, TopExp
@@ -45,6 +47,7 @@ from OCP.TopoDS import TopoDS
 from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape, TopTools_IndexedMapOfShape
 from OCP.BRep import BRep_Tool
 from OCP.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve
+from OCP.BRepTools import BRepTools
 from OCP.GeomAbs import GeomAbs_Plane, GeomAbs_Cylinder
 from OCP.GProp import GProp_GProps
 from OCP.BRepGProp import BRepGProp
@@ -168,8 +171,14 @@ def analyze_milling(shape) -> dict:
             r = ad.Cylinder().Radius()
             if face.Orientation() == TopAbs_REVERSED and r <= 0.4 * max(diag, 1.0):
                 loc = ad.Cylinder().Axis().Location()
+                # How far around the axis this face wraps. A drilled/bored hole
+                # closes the full 360° (often as two 180° halves); a filleted
+                # pocket CORNER is the same kind of internal cylindrical face but
+                # only wraps ~90°. Without this, every rounded corner reads as a
+                # hole — the NIST CTC-01 benchmark reported 36 holes instead of 10.
+                u0, u1, _v0, _v1 = BRepTools.UVBounds_s(face)
                 hole_axes.append(ax)
-                hole_cyls.append((ax, np.array([loc.X(), loc.Y(), loc.Z()]), r))
+                hole_cyls.append((ax, np.array([loc.X(), loc.Y(), loc.Z()]), r, abs(u1 - u0)))
         fexp.Next()
 
     def _fid(f) -> int:
@@ -283,7 +292,14 @@ def analyze_milling(shape) -> dict:
             })
             if _cluster_direction(access_dirs, normal) < 0:
                 access_dirs.append(normal)
-        elif n_convex >= 3 and n_concave == 0 and not _is_stock_face(centroid, normal):
+        # The boss test keys off the ABSENCE of concave edges, which is only
+        # meaningful if concavity was measurable at all. On a heavily filleted
+        # part every wall meets its floor through a cylindrical blend, so the
+        # planar-planar dihedral test finds nothing and "no concave edges" becomes
+        # vacuously true for every face — which turned the NIST CTC-01 plate into
+        # 37 bosses claiming all six setups. Require positive evidence instead.
+        elif (concave_edges > 0 and n_convex >= 3 and n_concave == 0
+              and not _is_stock_face(centroid, normal)):
             boss_count += 1
             if _cluster_direction(access_dirs, normal) < 0:
                 access_dirs.append(normal)
@@ -295,7 +311,7 @@ def analyze_milling(shape) -> dict:
     # cylinders belong to the same hole when their axes are parallel AND lie on the
     # same line (perpendicular offset ≈ 0).
     hole_groups: List[dict] = []
-    for ax, pt, r in hole_cyls:
+    for ax, pt, r, span in hole_cyls:
         placed = False
         for g in hole_groups:
             if abs(float(np.dot(ax, g["axis"]))) > 0.98:
@@ -304,15 +320,24 @@ def analyze_milling(shape) -> dict:
                 if float(np.linalg.norm(perp)) < 0.25:  # mm — same axis line
                     g["maxRadius"] = max(g["maxRadius"], r)
                     g["minRadius"] = min(g["minRadius"], r)
+                    g["span"] += span
                     g["faces"] += 1
                     placed = True
                     break
         if not placed:
-            hole_groups.append({"axis": ax, "point": pt, "maxRadius": r, "minRadius": r, "faces": 1})
+            hole_groups.append({"axis": ax, "point": pt, "maxRadius": r,
+                                "minRadius": r, "span": span, "faces": 1})
+
+    # Keep only groups that wrap (nearly) all the way round — a real hole. Corner
+    # fillets sum to ~90–120° and are excluded; two 180° halves sum to 360° and count.
+    FULL_TURN = 2.0 * math.pi
+    hole_groups = [g for g in hole_groups if g["span"] >= 0.85 * FULL_TURN]
 
     n_holes = len(hole_groups)
     # Largest ⌀ per hole — lets the estimator tell a drilled hole from a milled bore.
     hole_diameters = sorted((round(2.0 * g["maxRadius"], 3) for g in hole_groups), reverse=True)
+    # Only genuine holes should drive re-fixturing decisions.
+    hole_axes = [g["axis"] for g in hole_groups]
 
     # Hole access directions (both senses count toward re-fixturing).
     for ax in hole_axes:
@@ -320,8 +345,24 @@ def analyze_milling(shape) -> dict:
             access_dirs.append(ax)
 
     # Rule 1: setups = distinct access directions, at least 1 (top facing).
-    setup_count = max(1, len(access_dirs))
-    setup_count = min(setup_count, 6)  # a 3-axis part rarely needs more than 6
+    #
+    # On a 3-axis machine you can only present the part to the spindle along one
+    # of the stock's six faces, so a raw face normal is not itself a setup: the
+    # slanted walls and chamfers of a hexagonal boss are all cut from ABOVE, with
+    # the side of the cutter. Snapping each candidate direction to the nearest
+    # stock axis collapses those into the one setup they are really machined in.
+    # (Un-snapped, the NIST CTC-01 hex boss alone claimed 10 extra setups.)
+    # A direction only earns a setup if it is roughly a stock axis (within ~25°).
+    # A steeply angled face — a hex boss wall at 60°, a 45° chamfer — is not
+    # fixtured on its own; it is cut from whichever axis can already reach it.
+    AXIS_ALIGNED = 0.90  # cos(~26°)
+    axis_dirs = set()
+    for d in access_dirs:
+        i = int(np.argmax(np.abs(d)))          # dominant axis
+        if abs(float(d[i])) >= AXIS_ALIGNED:
+            axis_dirs.add((i, 1 if d[i] >= 0 else -1))
+    setup_count = max(1, len(axis_dirs))
+    setup_count = min(setup_count, 6)  # a 3-axis part cannot need more than 6
 
     pocket_count = len(pockets)
 
@@ -332,6 +373,13 @@ def analyze_milling(shape) -> dict:
     clean_ratio = (known / n_faces) if n_faces else 0.0
     confidence = round(max(0.0, min(1.0, 0.4 + 0.4 * clean_ratio +
                                     (0.2 if (pocket_count or boss_count or n_cyl) else 0.0))), 2)
+    # If no concave edge was measurable on a part with real topology, our
+    # pocket/boss reasoning ran blind (typically a heavily filleted model, where
+    # every wall meets its floor through a cylindrical blend). The stock and hole
+    # figures still hold, but the SETUP count — the biggest cost lever — is a
+    # weaker inference, so say so rather than reporting near-certainty.
+    if concave_edges == 0 and n_faces > 12:
+        confidence = min(confidence, 0.55)
 
     # A part that fills only a small fraction of its bounding box is almost
     # certainly NOT machined from a solid billet — it comes from plate, a

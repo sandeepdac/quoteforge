@@ -45,6 +45,20 @@ export const DEFAULT_MILLING_TOOL: MillingToolConfig = {
   maxRpm: 12000,
 };
 
+/**
+ * Roughing cutter diameter for a part of a given size (mm).
+ *
+ * Tool choice is the single biggest lever on milling MRR, and it is dictated by
+ * the part: nobody roughs an 800 mm plate with a 10 mm end mill, and nobody fits
+ * a 20 mm cutter into a small contoured part. Scaling with the SMALLEST overall
+ * dimension (the tightest envelope the cutter has to live in), bounded by the
+ * sizes shops actually keep for roughing, tracks both ends: a ~23 mm-thick part
+ * lands on a 6 mm cutter, a 150 mm-thick plate on a 20 mm one.
+ */
+export function roughingToolDiaMm(minBboxDimMm: number): number {
+  return Math.max(6, Math.min(20, minBboxDimMm / 4));
+}
+
 /** Spindle speed for a cutting speed Vc (m/min) at tool ⌀ D (mm), rpm — clamped. */
 export function millingRpm(vcMPerMin: number, toolDiaMm: number, maxRpm: number): number {
   if (toolDiaMm <= 0) return maxRpm;

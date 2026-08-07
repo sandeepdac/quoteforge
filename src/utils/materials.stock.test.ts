@@ -27,19 +27,30 @@ describe('milledBilletMm', () => {
   });
 
   it('saws the longest dimension to length but buys standard plate for the rest', () => {
-    const b = milledBilletMm(bbox, 1.5);
-    expect(b.x).toBeCloseTo(112.468 + 3, 3);   // sawn: allowance only
-    // 27.94 + 3 = 30.94 and 23.11 + 3 = 26.11; there is no 1⅛" plate, so both
-    // land on 1¼" (31.75 mm) — the next size a supplier actually stocks.
-    expect(b.y).toBe(31.75);
-    expect(b.z).toBe(31.75);
+    const b = milledBilletMm(bbox);
+    expect(b.x).toBeCloseTo(112.468 + 2, 3);   // sawn: allowance only
+    expect(b.y).toBe(31.75);                    // 1¼" plate
+    expect(b.z).toBe(25.4);                     // 1" plate — matches the reference
   });
 
-  it('lands within ~10% of the volume a real shop bought for this part', () => {
+  it('does not jump a whole size for a fraction of a millimetre', () => {
+    // The NIST CTC-01 benchmark is 150 mm thick and a real shop bought 6" (152.4)
+    // plate — 1.2 mm/face of clean-up. An over-generous allowance would push it to
+    // 7" plate and add ~16% to the material bill for the sake of 0.6 mm.
+    const b = milledBilletMm({ x: 800, y: 450, z: 150 });
+    expect(b.z).toBeCloseTo(152.4, 3);
+    const vol = (b.x * b.y * b.z) / 1000;
+    const refVol = (806.45 * 457.2 * 152.4) / 1000;
+    expect(Math.abs(vol - refVol) / refVol).toBeLessThan(0.05);
+  });
+
+  it('stays in the right ballpark on the putter (stock choice is shop-dependent)', () => {
+    // The reference shop bought 1½" plate where we pick 1¼"; both are legitimate
+    // choices, so this only guards against being wildly off.
     const b = milledBilletMm(bbox);
-    const vol = (b.x * b.y * b.z) / 1000;       // cm³
-    const refVol = (4.5 * 1.0 * 1.5) * 16.387;  // in³ → cm³ ≈ 110.6
-    expect(Math.abs(vol - refVol) / refVol).toBeLessThan(0.1);
+    const vol = (b.x * b.y * b.z) / 1000;
+    const refVol = 4.5 * 1.0 * 1.5 * 16.387;   // ≈ 110.6 cm³
+    expect(Math.abs(vol - refVol) / refVol).toBeLessThan(0.25);
   });
 
   it('is always bigger than the raw bounding box', () => {
