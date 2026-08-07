@@ -1,4 +1,17 @@
-import { CncSettings, ShopSettings } from './types';
+import { CncSettings, ShopSettings, ShopTool } from './types';
+
+/**
+ * Default turning tool library for a sliding-head bar shop. Editable per shop in
+ * Settings → Tooling; the reference toolpath + G-code use these stations/tools.
+ * Facing and roughing share the OD tool; finishing runs a sharper insert.
+ */
+export const DEFAULT_TURNING_TOOLS: ShopTool[] = [
+  { op: 'face', station: 'T0101', description: 'OD rough — DCLNR + CNMG 120408-PM', noseRadiusMm: 0.8 },
+  { op: 'rough', station: 'T0101', description: 'OD rough — DCLNR + CNMG 120408-PM', noseRadiusMm: 0.8 },
+  { op: 'drill', station: 'T0202', description: 'Carbide drill (bore ⌀)' },
+  { op: 'finish', station: 'T0303', description: 'OD finish — SDJCR + DCGT 070204-AL', noseRadiusMm: 0.4 },
+  { op: 'partoff', station: 'T0404', description: 'Part-off blade — 3 mm insert' },
+];
 
 /**
  * CNC TURNING defaults for a small-part precision shop (sliding-head, bar-fed),
@@ -22,6 +35,7 @@ export const DEFAULT_CNC_SETTINGS: CncSettings = {
   partingWidthMm: 3,
   gripLengthMm: 20,
   scrapRecovery: 0,
+  toolLibrary: DEFAULT_TURNING_TOOLS,
 };
 
 export const DEFAULT_SHOP_SETTINGS: ShopSettings = {

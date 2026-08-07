@@ -151,7 +151,7 @@ export default function ToolpathPreview({ toolpath: tp, partName, materialName }
             <span className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{ backgroundColor: pass.color }} />
             <span className="min-w-0">
               <span className="text-[11px] font-semibold text-foreground">
-                {pass.label} <span className="text-muted-foreground font-normal">· T{String(pass.toolNo).padStart(2, '0')} · S{pass.rpm} · F{pass.feed}</span>
+                {pass.label} <span className="text-muted-foreground font-normal">· {pass.station} · S{pass.rpm} · F{pass.feed}</span>
               </span>
               <span className="block text-[10px] text-muted-foreground truncate">{pass.tool}</span>
             </span>
@@ -162,8 +162,8 @@ export default function ToolpathPreview({ toolpath: tp, partName, materialName }
       <div className="px-4 pb-3 flex items-start gap-2">
         <AlertTriangle size={13} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
         <p className="text-[10px] text-muted-foreground leading-relaxed">
-          A <strong className="text-foreground">reference</strong> path expanded from the estimate. The tooling above is a <strong className="text-foreground">generic assumption</strong>
-          {' '}(standard OD insert, carbide drill, parting blade) with <strong className="text-foreground">no offsets, nose radius or holder</strong> defined — it is <strong className="text-foreground">not
+          A <strong className="text-foreground">reference</strong> path expanded from the estimate, using your <strong className="text-foreground">shop tool library</strong> (edit in
+          {' '}Settings → Tooling). Stations and inserts are yours, but <strong className="text-foreground">offsets and wear comp are not set here</strong> — it is <strong className="text-foreground">not
           post-processed</strong> for any control and is <strong className="text-foreground">not a substitute for your CAM</strong> (SolidCAM). Verify everything before running; grooves and
           threads are quoted but not in this reference path.
         </p>

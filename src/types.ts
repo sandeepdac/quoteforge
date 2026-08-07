@@ -156,6 +156,24 @@ export interface MachiningCosts {
  * Shop rates/speeds for CNC TURNING. Advisory defaults; the efficiency factor
  * is the primary calibration control.
  */
+/** The turning operations the reference toolpath expands, in machining order. */
+export type TurningOp = 'face' | 'rough' | 'drill' | 'finish' | 'partoff';
+
+/**
+ * One entry in the shop's turning tool library — maps an operation to the real
+ * turret station and tool the shop runs, so the reference G-code and preview
+ * reflect *this* shop's tooling rather than a generic assumption.
+ */
+export interface ShopTool {
+  op: TurningOp;
+  /** Turret station + offset call, e.g. "T0101". */
+  station: string;
+  /** Tool / insert description, e.g. "DCLNR 2020 + CNMG 120408-PM". */
+  description: string;
+  /** Insert nose radius (mm), optional. */
+  noseRadiusMm?: number;
+}
+
 export interface CncSettings {
   /** Charge-out for spindle time (per minute). */
   machineRatePerMin: number;
@@ -190,6 +208,8 @@ export interface CncSettings {
   gripLengthMm: number;
   /** Fraction of swarf value recovered (0–1). */
   scrapRecovery: number;
+  /** Shop turning tool library — drives the reference toolpath's stations/tools. */
+  toolLibrary?: ShopTool[];
 }
 
 export interface ShopSettings {

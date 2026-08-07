@@ -115,8 +115,14 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
   const toolpath = useMemo(() => {
     if (!isTurnedPart || !cadAnalysis?.turningProfile) return null;
     const bar = cadAnalysis.barDiameterMm ?? cadAnalysis.turningProfile.odMm + 4;
-    return generateTurningToolpath(cadAnalysis.turningProfile, bar, materialPropsFor(material.name));
-  }, [isTurnedPart, cadAnalysis, material]);
+    return generateTurningToolpath(
+      cadAnalysis.turningProfile,
+      bar,
+      materialPropsFor(material.name),
+      undefined,
+      settings.cnc?.toolLibrary
+    );
+  }, [isTurnedPart, cadAnalysis, material, settings.cnc?.toolLibrary]);
 
   const getWinProbColor = (prob: number) => {
     if (prob > 80) return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";

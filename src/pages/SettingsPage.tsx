@@ -12,10 +12,13 @@ import {
   Sun,
   RotateCcw
 } from 'lucide-react';
+import { Wrench } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
 import { clearAllState } from '../utils/storage';
+import { DEFAULT_TURNING_TOOLS } from '../constants';
+import { CncSettings, ShopTool, TurningOp } from '../types';
 
 export default function SettingsPage() {
   const { settings, updateSettings } = useSettings();
@@ -35,6 +38,7 @@ export default function SettingsPage() {
     { id: 'shop', name: 'Shop Info', icon: Building },
     { id: 'rates', name: 'Labor Rates', icon: DollarSign },
     { id: 'margins', name: 'Margins', icon: Zap },
+    { id: 'tooling', name: 'Tooling', icon: Wrench },
     { id: 'account', name: 'Preferences', icon: SettingsIcon },
   ];
 
@@ -145,6 +149,13 @@ export default function SettingsPage() {
             </div>
           )}
 
+          {activeTab === 'tooling' && (
+            <ToolingTab
+              tools={settings.cnc?.toolLibrary ?? DEFAULT_TURNING_TOOLS}
+              onSave={(toolLibrary) => updateSettings({ cnc: { toolLibrary } as Partial<CncSettings> as CncSettings })}
+            />
+          )}
+
           {activeTab === 'account' && (
             <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
               <h3 className="text-lg font-bold border-b border-border pb-4">Personal Preferences</h3>
@@ -221,6 +232,124 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const OP_ROWS: { op: TurningOp; label: string; hint: string }[] = [
+  { op: 'face', label: 'Facing', hint: 'Skim the end flat' },
+  { op: 'rough', label: 'Roughing', hint: 'OD stock removal' },
+  { op: 'drill', label: 'Drilling', hint: 'Centre bore' },
+  { op: 'finish', label: 'Finishing', hint: 'Final OD pass' },
+  { op: 'partoff', label: 'Part-off', hint: 'Cut off at length' },
+];
+
+/** Seed all five ops in machining order, filling gaps from the defaults. */
+function normalise(tools: ShopTool[]): ShopTool[] {
+  return OP_ROWS.map(({ op }) => {
+    const found = tools.find((t) => t.op === op);
+    return found ?? DEFAULT_TURNING_TOOLS.find((t) => t.op === op)!;
+  });
+}
+
+function ToolingTab({ tools, onSave }: { tools: ShopTool[]; onSave: (t: ShopTool[]) => void }) {
+  const [rows, setRows] = useState<ShopTool[]>(() => normalise(tools));
+  const [saved, setSaved] = useState(false);
+
+  const update = (op: TurningOp, patch: Partial<ShopTool>) => {
+    setRows((rs) => rs.map((r) => (r.op === op ? { ...r, ...patch } : r)));
+    setSaved(false);
+  };
+
+  const save = () => {
+    onSave(rows);
+    setSaved(true);
+  };
+
+  const reset = () => {
+    setRows(normalise(DEFAULT_TURNING_TOOLS));
+    setSaved(false);
+  };
+
+  return (
+    <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
+      <div className="border-b border-border pb-4">
+        <h3 className="text-lg font-bold">Turning Tool Library</h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          Map each operation to the turret station and insert your shop runs. These drive the reference toolpath preview and the
+          downloadable G-code on turned parts.
+        </p>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground text-left">
+              <th className="pb-2 pr-3">Operation</th>
+              <th className="pb-2 pr-3">Station</th>
+              <th className="pb-2 pr-3">Tool / insert</th>
+              <th className="pb-2">Nose R (mm)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const meta = OP_ROWS.find((o) => o.op === r.op)!;
+              return (
+                <tr key={r.op} className="border-t border-border">
+                  <td className="py-2 pr-3 align-top">
+                    <p className="font-semibold text-foreground">{meta.label}</p>
+                    <p className="text-[11px] text-muted-foreground">{meta.hint}</p>
+                  </td>
+                  <td className="py-2 pr-3 align-top">
+                    <input
+                      value={r.station}
+                      onChange={(e) => update(r.op, { station: e.target.value })}
+                      className="w-24 bg-background border border-border rounded px-2 py-1 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                      placeholder="T0101"
+                    />
+                  </td>
+                  <td className="py-2 pr-3 align-top">
+                    <input
+                      value={r.description}
+                      onChange={(e) => update(r.op, { description: e.target.value })}
+                      className="w-full min-w-[220px] bg-background border border-border rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                      placeholder="Holder + insert"
+                    />
+                  </td>
+                  <td className="py-2 align-top">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={r.noseRadiusMm ?? ''}
+                      onChange={(e) =>
+                        update(r.op, { noseRadiusMm: e.target.value === '' ? undefined : Number(e.target.value) })
+                      }
+                      className="w-20 bg-background border border-border rounded px-2 py-1 font-mono text-sm text-right focus:outline-none focus:ring-1 focus:ring-primary"
+                      placeholder="—"
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="pt-6 border-t border-border flex items-center justify-between">
+        <button onClick={reset} className="text-xs font-bold text-muted-foreground hover:text-foreground uppercase tracking-widest">
+          Reset to defaults
+        </button>
+        <div className="flex items-center gap-3">
+          {saved && <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Saved ✓</span>}
+          <button
+            onClick={save}
+            className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-shadow shadow"
+          >
+            <Save size={16} /> Save Tool Library
+          </button>
         </div>
       </div>
     </div>

@@ -51,3 +51,33 @@ describe('toGcode', () => {
     expect(g).toContain('G21');
   });
 });
+
+describe('shop tool library', () => {
+  const tools = [
+    { op: 'face' as const, station: 'T0505', description: 'My rougher CNMG', noseRadiusMm: 0.8 },
+    { op: 'rough' as const, station: 'T0505', description: 'My rougher CNMG', noseRadiusMm: 0.8 },
+    { op: 'finish' as const, station: 'T0707', description: 'Sharp VCGT finisher' },
+  ];
+  const tp = generateTurningToolpath(profile, 25, brass, undefined, tools);
+
+  it('applies the shop stations/tools to matching passes', () => {
+    const finish = tp.passes.find((p) => p.op === 'finish')!;
+    expect(finish.station).toBe('T0707');
+    expect(finish.tool).toBe('Sharp VCGT finisher');
+    // Roughing carries the library's nose radius.
+    expect(tp.passes.find((p) => p.op === 'rough')!.noseRadiusMm).toBe(0.8);
+  });
+
+  it('falls back to a generic tool for ops the library omits', () => {
+    // No 'partoff' entry provided → generic fallback station.
+    const partoff = tp.passes.find((p) => p.op === 'partoff')!;
+    expect(partoff.station).toBe('T0404');
+  });
+
+  it('emits the shop stations into the G-code + tool table', () => {
+    const g = toGcode(tp);
+    expect(g).toContain('T0505');
+    expect(g).toContain('(T0707: Sharp VCGT finisher)');
+    expect(g).toContain('SHOP TOOLING');
+  });
+});
