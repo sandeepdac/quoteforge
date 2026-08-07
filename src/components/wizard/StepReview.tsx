@@ -20,6 +20,7 @@ import { materialPropsFor } from '../../utils/materials';
 import { generatePartThumbnail } from '../../utils/partThumbnail';
 import { generateTurningToolpath } from '../../utils/toolpath';
 import ToolpathPreview from '../cad/ToolpathPreview';
+import MachiningPlanPanel from '../quote/MachiningPlanPanel';
 import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
@@ -255,6 +256,10 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
               </tbody>
             </table>
           </div>
+
+          {mc?.plan && mc.plan.setups.length > 0 && (
+            <MachiningPlanPanel plan={mc.plan} setupTimeMin={mc.setupTimeMin} />
+          )}
 
           {toolpath && (
             <ToolpathPreview toolpath={toolpath} partName={data.partName} materialName={material.name} />

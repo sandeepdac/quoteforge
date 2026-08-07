@@ -19,6 +19,9 @@ import {
   BatchPricePoint,
   CostLineItem,
   MachiningCosts,
+  MachiningPlan,
+  PlanOperation,
+  PlanSetup,
   ShopSettings,
 } from '../types';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
@@ -202,6 +205,55 @@ export function calculateMilledCosts(
     { key: 'tooling', name: 'Tooling / consumables', driver: `${toolCount} operations`, value: toolingCost, color: COLORS.tooling },
   ].filter((li) => li.value > 0.005);
 
+  // --- Per-setup / per-operation plan --------------------------------------
+  // The same seconds as the line items, regrouped the way a machinist reads a
+  // job sheet. Work is spread evenly across setups: we know HOW MANY setups the
+  // geometry needs, but not which feature lands in which — that would take a
+  // posted toolpath. Drilling is put in the first setup, and facing happens once
+  // per setup (you skim each new face after re-clamping).
+  const toolName = `${r1(millCfg.toolDiaMm)} mm ${millCfg.flutes}F flat end mill`;
+  const faceMillName = 'Face mill';
+  const drillName = 'Drill';
+  const finishToolName = `${r1(millCfg.toolDiaMm)} mm ${millCfg.flutes}F finisher`;
+  const planSetups: PlanSetup[] = [];
+  const changesPerSetup = Math.max(1, Math.round(toolCount / setups));
+  for (let i = 0; i < setups; i++) {
+    const share = 1 / setups;
+    const ops: PlanOperation[] = [];
+    const push = (name: string, tool: string, sec: number, driver: string, color: string) => {
+      if (sec > 0.5) ops.push({ name, tool, seconds: sec / eff, cost: opCost(sec), driver, color });
+    };
+    push('Facing', faceMillName, facingSec / setups, `${r1(footprintCm2 / setups)} cm² @ ${r1(finishRate)} cm²/min`, COLORS.facing);
+    push('Roughing', toolName, roughSec * share, `${r1(removedVol * share)} cm³ @ ${r1(millMrr)} cm³/min`, COLORS.rough);
+    push('Finishing', finishToolName, finishSec * share, `${r1(finishAreaCm2 * share)} cm² @ ${r1(finishRate)} cm²/min`, COLORS.finish);
+    if (i === 0) push('Drilling', drillName, drillSec, `${holes} hole${holes === 1 ? '' : 's'}`, COLORS.drill);
+    const changeSec = changesPerSetup * toolChangeSec;
+    const secs = ops.reduce((a, o) => a + o.seconds, 0) + changeSec / eff;
+    planSetups.push({
+      index: i + 1,
+      name: `Setup ${i + 1}`,
+      operations: ops,
+      seconds: secs,
+      cost: ops.reduce((a, o) => a + o.cost, 0) + opCost(changeSec),
+      toolChanges: changesPerSetup,
+    });
+  }
+  const planToolAgg = new Map<string, { name: string; ops: number; seconds: number }>();
+  for (const s of planSetups) {
+    for (const o of s.operations) {
+      const cur = planToolAgg.get(o.tool) ?? { name: o.tool, ops: 0, seconds: 0 };
+      cur.ops += 1;
+      cur.seconds += o.seconds;
+      planToolAgg.set(o.tool, cur);
+    }
+  }
+  const plan: MachiningPlan = {
+    setups: planSetups,
+    tools: [...planToolAgg.values()].sort((a, b) => b.seconds - a.seconds),
+    totalSeconds: planSetups.reduce((a, s) => a + s.seconds, 0),
+    totalCost: planSetups.reduce((a, s) => a + s.cost, 0),
+  };
+
   // --- Batch quantity curve (setup amortisation) ---------------------------
   const perUnitFixed = materialCost + machineCost + toolingCost;
   const batchCurve: BatchPricePoint[] = STANDARD_BATCH_QTYS.map((q) => {
@@ -233,6 +285,7 @@ export function calculateMilledCosts(
     efficiencyFactor: eff,
     batchCurve,
     machineClass: 'mill',
+    plan,
     stockMm: { x: r1(p.stockMm.x), y: r1(p.stockMm.y), z: r1(p.stockMm.z) },
     pocketCount: p.pocketCount,
     bossCount: p.bossCount,

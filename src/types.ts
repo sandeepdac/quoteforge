@@ -110,6 +110,51 @@ export interface BatchPricePoint {
   setupPerUnit: number;
 }
 
+/** One cutting operation inside a setup, as an operator would read a job sheet. */
+export interface PlanOperation {
+  /** Facing / Roughing / Finishing / Drilling … */
+  name: string;
+  /** The cutter this op runs, e.g. `12 mm 3F flat end mill`. */
+  tool: string;
+  /** Estimated time for this op (s), after the efficiency factor. */
+  seconds: number;
+  /** Machine cost of this op. */
+  cost: number;
+  /** What drives the time — the number this op was computed from. */
+  driver: string;
+  /** Chart/legend colour, shared with the cost line items. */
+  color: string;
+}
+
+/** A single machine setup: one fixturing of the part, with its operations. */
+export interface PlanSetup {
+  /** 1-based setup number. */
+  index: number;
+  name: string;
+  /** Which way the part is presented to the spindle, when known. */
+  orientation?: string;
+  operations: PlanOperation[];
+  /** Cutting + tool-change seconds in this setup. */
+  seconds: number;
+  cost: number;
+  /** Tool changes attributed to this setup. */
+  toolChanges: number;
+}
+
+/**
+ * A per-setup, per-operation view of the estimate — the same totals as
+ * `lineItems`, regrouped the way a machinist reads a job: Setup 1 → its ops →
+ * Setup 2 → its ops. Advisory: the split across setups is inferred from the
+ * geometry, not from a posted toolpath.
+ */
+export interface MachiningPlan {
+  setups: PlanSetup[];
+  /** Distinct cutters across the whole job. */
+  tools: Array<{ name: string; ops: number; seconds: number }>;
+  totalSeconds: number;
+  totalCost: number;
+}
+
 /**
  * Cost breakdown for a TURNED part, driven by cycle time.
  * The op-level detail (facing/rough/finish/drill/…) lives in `lineItems`.
@@ -141,6 +186,8 @@ export interface MachiningCosts {
   efficiencyFactor: number;
   /** Price per part across standard batch sizes (setup amortisation curve). */
   batchCurve: BatchPricePoint[];
+  /** Per-setup / per-operation view of the same cycle time (milled parts). */
+  plan?: MachiningPlan;
   // --- milled-part metadata (present when machineClass === 'mill') ---
   /** Which machining route this quote costed. */
   machineClass?: 'turn' | 'mill';
