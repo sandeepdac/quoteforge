@@ -29,6 +29,8 @@ export interface TPPass {
   label: string;
   color: string;
   toolNo: number;
+  /** The assumed cutter for this pass — generic, not tied to a real tool offset. */
+  tool: string;
   rpm: number;
   /** Feed per rev (mm/rev). */
   feed: number;
@@ -88,7 +90,7 @@ export function generateTurningToolpath(
   const passes: TPPass[] = [];
 
   // --- 1) Facing: skim the right end flat, OD → centre, a couple of steps ----
-  const faceRpm = Math.round(rpm(m.cuttingSpeedFinish, stock * 0.5, cfg.maxRpm));
+  const faceRpm = Math.round(rpm(m.cuttingSpeedFinish, stock, cfg.maxRpm));
   {
     const moves: TPMove[] = [];
     const faceZ = 0; // finished face
@@ -101,7 +103,7 @@ export function generateTurningToolpath(
       moves.push({ rapid: true, x: stock + 4, z: clr });
       void zCut;
     }
-    passes.push({ op: 'face', label: 'Facing', color: OP_COLORS.face, toolNo: 1, rpm: faceRpm, feed: m.feedFinish, moves });
+    passes.push({ op: 'face', label: 'Facing', color: OP_COLORS.face, toolNo: 1, tool: 'OD turning — 80° rhombic insert (C/DNMG)', rpm: faceRpm, feed: m.feedFinish, moves });
   }
 
   // --- 2) Roughing: turn OD from stock → part OD (+finish allowance) ----------
@@ -113,14 +115,16 @@ export function generateTurningToolpath(
     let dia = stock;
     // First rapid approach.
     moves.push({ rapid: true, x: stock + 2, z: clr });
-    while (dia - 2 * ap > targetDia) {
-      dia = dia - 2 * ap;
+    // Step down by 2·ap per pass, clamping the last pass to the finish diameter so
+    // even a small amount of stock (target close to OD) still gets at least one cut.
+    while (dia > targetDia + 0.01) {
+      dia = Math.max(targetDia, dia - 2 * ap);
       moves.push({ rapid: true, x: dia, z: clr });        // rapid to depth
       moves.push({ rapid: false, x: dia, z: -len });      // feed along Z
       moves.push({ rapid: false, x: dia + 1.5, z: -len }); // small retract
       moves.push({ rapid: true, x: dia + 1.5, z: clr });   // rapid back
     }
-    passes.push({ op: 'rough', label: 'Rough turn', color: OP_COLORS.rough, toolNo: 1, rpm: roughRpm, feed: m.feedRough, moves });
+    passes.push({ op: 'rough', label: 'Rough turn', color: OP_COLORS.rough, toolNo: 1, tool: 'OD turning — 80° rhombic insert (C/DNMG)', rpm: roughRpm, feed: m.feedRough, moves });
   }
 
   // --- 3) Drilling the bore (on centre) --------------------------------------
@@ -131,7 +135,7 @@ export function generateTurningToolpath(
       { rapid: false, x: 0, z: -profile.boreDepthMm },
       { rapid: true, x: 0, z: clr },
     ];
-    passes.push({ op: 'drill', label: `Drill ⌀${r3(profile.boreDiaMm)} bore`, color: OP_COLORS.drill, toolNo: 2, rpm: drillRpm, feed: m.feedRough * 0.6, moves });
+    passes.push({ op: 'drill', label: `Drill ⌀${r3(profile.boreDiaMm)} bore`, color: OP_COLORS.drill, toolNo: 2, tool: `⌀${r3(profile.boreDiaMm)} mm carbide drill`, rpm: drillRpm, feed: m.feedRough * 0.6, moves });
   }
 
   // --- 4) Finishing: one clean pass along the final OD ------------------------
@@ -143,7 +147,7 @@ export function generateTurningToolpath(
       { rapid: false, x: od + 2, z: -len },
       { rapid: true, x: od + 2, z: clr },
     ];
-    passes.push({ op: 'finish', label: 'Finish turn', color: OP_COLORS.finish, toolNo: 3, rpm: finishRpm, feed: m.feedFinish, moves });
+    passes.push({ op: 'finish', label: 'Finish turn', color: OP_COLORS.finish, toolNo: 3, tool: 'OD finishing — 35° insert (V/DCGT, sharp)', rpm: finishRpm, feed: m.feedFinish, moves });
   }
 
   // --- 5) Part-off at length --------------------------------------------------
@@ -154,7 +158,7 @@ export function generateTurningToolpath(
       { rapid: false, x: profile.boreDiaMm > 0 ? profile.boreDiaMm : -1, z: -len },
       { rapid: true, x: stock + 2, z: -len },
     ];
-    passes.push({ op: 'partoff', label: 'Part-off', color: OP_COLORS.partoff, toolNo: 4, rpm: partRpm, feed: 0.05, moves });
+    passes.push({ op: 'partoff', label: 'Part-off', color: OP_COLORS.partoff, toolNo: 4, tool: 'Parting blade — 3 mm wide', rpm: partRpm, feed: 0.05, moves });
   }
 
   return {
@@ -178,6 +182,15 @@ export function toGcode(tp: Toolpath, opts: { partName?: string; materialName?: 
   if (opts.materialName) p(`(Material: ${opts.materialName})`);
   p(`(Stock: DIA ${r3(tp.stockDiaMm)} x LEN ${r3(tp.stockLengthMm)} mm)`);
   p('(Diameter programming, mm, feed/rev. NOT post-processed for any control.)');
+  p('(--- ASSUMED TOOLING (generic - set your own offsets/inserts) ---)');
+  {
+    const seen = new Set<number>();
+    for (const pass of tp.passes) {
+      if (seen.has(pass.toolNo)) continue;
+      seen.add(pass.toolNo);
+      p(`(T${String(pass.toolNo).padStart(2, '0')}: ${pass.tool})`);
+    }
+  }
   p('G21 G18 G99');
   p('G40');
   for (const pass of tp.passes) {
