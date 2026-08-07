@@ -123,3 +123,51 @@ describe('milling uses milling physics, not turning physics', () => {
     expect(air!.value).toBeGreaterThan(0);
   });
 });
+
+describe('feature complexity (small-tool detail)', () => {
+  it('a feature-dense part costs much more machine time than a plain block', () => {
+    // A cutting-dominated part (lots of removed volume + surface), identical except
+    // one is plain and the other is packed with bosses, pockets and holes that
+    // force small, slow tools.
+    const cuttingHeavy = { ...baseProfile, partVolumeCm3: 50, removedVolumeCm3: 150, surfaceAreaCm2: 800 };
+    const plain = calculateMilledCosts(
+      input({ ...cuttingHeavy, bossCount: 0, pocketCount: 0, deepPocketCount: 0, holeCount: 0 }),
+      1, false, 0.25, DEFAULT_SHOP_SETTINGS
+    );
+    const busy = calculateMilledCosts(
+      input({ ...cuttingHeavy, bossCount: 12, pocketCount: 2, deepPocketCount: 2, holeCount: 30 }),
+      1, false, 0.25, DEFAULT_SHOP_SETTINGS
+    );
+    expect(busy.machineCost).toBeGreaterThan(plain.machineCost * 1.8);
+  });
+
+  it('surfaces a feature-complexity line item only when there are features', () => {
+    const plain = calculateMilledCosts(
+      input({ ...baseProfile, bossCount: 0, pocketCount: 0, deepPocketCount: 0, holeCount: 0 }),
+      1, false, 0.25, DEFAULT_SHOP_SETTINGS
+    );
+    const busy = calculateMilledCosts(
+      input({ ...baseProfile, bossCount: 8, holeCount: 20 }), 1, false, 0.25, DEFAULT_SHOP_SETTINGS
+    );
+    expect(plain.lineItems.find((li) => li.key === 'deep')).toBeUndefined();
+    expect(busy.lineItems.find((li) => li.key === 'deep')).toBeDefined();
+  });
+
+  it('caps the complexity multiplier so it cannot run away', () => {
+    // Hold holes fixed (drilling is per-hole, uncapped) and push the multiplier
+    // inputs to absurd values — the complexity add is bounded at +300%, so the
+    // extra time stays finite instead of exploding.
+    const base = { ...baseProfile, partVolumeCm3: 50, removedVolumeCm3: 150, surfaceAreaCm2: 800, holeCount: 10 };
+    const capped = calculateMilledCosts(
+      input({ ...base, bossCount: 200, pocketCount: 200, deepPocketCount: 50 }), 1, false, 0.25, DEFAULT_SHOP_SETTINGS
+    );
+    const moderate = calculateMilledCosts(
+      input({ ...base, bossCount: 12, pocketCount: 2, deepPocketCount: 2 }), 1, false, 0.25, DEFAULT_SHOP_SETTINGS
+    );
+    const cxOf = (c: typeof capped) => c.lineItems.find((li) => li.key === 'deep')?.value ?? 0;
+    // Moderate is at +238% (uncapped); extreme is clamped to +300% — so the
+    // complexity charge rises only modestly, never unbounded.
+    expect(cxOf(capped)).toBeGreaterThan(cxOf(moderate));
+    expect(cxOf(capped)).toBeLessThan(cxOf(moderate) * 1.6);
+  });
+});

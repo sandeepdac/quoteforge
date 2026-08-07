@@ -71,7 +71,26 @@ const COLORS: Record<string, string> = {
 // Milling-specific tuning (first-order; the efficiency factor calibrates the rest).
 const FINISH_MACHINED_FRACTION = 0.6; // share of surface area that is machined (vs raw stock faces)
 const DRILL_SEC_PER_HOLE_REF = 12;    // ref drill+retract per hole in steel; scales with machinability
-const DEEP_POCKET_PENALTY = 0.4;      // +40% on rough+finish per deep pocket (long-tool derate)
+// Feature-complexity weights. A part packed with small islands, pockets and holes
+// has to be machined with small, SLOW tools that the single part-sized-cutter model
+// cannot see — the dominant time driver on detailed parts (a NIST STC-10 spends 40+
+// minutes on a 1.6 mm cutter). This heuristic scales cutting time with the measured
+// feature counts; it subsumes the old flat deep-pocket derate. Calibrated so simple
+// reference parts stay ~1.0 and a highly-featured one lands near a real CAM quote.
+const CX_BOSS = 0.07;   // per island to machine around
+const CX_POCKET = 0.12; // per enclosed pocket
+const CX_DEEP = 0.35;   // per deep/narrow pocket (long thin tool)
+const CX_HOLE = 0.02;   // per hole (proxy for small-feature density)
+const CX_CAP = 3.0;     // never more than +300%
+
+function featureComplexityMult(p: MilledProfile): number {
+  const cx =
+    CX_BOSS * Math.max(0, p.bossCount || 0) +
+    CX_POCKET * Math.max(0, p.pocketCount || 0) +
+    CX_DEEP * Math.max(0, p.deepPocketCount || 0) +
+    CX_HOLE * Math.max(0, p.holeCount || 0);
+  return 1 + Math.min(CX_CAP, cx);
+}
 
 /**
  * Distinct cutters a prismatic part needs. Tool changes are a first-order cost on
@@ -117,9 +136,9 @@ export function calculateMilledCosts(
   const materialCost = stockWeightKg * input.materialPricePerKg * (1 - cnc.scrapRecovery);
   const buyToFlyRatio = stockVol > 0 ? partVol / stockVol : 0;
 
-  // --- Deep-pocket derate (applies to bulk + finish reach) -----------------
+  // --- Feature-complexity derate (small slow tools on detailed parts) ------
   const deep = Math.max(0, p.deepPocketCount || 0);
-  const deepMult = 1 + Math.min(1.2, DEEP_POCKET_PENALTY * deep);
+  const deepMult = featureComplexityMult(p);
 
   // --- Roughing: remove the bulk at a real milling MRR (ae·ap·vf) ----------
   // The roughing cutter is sized to the part, not fixed: it dominates MRR, and a
@@ -133,7 +152,10 @@ export function calculateMilledCosts(
     maxRpm: cnc.millMaxRpm ?? 12000,
   };
   const millMrr = millingMrrCm3PerMin(m, millCfg);
-  const roughSec = removedVol > 0 && millMrr > 0 ? (removedVol / millMrr) * 60 * deepMult : 0;
+  // Base (open, part-sized tool) time; the complexity delta is billed separately
+  // so the line items sum cleanly to the subtotal.
+  const roughBaseSec = removedVol > 0 && millMrr > 0 ? (removedVol / millMrr) * 60 : 0;
+  const roughSec = roughBaseSec * deepMult;
 
   // --- Facing: skim the top face(s) that are cut, ~ stock footprint --------
   const footprintCm2 = (p.stockMm.x * p.stockMm.y) / 100;
@@ -142,7 +164,10 @@ export function calculateMilledCosts(
 
   // --- Finishing: walls + floors of the machined faces ---------------------
   const finishAreaCm2 = FINISH_MACHINED_FRACTION * Math.max(0, p.surfaceAreaCm2);
-  const finishSec = finishRate > 0 ? (finishAreaCm2 / finishRate) * 60 * deepMult : 0;
+  const finishBaseSec = finishRate > 0 ? (finishAreaCm2 / finishRate) * 60 : 0;
+  const finishSec = finishBaseSec * deepMult;
+  // Extra seconds attributable to small-tool feature detail (rough + finish).
+  const complexitySec = (roughBaseSec + finishBaseSec) * (deepMult - 1);
 
   // --- Drilling: holes, depth ~ smallest stock dimension -------------------
   const holes = Math.max(0, p.holeCount || 0);
@@ -195,10 +220,10 @@ export function calculateMilledCosts(
   const lineItems: CostLineItem[] = [
     { key: 'material', name: 'Billet stock', driver: `${r1(p.stockMm.x)}×${r1(p.stockMm.y)}×${r1(p.stockMm.z)} mm ${m.label} — ${stockWeightKg.toFixed(3)} kg @ $${input.materialPricePerKg.toFixed(2)}/kg`, value: materialCost, color: COLORS.material },
     { key: 'facing', name: 'Face / skim', driver: `${r1(footprintCm2)} cm² footprint — ${secStr(facingSec)}`, value: opCost(facingSec), color: COLORS.facing },
-    { key: 'rough', name: 'Roughing (hog-out)', driver: `${r1(removedVol)} cm³ removed @ ${r1(millMrr)} cm³/min — ${secStr(roughSec)}`, value: opCost(roughSec), color: COLORS.rough },
-    { key: 'finish', name: 'Finishing (walls/floors)', driver: `${r1(finishAreaCm2)} cm² @ ${r1(finishRate)} cm²/min — ${secStr(finishSec)}`, value: opCost(finishSec), color: COLORS.finish },
+    { key: 'rough', name: 'Roughing (hog-out)', driver: `${r1(removedVol)} cm³ removed @ ${r1(millMrr)} cm³/min — ${secStr(roughBaseSec)}`, value: opCost(roughBaseSec), color: COLORS.rough },
+    { key: 'finish', name: 'Finishing (walls/floors)', driver: `${r1(finishAreaCm2)} cm² @ ${r1(finishRate)} cm²/min — ${secStr(finishBaseSec)}`, value: opCost(finishBaseSec), color: COLORS.finish },
     { key: 'drill', name: 'Drilling', driver: `${holes} hole${holes === 1 ? '' : 's'} — ${secStr(drillSec)}`, value: opCost(drillSec), color: COLORS.drill },
-    { key: 'deep', name: 'Deep-pocket derate', driver: deep > 0 ? `${deep} deep pocket${deep === 1 ? '' : 's'} → +${Math.round((deepMult - 1) * 100)}% rough/finish` : '', value: deep > 0 ? opCost((roughSec + finishSec) * (1 - 1 / deepMult)) : 0, color: COLORS.deep },
+    { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${p.pocketCount} pocket${p.pocketCount === 1 ? '' : 's'}`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
     { key: 'setup', name: `Setup ÷ ${qty}`, driver: `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''} (${setups} access dir.), batch of ${qty}`, value: setupPerUnit, color: COLORS.setup },
     { key: 'fixture', name: `Soft jaws / fixture ÷ ${qty}`, driver: needsSoftJaws ? `${setups} setups${p.bossCount > 0 ? `, ${p.bossCount} boss` : ''} → work-holding, made once` : '', value: fixtureCost, color: COLORS.fixture },
