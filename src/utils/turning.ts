@@ -42,6 +42,12 @@ export interface TurningConfig {
   toolChangeSec: number;
   /** Fraction of removal done at roughing feed (rest is the finish skin). */
   roughFraction: number;
+  /**
+   * Largest hole that can be produced by drilling from solid (mm). A bore wider
+   * than this is drilled to this pilot size, then opened out with a boring bar —
+   * you cannot drill a 45 mm hole in one shot. Governs how big bores are timed.
+   */
+  maxDrillDiaMm: number;
 }
 
 export interface TurningTimes {
@@ -65,6 +71,7 @@ export const DEFAULT_TURNING_CONFIG: TurningConfig = {
   maxRpm: 6000,
   toolChangeSec: 3,
   roughFraction: 0.9,
+  maxDrillDiaMm: 20,
 };
 
 /** Spindle speed for a cutting speed Vc (m/min) at diameter D (mm), rpm — clamped. */
@@ -108,18 +115,35 @@ export function estimateTurningTimes(
   const finishRpm = rpm(m.cuttingSpeedFinish, od, cfg.maxRpm);
   const finishSec = min(profile.lengthMm / (m.feedFinish * finishRpm));
 
-  // Drilling — from solid to the bore depth (peck penalty on deep holes).
+  // Drilling + boring. A hole is drilled from solid only up to the max drill
+  // size; anything larger is drilled to that pilot and then bored OUT to size
+  // with a boring bar — you can't drill a 45 mm hole in one shot. Boring the
+  // extra radius takes multiple roughing passes plus a finish pass, which is the
+  // real cost driver on a big bore (the old model priced it as one finish pass).
   let drillSec = 0;
   let boreSec = 0;
   if (profile.boreDiaMm > 0 && profile.boreDepthMm > 0) {
+    const depth = profile.boreDepthMm;
+    const drillDia = Math.min(profile.boreDiaMm, cfg.maxDrillDiaMm);
+    // Pilot / through drill to the drillable diameter.
     const vcDrill = m.cuttingSpeedRough * 0.5;
     const fDrill = m.feedRough * 0.6;
-    const drillRpm = rpm(vcDrill, profile.boreDiaMm, cfg.maxRpm);
-    const peck = profile.boreDepthMm / profile.boreDiaMm > 3 ? 1.4 : 1.0;
-    drillSec = min((profile.boreDepthMm / (fDrill * drillRpm)) * peck);
-    // Boring — finish the bore to size.
+    const drillRpm = rpm(vcDrill, drillDia, cfg.maxRpm);
+    const peck = depth / drillDia > 3 ? 1.4 : 1.0;
+    drillSec = min((depth / (fDrill * drillRpm)) * peck);
+
+    // Boring: open from the drilled hole to the final bore. rpm taken at the
+    // final diameter (conservative — the bar runs slower on a big bore).
     const boreRpm = rpm(m.cuttingSpeedFinish, profile.boreDiaMm, cfg.maxRpm);
-    boreSec = min(profile.boreDepthMm / (m.feedFinish * boreRpm));
+    const radial = (profile.boreDiaMm - drillDia) / 2;
+    let boreRoughSec = 0;
+    if (radial > 0.1) {
+      const ap = Math.max(0.3, m.depthOfCutRough * 0.6); // internal cuts run lighter
+      const boringPasses = Math.ceil(radial / ap);
+      boreRoughSec = boringPasses * min(depth / (m.feedRough * boreRpm));
+    }
+    const boreFinishSec = min(depth / (m.feedFinish * boreRpm));
+    boreSec = boreRoughSec + boreFinishSec;
   }
 
   // Grooving — plunge a ~3 mm tool to ~10% of OD, per groove.

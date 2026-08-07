@@ -241,7 +241,8 @@ export default function SettingsPage() {
 const OP_ROWS: { op: TurningOp; label: string; hint: string }[] = [
   { op: 'face', label: 'Facing', hint: 'Skim the end flat' },
   { op: 'rough', label: 'Roughing', hint: 'OD stock removal' },
-  { op: 'drill', label: 'Drilling', hint: 'Centre bore' },
+  { op: 'drill', label: 'Drilling', hint: 'Pilot / through hole' },
+  { op: 'bore', label: 'Boring', hint: 'Open bore to size' },
   { op: 'finish', label: 'Finishing', hint: 'Final OD pass' },
   { op: 'partoff', label: 'Part-off', hint: 'Cut off at length' },
 ];

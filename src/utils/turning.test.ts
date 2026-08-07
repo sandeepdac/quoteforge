@@ -46,4 +46,19 @@ describe('estimateTurningTimes', () => {
     expect(t.drillSec).toBe(0);
     expect(t.boreSec).toBe(0);
   });
+
+  it('a wide bore is drilled to a pilot then bored out — much more boring time', () => {
+    // 45 mm bore (> 20 mm max drill) in a 60 mm part vs an 18 mm drillable bore,
+    // same depth. The wide bore needs many boring passes, so boreSec is far larger.
+    const wide = estimateTurningTimes(
+      { ...profile, odMm: 60, boreDiaMm: 45, boreDepthMm: 40 }, m, 200
+    );
+    const drillable = estimateTurningTimes(
+      { ...profile, odMm: 60, boreDiaMm: 18, boreDepthMm: 40 }, m, 200
+    );
+    // 18 mm bore is a single finish pass; 45 mm bore adds ~20 mm of radius in steps.
+    expect(wide.boreSec).toBeGreaterThan(drillable.boreSec * 4);
+    // Drill time is bounded by the pilot (≤ max drill), not the 45 mm final size.
+    expect(wide.drillSec).toBeLessThan(wide.boreSec);
+  });
 });

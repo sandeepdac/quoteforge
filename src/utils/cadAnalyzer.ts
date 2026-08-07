@@ -371,6 +371,7 @@ async function analyzeSolid(
           crossFeatures,
           boreDiaMm: turningProfile.boreDiaMm,
           boreDepthMm: turningProfile.boreDepthMm,
+          maxDrillDiaMm: DEFAULT_CNC_SETTINGS.maxDrillDiaMm,
           tolerances: 'Standard ISO 2768-m (±0.2mm)',
           hasGeometry: !!geo,
         })

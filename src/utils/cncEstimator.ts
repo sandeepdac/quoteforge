@@ -94,6 +94,7 @@ export function calculateMachiningCosts(
     maxRpm: cnc.maxRpm,
     toolChangeSec: cnc.toolChangeSec,
     roughFraction: 0.9,
+    maxDrillDiaMm: cnc.maxDrillDiaMm ?? 20,
   });
   // Per-op actual seconds and cost (efficiency applied to cutting/air alike).
   const ratePerSec = machineRatePerMin / 60;

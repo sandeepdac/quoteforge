@@ -30,6 +30,8 @@ export interface CncDfmInput {
   /** Central bore, if detected. */
   boreDiaMm?: number;
   boreDepthMm?: number;
+  /** Largest hole drillable from solid (mm) — bigger bores need boring. Default 20. */
+  maxDrillDiaMm?: number;
   /** Off-axis holes / flats / keyways present. */
   crossFeatures?: boolean;
   tolerances?: string;
@@ -50,6 +52,7 @@ const MIN_HOLE_DIA_FAIL = 0.5;
 const THIN_WALL_WARN = 0.8;
 const DEEP_BORE_WARN = 3;  // depth : ⌀ above which pecking is needed
 const DEEP_BORE_FAIL = 5;  // gun-drilling / special tooling territory
+const DEFAULT_MAX_DRILL_DIA = 20; // largest hole drilled from solid (mm)
 const MANY_SETUPS = 2;
 
 const mm = (v: number) => `${Math.round(v * 10) / 10}mm`;
@@ -108,6 +111,18 @@ export function analyzeCncDfm(input: CncDfmInput): DfmReport {
       findings.push({ id: 'deep-bore', severity: 'fail', title: `Deep bore (depth/⌀ ${ld.toFixed(1)}:1)`, detail: `⌀${mm(input.boreDiaMm)} × ${mm(input.boreDepthMm)} deep needs gun-drilling or heavy pecking with swarf-clearance dwells — slow and tooling-sensitive. Priced with a peck penalty; confirm feasibility.`, rule: 'Bore depth/⌀ ≤ 5:1 (peck > 3:1)' });
     } else if (ld > DEEP_BORE_WARN) {
       findings.push({ id: 'deep-bore', severity: 'warn', title: `Deep bore (depth/⌀ ${ld.toFixed(1)}:1)`, detail: `⌀${mm(input.boreDiaMm)} × ${mm(input.boreDepthMm)} deep needs peck drilling to clear swarf, adding cycle time (included in the estimate).`, rule: 'Bore depth/⌀ ≤ 5:1 (peck > 3:1)' });
+    }
+  }
+
+  // 4b) Wide bore — cannot be drilled from solid; needs a boring bar.
+  if (input.boreDiaMm && input.boreDiaMm > 0) {
+    const maxDrill = input.maxDrillDiaMm ?? DEFAULT_MAX_DRILL_DIA;
+    const wall = input.diameterMm > 0 ? (input.diameterMm - input.boreDiaMm) / 2 : Infinity;
+    if (input.diameterMm > 0 && input.boreDiaMm >= input.diameterMm) {
+      findings.push({ id: 'bore-vs-od', severity: 'fail', title: `Bore ⌀${mm(input.boreDiaMm)} ≥ part ⌀${mm(input.diameterMm)}`, detail: `The bore is as large as (or larger than) the outside diameter — there is no wall left to turn. Re-check the extracted bore/OD; this isn't a producible turned part as measured.`, rule: 'Bore ⌀ must be smaller than part ⌀' });
+    } else if (input.boreDiaMm > maxDrill) {
+      const sev: DfmSeverity = wall < THIN_WALL_WARN ? 'warn' : 'info';
+      findings.push({ id: 'wide-bore', severity: sev, title: `⌀${mm(input.boreDiaMm)} bore exceeds the ⌀${maxDrill}mm max drill`, detail: `A ⌀${mm(input.boreDiaMm)} hole can't be drilled in one shot — it's drilled to a ⌀${maxDrill}mm pilot and then bored out with a boring bar (several roughing passes + a finish pass). Those boring passes are now included in the cycle-time estimate.${wall < THIN_WALL_WARN ? ` Note the resulting ~${mm(wall)} wall is thin and may deflect.` : ''} Confirm the shop has a boring bar that reaches ${mm(input.boreDepthMm || 0)} deep.`, rule: `Bore ⌀ > ${maxDrill}mm ⇒ drill + bore out` });
     }
   }
 

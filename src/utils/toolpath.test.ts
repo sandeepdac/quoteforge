@@ -29,6 +29,28 @@ describe('generateTurningToolpath', () => {
     expect(solid.passes.some((p) => p.op === 'drill')).toBe(false);
   });
 
+  it('a drillable bore drills straight to size, no boring pass', () => {
+    // 8 mm bore < 20 mm max drill → drill only.
+    expect(tp.passes.some((p) => p.op === 'bore')).toBe(false);
+    const drill = tp.passes.find((p) => p.op === 'drill')!;
+    expect(drill.moves.some((mv) => mv.x === 0)).toBe(true); // on centre
+  });
+
+  it('a wide bore is drilled to a capped pilot then bored out', () => {
+    const wide = generateTurningToolpath(
+      { ...profile, odMm: 60, boreDiaMm: 45, boreDepthMm: 40 }, 63, brass
+    );
+    const drill = wide.passes.find((p) => p.op === 'drill')!;
+    const bore = wide.passes.find((p) => p.op === 'bore')!;
+    expect(bore).toBeDefined();
+    // Pilot label reflects the 20 mm cap, not the 45 mm final bore.
+    expect(drill.label).toContain('⌀20');
+    // Boring opens outwards past the pilot, up to the final diameter.
+    const maxBoreX = Math.max(...bore.moves.map((mv) => mv.x));
+    expect(maxBoreX).toBeGreaterThan(20);
+    expect(maxBoreX).toBeLessThanOrEqual(45);
+  });
+
   it('every pass carries a positive rpm and feed', () => {
     expect(tp.passes.every((p) => p.rpm > 0 && p.feed > 0)).toBe(true);
   });

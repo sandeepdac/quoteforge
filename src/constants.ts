@@ -8,7 +8,8 @@ import { CncSettings, ShopSettings, ShopTool } from './types';
 export const DEFAULT_TURNING_TOOLS: ShopTool[] = [
   { op: 'face', station: 'T0101', description: 'OD rough — DCLNR + CNMG 120408-PM', noseRadiusMm: 0.8 },
   { op: 'rough', station: 'T0101', description: 'OD rough — DCLNR + CNMG 120408-PM', noseRadiusMm: 0.8 },
-  { op: 'drill', station: 'T0202', description: 'Carbide drill (bore ⌀)' },
+  { op: 'drill', station: 'T0202', description: 'Carbide drill (pilot / through)' },
+  { op: 'bore', station: 'T0505', description: 'Boring bar — CCGT 060204 (opens bore to size)', noseRadiusMm: 0.4 },
   { op: 'finish', station: 'T0303', description: 'OD finish — SDJCR + DCGT 070204-AL', noseRadiusMm: 0.4 },
   { op: 'partoff', station: 'T0404', description: 'Part-off blade — 3 mm insert' },
 ];
@@ -35,6 +36,7 @@ export const DEFAULT_CNC_SETTINGS: CncSettings = {
   partingWidthMm: 3,
   gripLengthMm: 20,
   scrapRecovery: 0,
+  maxDrillDiaMm: 20,
   toolLibrary: DEFAULT_TURNING_TOOLS,
 };
 

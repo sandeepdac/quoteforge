@@ -57,18 +57,22 @@ export interface ToolpathConfig {
   finishAllowanceMm: number;
   /** Rapid clearance in front of the face (mm, +Z). */
   clearanceMm: number;
+  /** Largest hole drilled from solid (mm); bigger bores are drilled + bored out. */
+  maxDrillDiaMm: number;
 }
 
 export const DEFAULT_TOOLPATH_CONFIG: ToolpathConfig = {
   maxRpm: 6000,
   finishAllowanceMm: 0.4,
   clearanceMm: 2.0,
+  maxDrillDiaMm: 20,
 };
 
 const OP_COLORS = {
   face: '#f59e0b',
   rough: '#2563eb',
   drill: '#8b5cf6',
+  bore: '#ec4899',
   finish: '#10b981',
   partoff: '#64748b',
 } as const;
@@ -80,6 +84,7 @@ const FALLBACK_TOOLS: Record<TurningOp, { station: string; description: string }
   face: { station: 'T0101', description: 'OD turning — 80° rhombic insert (C/DNMG)' },
   rough: { station: 'T0101', description: 'OD turning — 80° rhombic insert (C/DNMG)' },
   drill: { station: 'T0202', description: 'Carbide drill' },
+  bore: { station: 'T0505', description: 'Boring bar' },
   finish: { station: 'T0303', description: 'OD finishing — 35° insert (V/DCGT, sharp)' },
   partoff: { station: 'T0404', description: 'Parting blade — 3 mm wide' },
 };
@@ -152,15 +157,35 @@ export function generateTurningToolpath(
     passes.push({ op: 'rough', label: 'Rough turn', color: OP_COLORS.rough, ...toolFor('rough'), rpm: roughRpm, feed: m.feedRough, moves });
   }
 
-  // --- 3) Drilling the bore (on centre) --------------------------------------
+  // --- 3) Drilling + boring the bore (on centre) -----------------------------
+  // Drill only up to the max drill size; a wider bore is drilled to that pilot
+  // then bored OUT with a boring bar (you can't drill a 45 mm hole in one shot).
   if (profile.boreDiaMm > 0 && profile.boreDepthMm > 0) {
-    const drillRpm = Math.round(rpm(m.cuttingSpeedRough * 0.5, profile.boreDiaMm, cfg.maxRpm));
+    const bDepth = profile.boreDepthMm;
+    const drillDia = Math.min(profile.boreDiaMm, cfg.maxDrillDiaMm);
+    const drillRpm = Math.round(rpm(m.cuttingSpeedRough * 0.5, drillDia, cfg.maxRpm));
     const moves: TPMove[] = [
       { rapid: true, x: 0, z: clr },
-      { rapid: false, x: 0, z: -profile.boreDepthMm },
+      { rapid: false, x: 0, z: -bDepth },
       { rapid: true, x: 0, z: clr },
     ];
-    passes.push({ op: 'drill', label: `Drill ⌀${r3(profile.boreDiaMm)} bore`, color: OP_COLORS.drill, ...toolFor('drill', profile.boreDiaMm), rpm: drillRpm, feed: m.feedRough * 0.6, moves });
+    passes.push({ op: 'drill', label: `Drill ⌀${r3(drillDia)} pilot`, color: OP_COLORS.drill, ...toolFor('drill', drillDia), rpm: drillRpm, feed: m.feedRough * 0.6, moves });
+
+    // Boring: open from the drilled pilot to the final bore in radial steps.
+    if (profile.boreDiaMm > drillDia + 0.1) {
+      const boreRpm = Math.round(rpm(m.cuttingSpeedFinish, profile.boreDiaMm, cfg.maxRpm));
+      const apB = Math.max(0.3, m.depthOfCutRough * 0.6);
+      const bMoves: TPMove[] = [{ rapid: true, x: drillDia, z: clr }];
+      let bd = drillDia;
+      while (bd < profile.boreDiaMm - 0.01) {
+        bd = Math.min(profile.boreDiaMm, bd + 2 * apB);
+        bMoves.push({ rapid: true, x: bd, z: clr });      // rapid into hole at depth
+        bMoves.push({ rapid: false, x: bd, z: -bDepth }); // bore along Z
+        bMoves.push({ rapid: false, x: bd - 1, z: -bDepth }); // clear off the wall
+        bMoves.push({ rapid: true, x: bd - 1, z: clr });  // rapid back out
+      }
+      passes.push({ op: 'bore', label: `Bore ⌀${r3(profile.boreDiaMm)}`, color: OP_COLORS.bore, ...toolFor('bore'), rpm: boreRpm, feed: m.feedRough, moves: bMoves });
+    }
   }
 
   // --- 4) Finishing: one clean pass along the final OD ------------------------

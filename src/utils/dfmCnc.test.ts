@@ -35,6 +35,23 @@ describe('analyzeCncDfm', () => {
     expect(r.findings.some((x) => x.id === 'bar-capacity')).toBe(true);
   });
 
+  it('flags a wide bore that must be drilled + bored out', () => {
+    const r = analyzeCncDfm({ ...base, diameterMm: 60, boreDiaMm: 45, boreDepthMm: 40, maxDrillDiaMm: 20 });
+    const f = r.findings.find((x) => x.id === 'wide-bore');
+    expect(f).toBeDefined();
+    expect(f?.detail).toMatch(/bored out|boring bar/i);
+  });
+
+  it('does not flag a bore that is within the drillable range', () => {
+    const r = analyzeCncDfm({ ...base, diameterMm: 60, boreDiaMm: 16, boreDepthMm: 30, maxDrillDiaMm: 20 });
+    expect(r.findings.some((x) => x.id === 'wide-bore')).toBe(false);
+  });
+
+  it('fails when the bore is as large as the OD (no wall)', () => {
+    const r = analyzeCncDfm({ ...base, diameterMm: 40, boreDiaMm: 40, boreDepthMm: 20 });
+    expect(r.findings.find((x) => x.id === 'bore-vs-od')?.severity).toBe('fail');
+  });
+
   it('flags micro-drilled small holes', () => {
     const r = analyzeCncDfm({ ...base, holeDetails: [{ diameterMm: 0.4, count: 1 }] });
     expect(r.findings.find((x) => x.id === 'small-holes')?.severity).toBe('fail');

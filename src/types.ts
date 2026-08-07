@@ -157,7 +157,7 @@ export interface MachiningCosts {
  * is the primary calibration control.
  */
 /** The turning operations the reference toolpath expands, in machining order. */
-export type TurningOp = 'face' | 'rough' | 'drill' | 'finish' | 'partoff';
+export type TurningOp = 'face' | 'rough' | 'drill' | 'bore' | 'finish' | 'partoff';
 
 /**
  * One entry in the shop's turning tool library — maps an operation to the real
@@ -206,6 +206,8 @@ export interface CncSettings {
   partingWidthMm: number;
   /** Bar length held in the collet / lost to grip (mm). */
   gripLengthMm: number;
+  /** Largest hole drillable from solid (mm). Bigger bores are drilled + bored out. */
+  maxDrillDiaMm?: number;
   /** Fraction of swarf value recovered (0–1). */
   scrapRecovery: number;
   /** Shop turning tool library — drives the reference toolpath's stations/tools. */
