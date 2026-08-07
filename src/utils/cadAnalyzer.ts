@@ -15,7 +15,7 @@ import { computeStock } from './cncEstimator';
 import { TurningProfile } from './turning';
 import { MilledProfile } from './milledEstimator';
 import { selectMachine, MachineRecommendation } from './machineSelection';
-import { materialPropsFor } from './materials';
+import { materialPropsFor, milledBilletMm } from './materials';
 import { extractTurnedProfile, arrayBufferToBase64, GeometryResult } from './geometryService';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
 
@@ -296,11 +296,16 @@ async function analyzeSolid(
     if (!isTurned) {
       if (useSvc && svc!.milled) {
         const mm = svc!.milled;
+        // Bill from a purchasable billet (allowance + standard plate), not the
+        // raw bounding box — you cannot buy stock machined to the part's exact size.
+        const billet = milledBilletMm(mm.stockMm);
+        const billetVolCm3 = (billet.x * billet.y * billet.z) / 1000;
+        const partVolCm3 = mm.partVolumeCm3 || volumeCm3;
         milledProfile = {
-          stockMm: mm.stockMm,
-          stockVolumeCm3: mm.stockVolumeCm3,
-          partVolumeCm3: mm.partVolumeCm3 || volumeCm3,
-          removedVolumeCm3: mm.removedVolumeCm3,
+          stockMm: billet,
+          stockVolumeCm3: Math.round(billetVolCm3 * 10) / 10,
+          partVolumeCm3: partVolCm3,
+          removedVolumeCm3: Math.round(Math.max(0, billetVolCm3 - partVolCm3) * 10) / 10,
           surfaceAreaCm2,
           setupCount: mm.setupCount,
           pocketCount: mm.pocketCount,
@@ -310,10 +315,11 @@ async function analyzeSolid(
           sparseBillet: mm.sparseBillet,
         };
       } else {
-        // Approximation: billet = bounding box; setups guessed from holes/faces.
-        const stockVolMm = (meas.lengthMm * meas.widthMm * meas.heightMm) / 1000;
+        // Approximation: billet = bbox + allowance on standard plate; setups guessed.
+        const billet = milledBilletMm({ x: meas.lengthMm, y: meas.widthMm, z: meas.heightMm });
+        const stockVolMm = (billet.x * billet.y * billet.z) / 1000;
         milledProfile = {
-          stockMm: { x: meas.lengthMm, y: meas.widthMm, z: meas.heightMm },
+          stockMm: billet,
           stockVolumeCm3: Math.round(stockVolMm * 10) / 10,
           partVolumeCm3: volumeCm3,
           removedVolumeCm3: Math.round(Math.max(0, stockVolMm - volumeCm3) * 10) / 10,

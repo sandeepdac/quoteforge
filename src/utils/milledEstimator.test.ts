@@ -81,3 +81,45 @@ describe('the three geometric rules move the price', () => {
     expect(heavy.machineCost).toBeGreaterThan(light.machineCost);
   });
 });
+
+describe('soft-jaw / fixture amortisation', () => {
+  // 3 setups → soft jaws are needed. They are made ONCE for the job, so their
+  // per-part share must fall with batch size (this used to be charged per part).
+  const p: MilledProfile = { ...baseProfile, setupCount: 3 };
+
+  it('charges fixturing per job, not per part', () => {
+    const one = calculateMilledCosts(input(p), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const many = calculateMilledCosts(input(p), 100, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const fixtureOf = (c: typeof one) => c.lineItems.find((li) => li.key === 'fixture')?.value ?? 0;
+    expect(fixtureOf(one)).toBeGreaterThan(0);
+    expect(fixtureOf(many)).toBeCloseTo(fixtureOf(one) / 100, 6);
+  });
+
+  it('the batch curve keeps falling toward the per-part cost', () => {
+    const c = calculateMilledCosts(input(p), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const prices = c.batchCurve.map((b) => b.unitPrice);
+    for (let i = 1; i < prices.length; i++) expect(prices[i]).toBeLessThan(prices[i - 1]);
+  });
+});
+
+describe('milling uses milling physics, not turning physics', () => {
+  it('roughing time scales with the volume hogged out', () => {
+    const light = calculateMilledCosts(input(baseProfile), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const heavy = calculateMilledCosts(
+      input({ ...baseProfile, partVolumeCm3: 10, removedVolumeCm3: 38 }), 1, false, 0.25, DEFAULT_SHOP_SETTINGS
+    );
+    const roughOf = (c: typeof light) => c.lineItems.find((li) => li.key === 'rough')?.value ?? 0;
+    // 6 → 38 cm³ is ~6.3× the material, so roughing should scale in step. The
+    // TOTAL cycle moves far less: on a small part with a lot of surface, finishing
+    // and tool changes dominate — which is itself the realistic behaviour.
+    expect(roughOf(heavy) / roughOf(light)).toBeGreaterThan(5);
+    expect(heavy.cycleTimeSec).toBeGreaterThan(light.cycleTimeSec);
+  });
+
+  it('counts real cutters so tool changes are not trivial', () => {
+    const c = calculateMilledCosts(input({ ...baseProfile, setupCount: 3, holeCount: 4 }), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const air = c.lineItems.find((li) => li.key === 'noncut');
+    expect(air).toBeDefined();
+    expect(air!.value).toBeGreaterThan(0);
+  });
+});

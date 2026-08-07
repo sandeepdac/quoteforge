@@ -48,27 +48,30 @@ export interface MaterialProps {
   feedRough: number;         // fn, mm/rev
   feedFinish: number;        // fn, mm/rev
   depthOfCutRough: number;   // ap, mm
+  // --- milling cutting data ---
+  /** Feed per tooth (fz, mm/tooth) for a ~10 mm carbide end mill — drives milling MRR. */
+  feedPerToothMm: number;
 }
 
 type Row = Omit<MaterialProps, 'family'>;
 
 const TABLE: Record<MaterialFamily, Row> = {
-  'free-steel':     { label: 'Free-cutting Steel (12L14/EN1A)', densityGCm3: 7.85, machinability: 1.6, isPlastic: false, cuttingSpeedRough: 200, cuttingSpeedFinish: 250, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 3.0 },
-  'mild-steel':     { label: 'Medium-carbon Steel (EN8/1045)',  densityGCm3: 7.85, machinability: 1.0, isPlastic: false, cuttingSpeedRough: 150, cuttingSpeedFinish: 190, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 2.5 },
-  'alloy-steel':    { label: 'Alloy Steel (EN24/4140)',         densityGCm3: 7.85, machinability: 0.75, isPlastic: false, cuttingSpeedRough: 120, cuttingSpeedFinish: 160, feedRough: 0.28, feedFinish: 0.10, depthOfCutRough: 2.0 },
-  'stainless-303':  { label: 'Stainless 303',                   densityGCm3: 8.00, machinability: 0.70, isPlastic: false, cuttingSpeedRough: 130, cuttingSpeedFinish: 170, feedRough: 0.28, feedFinish: 0.10, depthOfCutRough: 2.0 },
-  'stainless-316':  { label: 'Stainless 316',                   densityGCm3: 8.00, machinability: 0.45, isPlastic: false, cuttingSpeedRough: 100, cuttingSpeedFinish: 140, feedRough: 0.24, feedFinish: 0.08, depthOfCutRough: 1.8 },
-  aluminium:        { label: 'Aluminium 6082',                  densityGCm3: 2.70, machinability: 3.0, isPlastic: false, cuttingSpeedRough: 400, cuttingSpeedFinish: 600, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 3.0 },
-  'aluminium-7075': { label: 'Aluminium 7075',                  densityGCm3: 2.81, machinability: 2.6, isPlastic: false, cuttingSpeedRough: 350, cuttingSpeedFinish: 520, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 3.0 },
-  brass:            { label: 'Brass (CZ121)',                   densityGCm3: 8.50, machinability: 3.5, isPlastic: false, cuttingSpeedRough: 300, cuttingSpeedFinish: 400, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 3.0 },
-  bronze:           { label: 'Bronze',                          densityGCm3: 8.80, machinability: 1.8, isPlastic: false, cuttingSpeedRough: 150, cuttingSpeedFinish: 200, feedRough: 0.25, feedFinish: 0.10, depthOfCutRough: 2.0 },
-  copper:           { label: 'Copper',                          densityGCm3: 8.96, machinability: 1.5, isPlastic: false, cuttingSpeedRough: 200, cuttingSpeedFinish: 280, feedRough: 0.25, feedFinish: 0.10, depthOfCutRough: 2.0 },
-  titanium:         { label: 'Titanium',                        densityGCm3: 4.43, machinability: 0.25, isPlastic: false, cuttingSpeedRough: 50,  cuttingSpeedFinish: 70,  feedRough: 0.20, feedFinish: 0.08, depthOfCutRough: 1.0 },
-  acetal:           { label: 'Acetal (POM)',                    densityGCm3: 1.41, machinability: 4.0, isPlastic: true,  cuttingSpeedRough: 300, cuttingSpeedFinish: 450, feedRough: 0.25, feedFinish: 0.10, depthOfCutRough: 3.0 },
-  nylon:            { label: 'Nylon',                           densityGCm3: 1.14, machinability: 3.5, isPlastic: true,  cuttingSpeedRough: 250, cuttingSpeedFinish: 400, feedRough: 0.25, feedFinish: 0.10, depthOfCutRough: 3.0 },
-  peek:             { label: 'PEEK',                            densityGCm3: 1.32, machinability: 2.5, isPlastic: true,  cuttingSpeedRough: 200, cuttingSpeedFinish: 350, feedRough: 0.20, feedFinish: 0.10, depthOfCutRough: 2.5 },
-  ptfe:             { label: 'PTFE',                            densityGCm3: 2.20, machinability: 3.0, isPlastic: true,  cuttingSpeedRough: 250, cuttingSpeedFinish: 400, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 3.0 },
-  plastic:          { label: 'Plastic',                         densityGCm3: 1.20, machinability: 4.0, isPlastic: true,  cuttingSpeedRough: 300, cuttingSpeedFinish: 450, feedRough: 0.25, feedFinish: 0.10, depthOfCutRough: 3.0 },
+  'free-steel':     { label: 'Free-cutting Steel (12L14/EN1A)', densityGCm3: 7.85, machinability: 1.6, isPlastic: false, cuttingSpeedRough: 200, cuttingSpeedFinish: 250, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 3.0, feedPerToothMm: 0.060 },
+  'mild-steel':     { label: 'Medium-carbon Steel (EN8/1045)',  densityGCm3: 7.85, machinability: 1.0, isPlastic: false, cuttingSpeedRough: 150, cuttingSpeedFinish: 190, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 2.5, feedPerToothMm: 0.050 },
+  'alloy-steel':    { label: 'Alloy Steel (EN24/4140)',         densityGCm3: 7.85, machinability: 0.75, isPlastic: false, cuttingSpeedRough: 120, cuttingSpeedFinish: 160, feedRough: 0.28, feedFinish: 0.10, depthOfCutRough: 2.0, feedPerToothMm: 0.045 },
+  'stainless-303':  { label: 'Stainless 303',                   densityGCm3: 8.00, machinability: 0.70, isPlastic: false, cuttingSpeedRough: 130, cuttingSpeedFinish: 170, feedRough: 0.28, feedFinish: 0.10, depthOfCutRough: 2.0, feedPerToothMm: 0.045 },
+  'stainless-316':  { label: 'Stainless 316',                   densityGCm3: 8.00, machinability: 0.45, isPlastic: false, cuttingSpeedRough: 100, cuttingSpeedFinish: 140, feedRough: 0.24, feedFinish: 0.08, depthOfCutRough: 1.8, feedPerToothMm: 0.035 },
+  aluminium:        { label: 'Aluminium 6082',                  densityGCm3: 2.70, machinability: 3.0, isPlastic: false, cuttingSpeedRough: 400, cuttingSpeedFinish: 600, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 3.0, feedPerToothMm: 0.090 },
+  'aluminium-7075': { label: 'Aluminium 7075',                  densityGCm3: 2.81, machinability: 2.6, isPlastic: false, cuttingSpeedRough: 350, cuttingSpeedFinish: 520, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 3.0, feedPerToothMm: 0.090 },
+  brass:            { label: 'Brass (CZ121)',                   densityGCm3: 8.50, machinability: 3.5, isPlastic: false, cuttingSpeedRough: 300, cuttingSpeedFinish: 400, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 3.0, feedPerToothMm: 0.080 },
+  bronze:           { label: 'Bronze',                          densityGCm3: 8.80, machinability: 1.8, isPlastic: false, cuttingSpeedRough: 150, cuttingSpeedFinish: 200, feedRough: 0.25, feedFinish: 0.10, depthOfCutRough: 2.0, feedPerToothMm: 0.050 },
+  copper:           { label: 'Copper',                          densityGCm3: 8.96, machinability: 1.5, isPlastic: false, cuttingSpeedRough: 200, cuttingSpeedFinish: 280, feedRough: 0.25, feedFinish: 0.10, depthOfCutRough: 2.0, feedPerToothMm: 0.060 },
+  titanium:         { label: 'Titanium',                        densityGCm3: 4.43, machinability: 0.25, isPlastic: false, cuttingSpeedRough: 50,  cuttingSpeedFinish: 70,  feedRough: 0.20, feedFinish: 0.08, depthOfCutRough: 1.0, feedPerToothMm: 0.030 },
+  acetal:           { label: 'Acetal (POM)',                    densityGCm3: 1.41, machinability: 4.0, isPlastic: true,  cuttingSpeedRough: 300, cuttingSpeedFinish: 450, feedRough: 0.25, feedFinish: 0.10, depthOfCutRough: 3.0, feedPerToothMm: 0.100 },
+  nylon:            { label: 'Nylon',                           densityGCm3: 1.14, machinability: 3.5, isPlastic: true,  cuttingSpeedRough: 250, cuttingSpeedFinish: 400, feedRough: 0.25, feedFinish: 0.10, depthOfCutRough: 3.0, feedPerToothMm: 0.100 },
+  peek:             { label: 'PEEK',                            densityGCm3: 1.32, machinability: 2.5, isPlastic: true,  cuttingSpeedRough: 200, cuttingSpeedFinish: 350, feedRough: 0.20, feedFinish: 0.10, depthOfCutRough: 2.5, feedPerToothMm: 0.080 },
+  ptfe:             { label: 'PTFE',                            densityGCm3: 2.20, machinability: 3.0, isPlastic: true,  cuttingSpeedRough: 250, cuttingSpeedFinish: 400, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 3.0, feedPerToothMm: 0.100 },
+  plastic:          { label: 'Plastic',                         densityGCm3: 1.20, machinability: 4.0, isPlastic: true,  cuttingSpeedRough: 300, cuttingSpeedFinish: 450, feedRough: 0.25, feedFinish: 0.10, depthOfCutRough: 3.0, feedPerToothMm: 0.100 },
 };
 
 /** Classify a free-text material name into a known family (defaults to medium-carbon steel). */
@@ -119,4 +122,45 @@ export function nextStandardBar(requiredDiaMm: number): number {
   }
   // Larger than the biggest standard bar — round up to the next 25 mm.
   return Math.ceil(requiredDiaMm / 25) * 25;
+}
+
+/**
+ * Standard plate / flat-bar thicknesses (mm), the imperial-derived sizes most
+ * stock is actually sold in (1/8" … 4"). A milled part is quoted from a billet
+ * cut to the next size up, never from its exact bounding box: a 27.9 mm-thick
+ * part is machined from 31.75 mm (1¼") plate because 27.9 mm plate isn't a thing.
+ */
+export const STANDARD_PLATE_THICKNESS_MM = [
+  3.175, 4.763, 6.35, 7.938, 9.525, 12.7, 15.875, 19.05, 22.225, 25.4,
+  31.75, 38.1, 44.45, 50.8, 63.5, 76.2, 88.9, 101.6,
+];
+
+/** Smallest standard plate thickness ≥ the required size (else round up to 25 mm steps). */
+export function nextStandardPlate(requiredMm: number): number {
+  for (const t of STANDARD_PLATE_THICKNESS_MM) {
+    if (t >= requiredMm - 1e-6) return t;
+  }
+  return Math.ceil(requiredMm / 25.4) * 25.4;
+}
+
+/**
+ * Billet size for a milled part: add a machining allowance on every face, then
+ * round the two smaller dimensions up to purchasable plate thicknesses. The
+ * longest dimension is a saw cut, so it only takes the allowance.
+ */
+export function milledBilletMm(
+  bboxMm: { x: number; y: number; z: number },
+  allowanceMm = 1.5
+): { x: number; y: number; z: number } {
+  const dims: Array<['x' | 'y' | 'z', number]> = [
+    ['x', bboxMm.x], ['y', bboxMm.y], ['z', bboxMm.z],
+  ];
+  // Longest dimension = sawn to length; the other two come off standard plate.
+  const longest = dims.reduce((a, b) => (b[1] > a[1] ? b : a));
+  const out = { x: 0, y: 0, z: 0 };
+  for (const [k, v] of dims) {
+    const withAllowance = v + 2 * allowanceMm;
+    out[k] = k === longest[0] ? withAllowance : nextStandardPlate(withAllowance);
+  }
+  return out;
 }

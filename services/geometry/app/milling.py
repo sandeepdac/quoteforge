@@ -142,9 +142,12 @@ def analyze_milling(shape) -> dict:
     n_faces = 0
     n_planar = 0
     n_cyl = 0
-    n_holes = 0  # internal (concave) cylinders only — a real drilled/bored hole
     cyl_axes: List[np.ndarray] = []
     hole_axes: List[np.ndarray] = []
+    # Internal cylinders as (axis, point-on-axis, radius). A single physical hole
+    # is often several coaxial faces (counterbore + through + tap ⌀), so these are
+    # grouped into distinct hole FEATURES below rather than counted face-by-face.
+    hole_cyls: List[tuple] = []
     fexp = TopExp_Explorer(shape, TopAbs_FACE)
     while fexp.More():
         face = TopoDS.Face_s(fexp.Current())
@@ -164,8 +167,9 @@ def analyze_milling(shape) -> dict:
             # inflate a naive cylinder count — are FORWARD and are excluded.
             r = ad.Cylinder().Radius()
             if face.Orientation() == TopAbs_REVERSED and r <= 0.4 * max(diag, 1.0):
-                n_holes += 1
+                loc = ad.Cylinder().Axis().Location()
                 hole_axes.append(ax)
+                hole_cyls.append((ax, np.array([loc.X(), loc.Y(), loc.Z()]), r))
         fexp.Next()
 
     def _fid(f) -> int:
@@ -284,6 +288,32 @@ def analyze_milling(shape) -> dict:
             if _cluster_direction(access_dirs, normal) < 0:
                 access_dirs.append(normal)
 
+    # --- Distinct hole features ---------------------------------------------
+    # Group coaxial internal cylinders into ONE hole. A counterbored hole shows up
+    # as 3+ concentric cylinders (counterbore ⌀, body ⌀, tapping ⌀); counting the
+    # faces would triple-count it and massively over-state drilling time. Two
+    # cylinders belong to the same hole when their axes are parallel AND lie on the
+    # same line (perpendicular offset ≈ 0).
+    hole_groups: List[dict] = []
+    for ax, pt, r in hole_cyls:
+        placed = False
+        for g in hole_groups:
+            if abs(float(np.dot(ax, g["axis"]))) > 0.98:
+                d = pt - g["point"]
+                perp = d - float(np.dot(d, g["axis"])) * g["axis"]
+                if float(np.linalg.norm(perp)) < 0.25:  # mm — same axis line
+                    g["maxRadius"] = max(g["maxRadius"], r)
+                    g["minRadius"] = min(g["minRadius"], r)
+                    g["faces"] += 1
+                    placed = True
+                    break
+        if not placed:
+            hole_groups.append({"axis": ax, "point": pt, "maxRadius": r, "minRadius": r, "faces": 1})
+
+    n_holes = len(hole_groups)
+    # Largest ⌀ per hole — lets the estimator tell a drilled hole from a milled bore.
+    hole_diameters = sorted((round(2.0 * g["maxRadius"], 3) for g in hole_groups), reverse=True)
+
     # Hole access directions (both senses count toward re-fixturing).
     for ax in hole_axes:
         if _cluster_direction(access_dirs, ax) < 0 and _cluster_direction(access_dirs, -ax) < 0:
@@ -327,6 +357,7 @@ def analyze_milling(shape) -> dict:
         "deepPocketCount": deep_pockets,
         "maxDepthRatio": round(max_depth_ratio, 2),
         "holeCount": n_holes,
+        "holeDiametersMm": hole_diameters,
         "roundFaceCount": n_cyl,
         "sparseBillet": sparse_billet,
         "concaveEdges": concave_edges,

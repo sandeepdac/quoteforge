@@ -37,6 +37,14 @@ export const DEFAULT_CNC_SETTINGS: CncSettings = {
   gripLengthMm: 20,
   scrapRecovery: 0,
   maxDrillDiaMm: 20,
+  // Milling runs on different iron from the bar lathe above: a VMC spindle turns
+  // much faster, an ATC change is slower than a turret index, and clamping a
+  // billet (vise/soft jaws, tram, probe, touch-off) takes longer than bar-feeding.
+  millMaxRpm: 12000,
+  millToolDiaMm: 10,
+  millToolChangeSec: 10,
+  millSetupFirstOpMin: 60,
+  millSetupPerExtraOpMin: 45,
   toolLibrary: DEFAULT_TURNING_TOOLS,
 };
 

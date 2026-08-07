@@ -23,7 +23,7 @@ import {
 } from '../types';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
 import { materialPropsFor } from './materials';
-import { roughingMrrCm3PerMin } from './turning';
+import { millingMrrCm3PerMin, finishingRateCm2PerMin, MillingToolConfig } from './milling';
 
 /** A milled part reduced to the drivers a cycle-time model needs. */
 export interface MilledProfile {
@@ -66,11 +66,26 @@ const COLORS: Record<string, string> = {
 };
 
 // Milling-specific tuning (first-order; the efficiency factor calibrates the rest).
-const MILL_MRR_FACTOR = 0.55;     // bulk removal is slower than turning (small tools, interrupted cut)
 const FINISH_MACHINED_FRACTION = 0.6; // share of surface area that is machined (vs raw stock faces)
-const FINISH_RATE_REF_CM2_MIN = 45;   // reference finish rate (cm²/min) at Vc≈150 m/min
 const DRILL_SEC_PER_HOLE_REF = 12;    // ref drill+retract per hole in steel; scales with machinability
 const DEEP_POCKET_PENALTY = 0.4;      // +40% on rough+finish per deep pocket (long-tool derate)
+
+/**
+ * Distinct cutters a prismatic part needs. Tool changes are a first-order cost on
+ * a milled part — a real 3-setup job runs 8–12 tools and can spend a third of its
+ * cycle swapping them — so this must reflect actual CUTTERS, not operation types.
+ * A face mill and a roughing end mill are shared across setups; each setup adds a
+ * finishing cutter and a chamfer tool, and holes add a drill.
+ */
+function estimateToolCount(p: MilledProfile): number {
+  let tools = 2;                       // face mill + roughing end mill
+  tools += Math.max(1, p.setupCount);  // a finisher per setup
+  tools += p.holeCount > 0 ? 1 : 0;    // drill
+  tools += p.pocketCount > 0 ? 1 : 0;  // smaller cutter to clear pocket corners
+  tools += p.deepPocketCount > 0 ? 1 : 0; // long-reach tool
+  tools += 1;                          // chamfer/deburr
+  return tools;
+}
 
 const r1 = (v: number) => Math.round(v * 10) / 10;
 
@@ -103,13 +118,20 @@ export function calculateMilledCosts(
   const deep = Math.max(0, p.deepPocketCount || 0);
   const deepMult = 1 + Math.min(1.2, DEEP_POCKET_PENALTY * deep);
 
-  // --- Roughing: remove the bulk at a milling MRR --------------------------
-  const millMrr = roughingMrrCm3PerMin(m) * MILL_MRR_FACTOR;
+  // --- Roughing: remove the bulk at a real milling MRR (ae·ap·vf) ----------
+  const millCfg: MillingToolConfig = {
+    toolDiaMm: cnc.millToolDiaMm ?? 10,
+    flutes: 3,
+    radialFactor: 0.35,
+    axialFactor: 0.8,
+    maxRpm: cnc.millMaxRpm ?? 12000,
+  };
+  const millMrr = millingMrrCm3PerMin(m, millCfg);
   const roughSec = removedVol > 0 && millMrr > 0 ? (removedVol / millMrr) * 60 * deepMult : 0;
 
   // --- Facing: skim the top face(s) that are cut, ~ stock footprint --------
   const footprintCm2 = (p.stockMm.x * p.stockMm.y) / 100;
-  const finishRate = FINISH_RATE_REF_CM2_MIN * (m.cuttingSpeedFinish / 150);
+  const finishRate = finishingRateCm2PerMin(m, millCfg);
   const facingSec = finishRate > 0 ? (footprintCm2 / finishRate) * 60 : 0;
 
   // --- Finishing: walls + floors of the machined faces ---------------------
@@ -124,25 +146,32 @@ export function calculateMilledCosts(
 
   // --- Cycle time (theoretical → actual via efficiency) --------------------
   const cuttingSec = roughSec + facingSec + finishSec + drillSec;
-  const toolCount = [roughSec, facingSec, finishSec, drillSec].filter((t) => t > 0).length + p.pocketCount;
-  const airSec = toolCount * cnc.toolChangeSec + cuttingSec * 0.08; // rapids between features
+  const toolCount = estimateToolCount(p);
+  const toolChangeSec = cnc.millToolChangeSec ?? 10;
+  const airSec = toolCount * toolChangeSec + cuttingSec * 0.08; // rapids between features
   const ratePerSec = machineRatePerMin / 60;
   const opCost = (sec: number) => (sec / eff) * ratePerSec;
   const cycleTimeSec = cuttingSec / eff + airSec / eff;
   const machineCost = (cycleTimeSec / 60) * machineRatePerMin;
 
   // --- Setup (amortised over the batch) — Rule 1 is the driver -------------
+  // Milling setups are slower than the bar-lathe defaults: each one means
+  // clamping a billet in a vise or soft jaws, tramming, probing and touching off
+  // every tool, so milling carries its own baseline times.
   const setups = Math.max(1, Math.round(p.setupCount || 1));
   const setupTimeMin =
-    cnc.setupTimeFirstOpMin +
-    (setups - 1) * cnc.secondOpSetupMin +
+    (cnc.millSetupFirstOpMin ?? cnc.setupTimeFirstOpMin) +
+    (setups - 1) * (cnc.millSetupPerExtraOpMin ?? cnc.secondOpSetupMin) +
     toolCount * cnc.setupTimePerToolMin;
   const setupCostTotal = setupTimeMin * cnc.setupRatePerMin;
   const setupPerUnit = setupCostTotal / qty;
 
   // --- Fixturing: soft jaws / custom work-holding for multi-setup or bosses
   const needsSoftJaws = setups >= 3 || p.bossCount > 0;
-  const fixtureCost = needsSoftJaws ? cnc.toolingCostPerOp * 4 : 0;
+  // Soft jaws / fixtures are made ONCE for the job, so like setup they amortise
+  // over the batch — charging them per part made a 500-off carry 500 sets of jaws.
+  const fixtureCostTotal = needsSoftJaws ? cnc.toolingCostPerOp * 4 * setups : 0;
+  const fixtureCost = fixtureCostTotal / qty;
 
   // --- Tooling -------------------------------------------------------------
   const toolingCost = toolCount * cnc.toolingCostPerOp;
@@ -166,14 +195,14 @@ export function calculateMilledCosts(
     { key: 'deep', name: 'Deep-pocket derate', driver: deep > 0 ? `${deep} deep pocket${deep === 1 ? '' : 's'} → +${Math.round((deepMult - 1) * 100)}% rough/finish` : '', value: deep > 0 ? opCost((roughSec + finishSec) * (1 - 1 / deepMult)) : 0, color: COLORS.deep },
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${p.pocketCount} pocket${p.pocketCount === 1 ? '' : 's'}`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
     { key: 'setup', name: `Setup ÷ ${qty}`, driver: `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''} (${setups} access dir.), batch of ${qty}`, value: setupPerUnit, color: COLORS.setup },
-    { key: 'fixture', name: 'Soft jaws / fixture', driver: needsSoftJaws ? `${setups} setups${p.bossCount > 0 ? `, ${p.bossCount} boss` : ''} → work-holding` : '', value: fixtureCost, color: COLORS.fixture },
+    { key: 'fixture', name: `Soft jaws / fixture ÷ ${qty}`, driver: needsSoftJaws ? `${setups} setups${p.bossCount > 0 ? `, ${p.bossCount} boss` : ''} → work-holding, made once` : '', value: fixtureCost, color: COLORS.fixture },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${toolCount} operations`, value: toolingCost, color: COLORS.tooling },
   ].filter((li) => li.value > 0.005);
 
   // --- Batch quantity curve (setup amortisation) ---------------------------
-  const perUnitFixed = materialCost + machineCost + toolingCost + fixtureCost;
+  const perUnitFixed = materialCost + machineCost + toolingCost;
   const batchCurve: BatchPricePoint[] = STANDARD_BATCH_QTYS.map((q) => {
-    const sPer = setupCostTotal / q;
+    const sPer = (setupCostTotal + fixtureCostTotal) / q;
     const sub = perUnitFixed + sPer;
     const oh = sub * overheadPercent;
     const mg = (sub + oh) * marginPercent;

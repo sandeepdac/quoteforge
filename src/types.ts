@@ -208,6 +208,17 @@ export interface CncSettings {
   gripLengthMm: number;
   /** Largest hole drillable from solid (mm). Bigger bores are drilled + bored out. */
   maxDrillDiaMm?: number;
+  // --- milling-specific (the turning values above describe a lathe) ---------
+  /** Milling spindle rpm ceiling — a VMC spins far faster than a bar lathe. */
+  millMaxRpm?: number;
+  /** Roughing end-mill ⌀ (mm) assumed for milling MRR. */
+  millToolDiaMm?: number;
+  /** ATC tool-change time (s) — slower than a lathe turret index. */
+  millToolChangeSec?: number;
+  /** Baseline setup time for a milled op (min): vise/soft jaws, tram, probe, touch-off. */
+  millSetupFirstOpMin?: number;
+  /** Added setup per extra milled setup (min) — re-fixture and re-probe. */
+  millSetupPerExtraOpMin?: number;
   /** Fraction of swarf value recovered (0–1). */
   scrapRecovery: number;
   /** Shop turning tool library — drives the reference toolpath's stations/tools. */
