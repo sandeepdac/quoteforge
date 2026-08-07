@@ -13,3 +13,7 @@ services/geometry/samples/
 **/__pycache__/
 *.py[cod]
 .pytest_cache/
+
+# scratch/test files
+_*.mjs
+_*.js
