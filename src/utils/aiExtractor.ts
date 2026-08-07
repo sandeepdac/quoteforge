@@ -7,9 +7,44 @@
  * the caller can fall back to a manual-entry flow rather than fabricating dimensions.
  */
 
+/** Turned-part fields the vision model reads off a rotationally-symmetric drawing. */
+export interface AiTurnedData {
+  odMm?: number;
+  lengthMm?: number;
+  boreDiaMm?: number;
+  boreDepthMm?: number;
+  grooveCount?: number;
+  threadCount?: number;
+  faceCount?: number;
+}
+
+/** Milled/prismatic fields read off a plate/housing drawing. */
+export interface AiMilledData {
+  lengthMm?: number;
+  widthMm?: number;
+  heightMm?: number;
+  holeCount?: number;
+  holeDetails?: Array<{ diameterMm: number; count: number }>;
+  pocketCount?: number;
+  bossCount?: number;
+  setupCount?: number;
+}
+
 export interface AiDrawingData {
   partName?: string;
   materialName?: string;
+  /** Machining route the model inferred from the drawing. */
+  partClass?: 'turned' | 'milled' | 'unknown';
+  turned?: AiTurnedData | null;
+  milled?: AiMilledData | null;
+  toleranceCallout?: string;
+  finishCallout?: string;
+  quantity?: number;
+  weightKg?: number;
+  aiNotes?: string[];
+  confidenceScore?: number;
+
+  // --- legacy sheet-metal fields (kept so older responses still parse) ---
   thicknessMm?: number;
   lengthMm?: number;
   widthMm?: number;
@@ -22,12 +57,8 @@ export interface AiDrawingData {
   holeDetails?: Array<{ diameterMm: number; count: number }>;
   weldLengthMm?: number;
   weldCount?: number;
-  weightKg?: number;
   surfaceAreaM2?: number;
-  finishCallout?: string;
   tolerances?: string;
-  aiNotes?: string[];
-  confidenceScore?: number;
 }
 
 export async function analyzeDrawingWithAI(input: {

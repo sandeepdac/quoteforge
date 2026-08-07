@@ -15,7 +15,7 @@ import { computeStock } from './cncEstimator';
 import { TurningProfile } from './turning';
 import { MilledProfile } from './milledEstimator';
 import { selectMachine, MachineRecommendation } from './machineSelection';
-import { materialPropsFor, milledBilletMm } from './materials';
+import { materialPropsFor, milledBilletMm, nextStandardBar } from './materials';
 import { extractTurnedProfile, arrayBufferToBase64, GeometryResult } from './geometryService';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
 
@@ -581,40 +581,164 @@ async function analyzeDrawing(
   return manualAnalysis(fileName, fileType, file.pdfUrl);
 }
 
-function fromAiData(
+const AI_VERIFY_NOTE =
+  'Dimensions read from the 2D drawing by AI vision — an estimate, not a measured solid. Verify before quoting.';
+
+/**
+ * Map a vision-model drawing response onto a MACHINING analysis: a turned or
+ * milled profile the CNC estimator can price, not the legacy sheet-metal fields.
+ * A 2D drawing gives us the drawing's stated dimensions but no measured solid, so
+ * volumes are derived from those dimensions and everything is flagged for review.
+ * Exported for tests (deterministic; no network).
+ */
+export function fromAiData(
   fileName: string,
   fileType: 'PDF' | 'IMAGE',
   d: AiDrawingData,
   pdfUrl?: string
 ): ExtractedCadAnalysis {
-  return {
+  const materialName = d.materialName || 'Aluminium 6082';
+  const density = materialPropsFor(materialName).densityGCm3;
+  const cnc = DEFAULT_CNC_SETTINGS;
+  const notes = d.aiNotes && d.aiNotes.length ? d.aiNotes : [];
+  const tolerances = d.toleranceCallout || d.tolerances;
+
+  const base = {
     partName: d.partName || baseName(fileName),
     fileType,
     fileName,
-    materialName: d.materialName || 'Mild Steel 3.0mm',
-    thicknessMm: d.thicknessMm ?? 3.0,
-    lengthMm: d.lengthMm ?? 0,
-    widthMm: d.widthMm ?? 0,
-    heightMm: d.heightMm ?? 0,
-    perimeterMm: d.perimeterMm ?? 0,
-    pierceCount: d.pierceCount ?? 0,
-    bendCount: d.bendCount ?? 0,
-    isSimpleBending: d.isSimpleBending ?? true,
-    holeCount: d.holeCount ?? 0,
-    holeDetails: d.holeDetails ?? [],
-    weldLengthMm: d.weldLengthMm ?? 0,
-    weldCount: d.weldCount ?? 0,
-    weightKg: d.weightKg ?? 0,
-    surfaceAreaM2: d.surfaceAreaM2 ?? 0,
+    materialName,
+    thicknessMm: 0,
+    perimeterMm: 0,
+    pierceCount: 0,
+    bendCount: 0,
+    isSimpleBending: true,
+    weldLengthMm: 0,
+    weldCount: 0,
     finishCallout: d.finishCallout,
-    tolerances: d.tolerances,
-    aiNotes:
-      d.aiNotes && d.aiNotes.length
-        ? d.aiNotes
-        : ['Dimensions read from the drawing by AI vision. Please verify before quoting.'],
-    confidenceScore: d.confidenceScore ?? 70,
-    measurementSource: 'ai-drawing',
+    tolerances,
+    aiNotes: [AI_VERIFY_NOTE, ...notes],
+    confidenceScore: d.confidenceScore ?? 55,
+    measurementSource: 'ai-drawing' as MeasurementSource,
     pdfUrl,
+  };
+
+  const turned = d.turned || undefined;
+  const milled = d.milled || undefined;
+
+  // ---- TURNED: rotationally-symmetric part read from a shaft/bushing drawing ----
+  if (d.partClass === 'turned' && turned && (turned.odMm ?? 0) > 0 && (turned.lengthMm ?? 0) > 0) {
+    const od = turned.odMm!;
+    const len = turned.lengthMm!;
+    const boreDia = Math.max(0, turned.boreDiaMm ?? 0);
+    const boreDepth = Math.max(0, turned.boreDepthMm ?? 0);
+    const turningProfile: TurningProfile = {
+      odMm: od,
+      lengthMm: len,
+      boreDiaMm: boreDia,
+      boreDepthMm: boreDepth,
+      grooveCount: Math.max(0, turned.grooveCount ?? 0),
+      threadCount: Math.max(0, turned.threadCount ?? 0),
+      faceCount: Math.min(2, Math.max(1, turned.faceCount ?? 2)),
+      crossFeatures: false,
+    };
+    // Finished volume: solid cylinder minus the bore.
+    const cylMm3 = (Math.PI / 4) * od * od * len;
+    const boreMm3 = boreDia > 0 && boreDepth > 0 ? (Math.PI / 4) * boreDia * boreDia * boreDepth : 0;
+    const volumeCm3 = Math.max(0.01, (cylMm3 - boreMm3) / 1000);
+    const weightKg = d.weightKg && d.weightKg > 0 ? d.weightKg : (volumeCm3 * density) / 1000;
+    const barDiameterMm = nextStandardBar(od + 2 * cnc.radialStockAllowanceMm);
+
+    return {
+      ...base,
+      lengthMm: round(len, 2),
+      widthMm: round(od, 2),
+      heightMm: round(od, 2),
+      holeCount: boreDia > 0 ? 1 : 0,
+      holeDetails: boreDia > 0 ? [{ diameterMm: boreDia, count: 1 }] : [],
+      weightKg: round(weightKg, 3),
+      surfaceAreaM2: 0,
+      partClass: 'turned',
+      machineClass: 'turn',
+      isTurned: true,
+      turningProfile,
+      barDiameterMm,
+      diameterMm: round(od, 2),
+      axisLengthMm: round(len, 2),
+      volumeCm3: round(volumeCm3, 2),
+      setups: 1,
+    };
+  }
+
+  // ---- MILLED (or "unknown" with a usable bounding box) ----
+  const L = milled?.lengthMm ?? d.lengthMm ?? 0;
+  const W = milled?.widthMm ?? d.widthMm ?? 0;
+  const H = milled?.heightMm ?? d.heightMm ?? 0;
+  if (L > 0 && W > 0 && H > 0) {
+    const billet = milledBilletMm({ x: L, y: W, z: H });
+    const stockVolCm3 = (billet.x * billet.y * billet.z) / 1000;
+    // Part volume from the stated weight if we have it, else a rough fraction of the
+    // billet (a drawing does not give the true solid volume) — flagged for review.
+    const partVolCm3 =
+      d.weightKg && d.weightKg > 0
+        ? Math.min(stockVolCm3, (d.weightKg * 1000) / density)
+        : stockVolCm3 * 0.6;
+    const removedVolCm3 = Math.max(0, stockVolCm3 - partVolCm3);
+    const surfaceAreaCm2 = (2 * (L * W + L * H + W * H)) / 100; // bbox proxy
+    const holeDetails = milled?.holeDetails ?? d.holeDetails ?? [];
+    const holeCount = milled?.holeCount ?? holeDetails.reduce((a, h) => a + (h.count || 0), 0);
+    const milledProfile: MilledProfile = {
+      stockMm: billet,
+      stockVolumeCm3: round(stockVolCm3, 1),
+      partVolumeCm3: round(partVolCm3, 1),
+      removedVolumeCm3: round(removedVolCm3, 1),
+      surfaceAreaCm2: round(surfaceAreaCm2, 1),
+      setupCount: Math.min(6, Math.max(1, milled?.setupCount ?? 1)),
+      pocketCount: Math.max(0, milled?.pocketCount ?? 0),
+      bossCount: Math.max(0, milled?.bossCount ?? 0),
+      deepPocketCount: 0,
+      holeCount,
+      sparseBillet: stockVolCm3 > 0 && removedVolCm3 / stockVolCm3 > 0.85,
+    };
+    const weightKg = d.weightKg && d.weightKg > 0 ? d.weightKg : (partVolCm3 * density) / 1000;
+
+    return {
+      ...base,
+      lengthMm: round(L, 2),
+      widthMm: round(W, 2),
+      heightMm: round(H, 2),
+      holeCount,
+      holeDetails,
+      weightKg: round(weightKg, 3),
+      surfaceAreaM2: round(surfaceAreaCm2 / 10000, 3),
+      partClass: 'milled',
+      machineClass: 'mill',
+      isTurned: false,
+      milledProfile,
+      volumeCm3: round(partVolCm3, 2),
+      surfaceAreaCm2: round(surfaceAreaCm2, 1),
+      stockVolumeCm3: round(stockVolCm3, 1),
+      removedVolumeCm3: round(removedVolCm3, 1),
+      setups: milledProfile.setupCount,
+    };
+  }
+
+  // ---- Not enough read off the drawing to machine-cost it → manual entry. ----
+  return {
+    ...base,
+    lengthMm: 0,
+    widthMm: 0,
+    heightMm: 0,
+    holeCount: 0,
+    holeDetails: [],
+    weightKg: 0,
+    surfaceAreaM2: 0,
+    confidenceScore: 0,
+    aiNotes: [
+      'AI vision could not read enough of this drawing to size the part.',
+      'Enter or confirm the dimensions on the right before quoting.',
+      ...notes,
+    ],
   };
 }
 

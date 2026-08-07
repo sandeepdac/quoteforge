@@ -84,32 +84,43 @@ async function startServer() {
 
       const ai = new GoogleGenAI({ apiKey });
 
-      const prompt = `You are an expert manufacturing engineer and CAD CAD/CAM estimator.
-Analyze this CAD engineering drawing or document (${fileName}).
-Extract structured JSON with the following fields:
+      const prompt = `You are an expert CNC machining estimator reading a 2D engineering drawing (${fileName}).
+This shop makes CNC MACHINED parts — turned (lathe / sliding-head) and milled (prismatic) — from solid bar or billet.
+Read the drawing's dimensions and callouts and return ONLY valid JSON in this exact shape:
 {
-  "partName": "string",
-  "materialName": "string (e.g. Mild Steel 3.0mm, Stainless 304, Aluminum 6061)",
-  "thicknessMm": number,
-  "lengthMm": number,
-  "widthMm": number,
-  "heightMm": number,
-  "perimeterMm": number,
-  "pierceCount": number,
-  "bendCount": number,
-  "isSimpleBending": boolean,
-  "holeCount": number,
-  "holeDetails": [{"diameterMm": number, "count": number}],
-  "weldLengthMm": number,
-  "weldCount": number,
-  "weightKg": number,
-  "surfaceAreaM2": number,
-  "finishCallout": "string",
-  "tolerances": "string",
-  "aiNotes": ["string"],
-  "confidenceScore": number (0-100)
+  "partName": "string — from the title block",
+  "materialName": "string — e.g. Aluminium 6082, Brass CZ121, Stainless 316, Mild Steel EN8, Titanium",
+  "partClass": "turned | milled | unknown",
+  "turned": {
+    "odMm": number,        // largest outside diameter
+    "lengthMm": number,    // overall turned length along the axis
+    "boreDiaMm": number,   // central bore/through-hole diameter, 0 if solid
+    "boreDepthMm": number, // bore depth, 0 if none
+    "grooveCount": number, // turned recesses / undercuts
+    "threadCount": number, // threaded features
+    "faceCount": number    // faces to finish (1 or 2)
+  },
+  "milled": {
+    "lengthMm": number, "widthMm": number, "heightMm": number,  // overall bounding box
+    "holeCount": number,
+    "holeDetails": [{"diameterMm": number, "count": number}],
+    "pocketCount": number,
+    "bossCount": number,
+    "setupCount": number   // distinct faces that must be machined (fixturings), 1-6
+  },
+  "weightKg": number,          // finished part weight if determinable, else 0
+  "toleranceCallout": "string",// tightest tolerance / fit / GD&T seen, else ""
+  "finishCallout": "string",   // surface finish / coating callout, else ""
+  "quantity": number,          // batch qty if stated, else 0
+  "confidenceScore": number,   // 0-100 — how confident you are in the numbers you read
+  "aiNotes": ["string"]        // caveats: unreadable dims, assumptions, risk features
 }
-Return ONLY valid JSON.`;
+Rules:
+- Choose partClass = "turned" for rotationally-symmetric parts (shafts, pins, bushings, fittings, spacers) shown with diameter (⌀) callouts and a turned side view. Choose "milled" for prismatic/plate parts (brackets, housings, manifolds). Use "unknown" only if you truly cannot tell.
+- Populate the matching object ("turned" or "milled"); the other may be null.
+- Report dimensions in millimetres. If the drawing is in inches, convert to mm.
+- If a value cannot be read, use 0 and add a note — never invent numbers.
+Return ONLY the JSON object.`;
 
       // Ask the model for strict JSON so the reply is machine-parseable.
       const generationConfig = { responseMimeType: 'application/json' };
