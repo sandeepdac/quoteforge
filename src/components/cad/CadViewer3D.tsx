@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { StepParseResult } from '../../utils/stepParser';
 import { TessellatedMesh } from '../../utils/occtLoader';
+import { cameraBracketFor, zoomLimitsFor, CAMERA_OFFSET } from '../../utils/viewerCamera';
 
 interface CadViewer3DProps {
   cadData: StepParseResult;
@@ -166,18 +167,33 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
       scene.background = new THREE.Color('#f4f4f5');
     }
 
+    // Everything below is sized from what is ACTUALLY on screen. These used to be
+    // fixed millimetre constants (a 600 mm grid, a 2000 mm far plane, a 100–1200 mm
+    // zoom range), which silently broke on large parts: an 800 mm plate puts the
+    // camera ~2360 mm out, past the old far plane, so the model was clipped away to
+    // a sliver. Scaling by the model span keeps any part framed the same way.
+    const modelSpan = Math.max(axisDims.x, axisDims.y, axisDims.z) || 300;
+
     // Grid helper
     const gridColor = theme === 'blueprint' ? '#1e293b' : '#3f3f46';
-    const gridHelper = new THREE.GridHelper(600, 30, new THREE.Color(gridColor), new THREE.Color(gridColor));
-    gridHelper.position.y = -cadData.heightMm / 2 - 20;
+    const gridSpan = Math.max(600, modelSpan * 2);
+    const gridHelper = new THREE.GridHelper(gridSpan, 30, new THREE.Color(gridColor), new THREE.Color(gridColor));
+    gridHelper.position.y = -axisDims.y / 2 - modelSpan * 0.06;
     scene.add(gridHelper);
 
     // 2. Camera Setup
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 2000);
-    const maxDim = Math.max(cadData.lengthMm, cadData.widthMm, cadData.heightMm) || 300;
+    // Near/far bracket the model rather than being fixed: the camera sits ~3×
+    // the span away, so the far plane must clear that plus the part itself, with
+    // headroom for zooming out.
     // Frame slightly wider when dimension annotations are shown so their labels fit.
     const frame = showDimensions ? 1.12 : 1.0;
-    camera.position.set(maxDim * 1.5 * frame, maxDim * 1.2 * frame, maxDim * 1.8 * frame);
+    const bracket = cameraBracketFor(modelSpan, frame);
+    const camera = new THREE.PerspectiveCamera(45, width / height, bracket.near, bracket.far);
+    camera.position.set(
+      modelSpan * CAMERA_OFFSET.x * frame,
+      modelSpan * CAMERA_OFFSET.y * frame,
+      modelSpan * CAMERA_OFFSET.z * frame
+    );
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
@@ -449,8 +465,12 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       if (!cameraRef.current) return;
-      cameraRef.current.position.z += e.deltaY * 0.5;
-      cameraRef.current.position.z = Math.max(100, Math.min(1200, cameraRef.current.position.z));
+      // Zoom step and limits scale with the part, so the wheel feels the same on a
+      // 20 mm bracket and an 800 mm plate. Fixed limits used to snap a large part
+      // to a hard stop on the first scroll.
+      const z = zoomLimitsFor(modelSpan);
+      cameraRef.current.position.z += e.deltaY * z.step;
+      cameraRef.current.position.z = Math.max(z.min, Math.min(z.max, cameraRef.current.position.z));
     };
 
     domElem.addEventListener('mousedown', handleMouseDown);
