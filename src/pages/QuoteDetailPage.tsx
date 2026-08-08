@@ -17,6 +17,7 @@ import {
   Copy
 } from 'lucide-react';
 import { useQuotes } from '../context/QuoteContext';
+import { useSettings } from '../context/SettingsContext';
 import StatusPill from '../components/common/StatusPill';
 import { cn } from '../utils/cn';
 import { downloadQuotePDF } from '../utils/pdfGenerator';
@@ -25,6 +26,7 @@ export default function QuoteDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { getQuoteById, getCustomerById, getPartById, getMaterialById, deleteQuote, updateQuote } = useQuotes();
+  const { settings } = useSettings();
 
   const quote = getQuoteById(id || '');
   const [actualCostInput, setActualCostInput] = useState(
@@ -59,7 +61,7 @@ export default function QuoteDetailPage() {
   };
 
   const handleDownload = () => {
-    downloadQuotePDF(quote, customer, part);
+    downloadQuotePDF(quote, customer, part, material, settings);
   };
 
   const estFactoryCost = (quote.costs.subtotal + quote.costs.overhead) * quote.quantity;
