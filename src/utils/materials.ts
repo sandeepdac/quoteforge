@@ -145,8 +145,17 @@ export function nextStandardPlate(requiredMm: number): number {
 
 /**
  * Billet size for a milled part: add a machining allowance on every face, then
- * round the two smaller dimensions up to purchasable plate thicknesses. The
- * longest dimension is a saw cut, so it only takes the allowance.
+ * pick real purchasable stock. Two stock shapes, chosen from the proportions:
+ *
+ *  • FLAT PLATE — one dimension is much thinner than the other two (a lid, a
+ *    bracket plate, a NIST FTC test coupon). You buy plate of that THICKNESS and
+ *    saw the length × width out of a large sheet, so only the thickness rounds to
+ *    a standard plate; the two face dimensions are sawn to size. (Rounding a face
+ *    dimension up to a "plate thickness" is what made a 68 mm plate ask for 76 mm
+ *    stock.)
+ *  • BLOCK / BAR — all three dimensions are comparable (the demo putter). You buy
+ *    rectangular bar of a standard cross-section and saw the length, so the two
+ *    smaller dimensions round to standard sizes and the longest is sawn.
  */
 export function milledBilletMm(
   bboxMm: { x: number; y: number; z: number },
@@ -159,12 +168,23 @@ export function milledBilletMm(
   const dims: Array<['x' | 'y' | 'z', number]> = [
     ['x', bboxMm.x], ['y', bboxMm.y], ['z', bboxMm.z],
   ];
-  // Longest dimension = sawn to length; the other two come off standard plate.
-  const longest = dims.reduce((a, b) => (b[1] > a[1] ? b : a));
+  const sorted = [...dims].sort((a, b) => a[1] - b[1]); // smallest → largest
+  const smallest = sorted[0];
+  const secondSmallest = sorted[1];
+  const longest = sorted[2];
+  // A flat plate: the thinnest dimension is at most half the next one up.
+  const isPlate = smallest[1] <= 0.5 * secondSmallest[1];
+
   const out = { x: 0, y: 0, z: 0 };
   for (const [k, v] of dims) {
     const withAllowance = v + 2 * allowanceMm;
-    out[k] = k === longest[0] ? withAllowance : nextStandardPlate(withAllowance);
+    if (isPlate) {
+      // Only the thickness comes off a standard plate; the face is sawn to size.
+      out[k] = k === smallest[0] ? nextStandardPlate(withAllowance) : withAllowance;
+    } else {
+      // Block/bar: saw the longest, round the two smaller to standard sizes.
+      out[k] = k === longest[0] ? withAllowance : nextStandardPlate(withAllowance);
+    }
   }
   return out;
 }

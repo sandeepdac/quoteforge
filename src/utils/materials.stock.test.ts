@@ -59,6 +59,19 @@ describe('milledBilletMm', () => {
     const bboxVol = (bbox.x * bbox.y * bbox.z) / 1000;
     expect(billetVol).toBeGreaterThan(bboxVol);
   });
+
+  it('buys plate by THICKNESS for a thin plate, sawing the face to size', () => {
+    // NIST FTC-11: a 68.2 × 68.2 × 3.0 mm coupon. You buy 1/4" (6.35 mm) plate and
+    // saw a ~70 mm square from it — you do NOT round the 68 mm face up to a
+    // "76 mm plate thickness" (the old bug), which more than doubled the material.
+    const b = milledBilletMm({ x: 68.219, y: 68.219, z: 3.028 });
+    expect(b.z).toBe(6.35);                 // thinnest dim → next standard plate
+    expect(b.x).toBeCloseTo(68.219 + 2, 3); // face sawn to size, not rounded up
+    expect(b.y).toBeCloseTo(68.219 + 2, 3);
+    // Sanity: never smaller than the part.
+    expect(b.x).toBeGreaterThan(68.219);
+    expect(b.z).toBeGreaterThan(3.028);
+  });
 });
 
 describe('nextStandardBar still works (turning path unaffected)', () => {
