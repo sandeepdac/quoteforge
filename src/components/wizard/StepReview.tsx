@@ -20,7 +20,7 @@ import { materialPropsFor } from '../../utils/materials';
 import { generatePartThumbnail } from '../../utils/partThumbnail';
 import { generateTurningToolpath } from '../../utils/toolpath';
 import ToolpathPreview from '../cad/ToolpathPreview';
-import MachiningPlanPanel from '../quote/MachiningPlanPanel';
+import MachiningCostTable from '../quote/MachiningCostTable';
 import MilledOperationStrategy from '../quote/MilledOperationStrategy';
 import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
@@ -204,7 +204,11 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
           <div className="bg-card border border-border rounded-lg overflow-hidden">
             <div className="p-4 bg-muted/30 border-b border-border space-y-1">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Detailed Cost Breakdown</h3>
-              <p className="text-[11px] text-muted-foreground">Each line is priced from a dimension measured from your CAD file.</p>
+              <p className="text-[11px] text-muted-foreground">
+                {isMachining
+                  ? 'Grouped by setup — each operation shows the cutter from your shop tool library, its time and cost.'
+                  : 'Each line is priced from a dimension measured from your CAD file.'}
+              </p>
               {cadAnalysis?.machineRecommendation && (
                 <p className="text-[11px] text-muted-foreground">
                   <strong className="text-foreground">Machine:</strong> {cadAnalysis.machineRecommendation.recommendedName}
@@ -234,33 +238,33 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
                 </div>
               )}
             </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                  <th className="px-4 py-3 font-medium">Operation / Item</th>
-                  <th className="px-4 py-3 font-medium text-right">Details</th>
-                  <th className="px-4 py-3 font-medium text-right">Ext. Price</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {lineItems.map((li) => (
-                  <tr key={li.key}>
-                    <td className="px-4 py-3">{li.name}</td>
-                    <td className="px-4 py-3 text-right text-muted-foreground">{li.driver}</td>
-                    <td className="px-4 py-3 text-right font-medium">${li.value.toFixed(2)}</td>
+            {isMachining && mc?.plan && mc.plan.setups.length > 0 ? (
+              <MachiningCostTable costs={mc} overheadPercent={settings.overheadPercent} />
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                    <th className="px-4 py-3 font-medium">Operation / Item</th>
+                    <th className="px-4 py-3 font-medium text-right">Details</th>
+                    <th className="px-4 py-3 font-medium text-right">Ext. Price</th>
                   </tr>
-                ))}
-                <tr className="bg-muted/10 font-semibold">
-                  <td className="px-4 py-3" colSpan={2}>{isMachining ? 'Machining' : 'Factory'} Subtotal (incl. {settings.overheadPercent*100}% overhead)</td>
-                  <td className="px-4 py-3 text-right">${(costs.subtotal + costs.overhead).toFixed(2)}</td>
-                </tr>
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {lineItems.map((li) => (
+                    <tr key={li.key}>
+                      <td className="px-4 py-3">{li.name}</td>
+                      <td className="px-4 py-3 text-right text-muted-foreground">{li.driver}</td>
+                      <td className="px-4 py-3 text-right font-medium">${li.value.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-muted/10 font-semibold">
+                    <td className="px-4 py-3" colSpan={2}>{isMachining ? 'Machining' : 'Factory'} Subtotal (incl. {settings.overheadPercent*100}% overhead)</td>
+                    <td className="px-4 py-3 text-right">${(costs.subtotal + costs.overhead).toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
           </div>
-
-          {mc?.plan && mc.plan.setups.length > 0 && (
-            <MachiningPlanPanel plan={mc.plan} setupTimeMin={mc.setupTimeMin} />
-          )}
 
           {mc && mc.machineClass === 'mill' && mc.stockMm && (
             <MilledOperationStrategy

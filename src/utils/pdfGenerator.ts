@@ -141,12 +141,41 @@ export function buildQuotePdf(input: QuotePdfInput): Blob {
   p.textRight(xTotal, y, money(unit * qty), 'F1', 10);
   y += 16;
 
-  // Itemised cost drivers (compact) from the cached machining breakdown, if present.
-  const items = quote.machiningCosts?.lineItems ?? [];
-  for (const li of items.slice(0, 8)) {
-    p.text(xDesc + 12, y, `- ${li.name}`, 'F1', 8.5);
-    p.textRight(xTotal, y, money((li.value ?? 0) * qty), 'F1', 8.5);
+  // Itemised operations from the cached machining breakdown, if present. When a
+  // per-setup plan exists, list it the way the shop reads a job — Setup → each
+  // operation with its cutter — then the material/setup/tooling charges.
+  const plan = quote.machiningCosts?.plan;
+  const lineFor = (label: string, value: number, indent = 12, font: 'F1' | 'F2' = 'F1') => {
+    p.text(xDesc + indent, y, label, font, 8.5);
+    p.textRight(xTotal, y, money(value * qty), font, 8.5);
     y += 12;
+  };
+  if (plan && plan.setups.length) {
+    let lines = 0;
+    const cap = 22; // keep the breakdown on the page
+    const mat = quote.machiningCosts?.lineItems?.find((l) => l.key === 'material');
+    if (mat) { lineFor(mat.name, mat.value); lines++; }
+    for (const s of plan.setups) {
+      if (lines >= cap) break;
+      p.text(xDesc + 8, y, s.name, 'F2', 8.5); y += 12; lines++;
+      for (const op of s.operations) {
+        if (lines >= cap) break;
+        p.text(xDesc + 18, y, `${op.name} — ${op.tool}`, 'F1', 8);
+        p.textRight(xTotal, y, money(op.cost * qty), 'F1', 8);
+        y += 11; lines++;
+      }
+    }
+    for (const key of ['noncut', 'setup', 'setupCharge', 'fixture', 'tooling']) {
+      const li = quote.machiningCosts?.lineItems?.find((l) => l.key === key);
+      if (li && li.value > 0.005 && lines < cap + 6) { lineFor(li.name, li.value); lines++; }
+    }
+  } else {
+    const items = quote.machiningCosts?.lineItems ?? [];
+    for (const li of items.slice(0, 8)) {
+      p.text(xDesc + 12, y, `- ${li.name}`, 'F1', 8.5);
+      p.textRight(xTotal, y, money((li.value ?? 0) * qty), 'F1', 8.5);
+      y += 12;
+    }
   }
   y += 6;
   p.line(MARGIN, y, PAGE_W - MARGIN, 0.5, 0.85);
