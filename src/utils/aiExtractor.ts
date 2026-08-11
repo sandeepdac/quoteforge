@@ -63,8 +63,10 @@ export interface AiDrawingData {
 
 export async function analyzeDrawingWithAI(input: {
   fileName: string;
-  fileBase64: string;
-  mimeType: string;
+  fileBase64?: string;
+  mimeType?: string;
+  /** Raw STEP text — set for the 3D fallback when the geometry service is down. */
+  stepText?: string;
 }): Promise<AiDrawingData | null> {
   try {
     const res = await fetch('/api/analyze-cad', {

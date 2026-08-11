@@ -473,6 +473,19 @@ async function analyzeSolid(
     };
   }
 
+  // Geometry service down AND the solid wouldn't tessellate in-browser → last
+  // automated resort before manual entry: read the STEP text with AI. This is an
+  // estimate (fromAiData flags it 'ai-drawing' + a verify note), never mistaken
+  // for the exact OCP measurement, but far better than fabricated defaults.
+  if (format === 'step') {
+    let stepText = file.content || '';
+    if (!stepText && file.buffer) stepText = new TextDecoder('utf-8').decode(file.buffer);
+    if (stepText.trim()) {
+      const ai = await analyzeDrawingWithAI({ fileName, stepText });
+      if (ai) return fromAiData(fileName, 'STEP', ai, file.pdfUrl);
+    }
+  }
+
   // Couldn't tessellate. STEP text still gives a usable estimate; other formats can't.
   if (stepResult) {
     const weightKg = round((stepResult.volumeCm3 * density) / 1000, 2) || 1.85;
@@ -583,6 +596,8 @@ async function analyzeDrawing(
 
 const AI_VERIFY_NOTE =
   'Dimensions read from the 2D drawing by AI vision — an estimate, not a measured solid. Verify before quoting.';
+const AI_STEP_VERIFY_NOTE =
+  'The exact geometry service was unavailable, so this 3D part was read from the STEP by AI — an estimate, not an exact measurement. Start services/geometry and re-run for a measured quote; verify before quoting.';
 
 /**
  * Map a vision-model drawing response onto a MACHINING analysis: a turned or
@@ -593,7 +608,7 @@ const AI_VERIFY_NOTE =
  */
 export function fromAiData(
   fileName: string,
-  fileType: 'PDF' | 'IMAGE',
+  fileType: 'PDF' | 'IMAGE' | 'STEP',
   d: AiDrawingData,
   pdfUrl?: string
 ): ExtractedCadAnalysis {
@@ -602,6 +617,7 @@ export function fromAiData(
   const cnc = DEFAULT_CNC_SETTINGS;
   const notes = d.aiNotes && d.aiNotes.length ? d.aiNotes : [];
   const tolerances = d.toleranceCallout || d.tolerances;
+  const verifyNote = fileType === 'STEP' ? AI_STEP_VERIFY_NOTE : AI_VERIFY_NOTE;
 
   const base = {
     partName: d.partName || baseName(fileName),
@@ -617,7 +633,7 @@ export function fromAiData(
     weldCount: 0,
     finishCallout: d.finishCallout,
     tolerances,
-    aiNotes: [AI_VERIFY_NOTE, ...notes],
+    aiNotes: [verifyNote, ...notes],
     confidenceScore: d.confidenceScore ?? 55,
     measurementSource: 'ai-drawing' as MeasurementSource,
     pdfUrl,

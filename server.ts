@@ -71,9 +71,15 @@ async function startServer() {
   // CAD Analysis Endpoint with Gemini API
   app.post('/api/analyze-cad', async (req, res) => {
     try {
-      const { fileName, fileBase64, mimeType } = req.body;
+      const { fileName, fileBase64, mimeType, stepText } = req.body;
       const apiKey = process.env.GEMINI_API_KEY;
-      console.log(`[analyze-cad] ${fileName} (${mimeType}, ${fileBase64 ? Math.round(fileBase64.length / 1024) + 'KB base64' : 'no data'}) — key ${apiKey && apiKey !== 'MY_GEMINI_API_KEY' ? 'present' : 'MISSING'}`);
+      // A STEP text payload is the 3D fallback used only when the exact geometry
+      // service (OCP) is unavailable; PDFs/images go through vision as before.
+      const isStep = typeof stepText === 'string' && stepText.trim().length > 0;
+      const inputDesc = isStep
+        ? `${Math.round(stepText.length / 1024)}KB STEP text`
+        : fileBase64 ? Math.round(fileBase64.length / 1024) + 'KB base64' : 'no data';
+      console.log(`[analyze-cad] ${fileName} (${isStep ? 'STEP-text' : mimeType}, ${inputDesc}) — key ${apiKey && apiKey !== 'MY_GEMINI_API_KEY' ? 'present' : 'MISSING'}`);
 
       if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
         return res.json({
@@ -84,9 +90,13 @@ async function startServer() {
 
       const ai = new GoogleGenAI({ apiKey });
 
-      const prompt = `You are an expert CNC machining estimator reading a 2D engineering drawing (${fileName}).
+      const source = isStep
+        ? `the raw text of a STEP (ISO 10303) B-Rep CAD file (${fileName}). Infer the overall size from the CARTESIAN_POINT coordinate ranges (X/Y/Z extents in the file's units — assume millimetres unless a CONVERSION_BASED_UNIT says inches, then convert), the part class from whether the geometry is rotationally symmetric (a dominant axis with CYLINDRICAL_SURFACE faces sharing it → turned; prismatic planar faces in many directions → milled), holes from coaxial cylindrical faces, and the part name from the PRODUCT / FILE_NAME entities`
+        : `a 2D engineering drawing (${fileName}). Read the drawing's dimensions and callouts`;
+
+      const prompt = `You are an expert CNC machining estimator reading ${source}.
 This shop makes CNC MACHINED parts — turned (lathe / sliding-head) and milled (prismatic) — from solid bar or billet.
-Read the drawing's dimensions and callouts and return ONLY valid JSON in this exact shape:
+Return ONLY valid JSON in this exact shape:
 {
   "partName": "string — from the title block",
   "materialName": "string — e.g. Aluminium 6082, Brass CZ121, Stainless 316, Mild Steel EN8, Titanium",
@@ -127,7 +137,21 @@ Return ONLY the JSON object.`;
 
       let responseText = '';
 
-      if (fileBase64 && mimeType) {
+      if (isStep) {
+        // STEP files can be large; cap the text so we stay within request limits.
+        // The header + a broad sample of geometry entities is enough to size and
+        // classify the part — this is a fallback, not the exact measurement.
+        const MAX_STEP_CHARS = 180_000;
+        const clipped = stepText.length > MAX_STEP_CHARS
+          ? stepText.slice(0, MAX_STEP_CHARS) + '\n...[truncated]'
+          : stepText;
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: [{ role: 'user', parts: [{ text: prompt + '\n\n=== STEP FILE ===\n' + clipped }] }],
+          config: generationConfig
+        });
+        responseText = response.text || '';
+      } else if (fileBase64 && mimeType) {
         const response = await ai.models.generateContent({
           model: 'gemini-2.5-flash',
           contents: [

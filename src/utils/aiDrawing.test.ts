@@ -54,6 +54,29 @@ describe('fromAiData — turned drawing', () => {
   });
 });
 
+describe('fromAiData — STEP read by AI (geometry-service fallback)', () => {
+  const a = fromAiData('plate.step', 'STEP', {
+    partName: 'Plate',
+    materialName: 'Aluminium 6082',
+    partClass: 'milled',
+    milled: { lengthMm: 68, widthMm: 68, heightMm: 3, holeCount: 1, pocketCount: 2, bossCount: 1, setupCount: 1 },
+    confidenceScore: 45,
+  });
+
+  it('builds a milled profile and keeps the STEP file type', () => {
+    expect(a.fileType).toBe('STEP');
+    expect(a.machineClass).toBe('mill');
+    expect(a.milledProfile).toBeDefined();
+    expect(a.milledProfile!.pocketCount).toBe(2);
+  });
+
+  it('flags it as an AI estimate with a STEP-specific verify note', () => {
+    expect(a.measurementSource).toBe('ai-drawing');
+    expect(a.aiNotes[0]).toMatch(/geometry service was unavailable/i);
+    expect(a.aiNotes[0]).toMatch(/verify/i);
+  });
+});
+
 describe('fromAiData — milled drawing', () => {
   const a = fromAiData('bracket.pdf', 'PDF', {
     partName: 'Bracket',

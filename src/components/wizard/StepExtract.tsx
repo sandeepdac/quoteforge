@@ -156,7 +156,9 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
               {cadAnalysis?.measurementSource === 'solid'
                 ? 'Dimensions measured exactly from the solid geometry. Review and adjust parameters.'
                 : cadAnalysis?.measurementSource === 'ai-drawing'
-                ? 'Dimensions read from the drawing by AI vision. Please verify before quoting.'
+                ? cadAnalysis?.fileType === 'STEP'
+                  ? 'Geometry service unavailable — this 3D part was read from the STEP by AI. Start services/geometry for a measured quote; verify before quoting.'
+                  : 'Dimensions read from the drawing by AI vision. Please verify before quoting.'
                 : cadAnalysis?.measurementSource === 'manual'
                 ? 'Automatic measurement unavailable — please enter the dimensions on the right.'
                 : 'Dimensions estimated from CAD geometry. Review and adjust parameters.'}
@@ -244,7 +246,7 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
                 );
                 if (src === 'ai-drawing') return (
                   <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30">
-                    Read from drawing
+                    {cadAnalysis?.fileType === 'STEP' ? 'Read from STEP by AI' : 'Read from drawing'}
                   </span>
                 );
                 if (src === 'manual') return (
