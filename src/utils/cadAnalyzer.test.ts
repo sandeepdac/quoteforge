@@ -12,7 +12,8 @@ describe('analyzeCadFile — STEP dispatch', () => {
   it('produces a manufacturable feature set from the real STEP model', async () => {
     const a = await analyzeCadFile({ name: 'P5-Round-Top-Flag.STEP', content: realStep });
     expect(a.fileType).toBe('STEP');
-    expect(a.materialName).toMatch(/Mild Steel/);
+    // Unlabelled STEP → shop default material (aluminium for this CNC shop).
+    expect(a.materialName).toMatch(/Alumin/);
     expect(a.weightKg).toBeGreaterThan(0);
     expect(a.holeDetails.length).toBeGreaterThan(0);
     expect(a.stepData).toBeDefined();

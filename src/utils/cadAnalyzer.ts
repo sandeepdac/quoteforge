@@ -160,7 +160,11 @@ async function analyzeSolid(
     stepResult = parseStepFile(text, fileName);
   }
 
-  const materialName = stepResult?.estimatedMaterialName || 'Mild Steel 3.0mm';
+  // Default when the STEP carries no material callout. This is a CNC machining
+  // shop that runs mostly aluminium, so an unlabelled solid defaults to aluminium
+  // (matching the AI-drawing path) rather than steel — costing an aluminium part
+  // as steel roughly triples every cutting time. Always user-editable on Extract.
+  const materialName = stepResult?.estimatedMaterialName || 'Aluminium 6082';
   const density = densityFor(materialName);
 
   // Ask the optional Python geometry service for the exact B-Rep turned profile
@@ -771,7 +775,7 @@ function manualAnalysis(
     partName: baseName(fileName),
     fileType,
     fileName,
-    materialName: 'Mild Steel 3.0mm',
+    materialName: 'Aluminium 6082',
     thicknessMm: 3.0,
     lengthMm: 0,
     widthMm: 0,
