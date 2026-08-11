@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { Download, Route, AlertTriangle } from 'lucide-react';
+import { Download, Route, AlertTriangle, Crosshair } from 'lucide-react';
 import { Toolpath, toGcode } from '../../utils/toolpath';
+import { turningOpRegions, SectionRegion } from '../../utils/opRegions';
+import type { TurningOp } from '../../types';
 
 interface ToolpathPreviewProps {
   toolpath: Toolpath;
@@ -15,9 +17,10 @@ const r1 = (v: number) => Math.round(v * 10) / 10;
 
 /** A full longitudinal (Z–X) section of the estimated turning passes. Reference only. */
 export default function ToolpathPreview({ toolpath: tp, partName, materialName }: ToolpathPreviewProps) {
-  const [off, setOff] = useState<Record<string, boolean>>({});
-  const isOn = (op: string) => !off[op];
-  const toggle = (op: string) => setOff((s) => ({ ...s, [op]: !s[op] }));
+  // Single-select "focus": which op's region we highlight. null = show every pass.
+  const [focus, setFocus] = useState<TurningOp | null>(null);
+  const opInfo = useMemo(() => turningOpRegions(tp), [tp]);
+  const focused = focus ? opInfo.find((o) => o.op === focus) : null;
 
   const { scale, X, Y, midY, svgH, stockR } = useMemo(() => {
     const totalZ = tp.stockLengthMm;
@@ -52,6 +55,28 @@ export default function ToolpathPreview({ toolpath: tp, partName, materialName }
   const border = 'hsl(var(--border))';
   const muted = 'hsl(var(--muted-foreground))';
 
+  // Render one region (in mm section space) as shaded SVG rect(s).
+  const drawRegion = (region: SectionRegion, color: string, key: string) => {
+    const x = X(region.zA);
+    const w = Math.max(1, X(region.zB) - X(region.zA));
+    const common = { fill: color, fillOpacity: 0.22, stroke: color, strokeWidth: 1.2, strokeDasharray: '4 2' } as const;
+    if (region.shape === 'band' || region.shape === 'core') {
+      const rTop = Y(region.rOuter);
+      const h = region.rOuter * 2 * scale;
+      return <rect key={key} x={x} y={rTop} width={w} height={h} {...common} />;
+    }
+    // annulus → mirrored pair (top + bottom)
+    const hAnn = Math.max(1, (region.rOuter - region.rInner) * scale);
+    return (
+      <g key={key}>
+        <rect x={x} y={Y(region.rOuter)} width={w} height={hAnn} {...common} />
+        <rect x={x} y={Y(-region.rInner)} width={w} height={hAnn} {...common} />
+      </g>
+    );
+  };
+
+  const activeColor = (op: TurningOp) => tp.passes.find((p) => p.op === op)?.color ?? muted;
+
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden">
       <div className="px-4 py-3 bg-muted/30 border-b border-border flex items-center justify-between gap-3 flex-wrap">
@@ -68,6 +93,21 @@ export default function ToolpathPreview({ toolpath: tp, partName, materialName }
         >
           <Download size={13} /> Download G-code (.nc)
         </button>
+      </div>
+
+      {/* Focus caption — what the selected op acts on */}
+      <div className="px-4 py-2 border-b border-border bg-primary/5 flex items-start gap-2 min-h-[2.4rem]">
+        <Crosshair size={13} className="text-primary shrink-0 mt-0.5" />
+        {focused ? (
+          <p className="text-[11px] text-foreground leading-snug">
+            <span className="font-semibold">{focused.label}:</span>{' '}
+            <span className="text-muted-foreground">{focused.description}</span>
+          </p>
+        ) : (
+          <p className="text-[11px] text-muted-foreground leading-snug">
+            Select an operation below to highlight <strong className="text-foreground">where it acts</strong> on the section.
+          </p>
+        )}
       </div>
 
       {/* Full longitudinal section */}
@@ -90,11 +130,16 @@ export default function ToolpathPreview({ toolpath: tp, partName, materialName }
               style={{ fill: 'hsl(var(--card))' }} stroke="#8b5cf6" strokeDasharray="3 2" strokeWidth={0.9} opacity={0.9}
             />
           )}
+
+          {/* Op-focus region overlay (behind the pass polylines) */}
+          {focused && focused.regions.map((rg, i) => drawRegion(rg, activeColor(focused.op), `rg${i}`))}
+
           {/* Centreline (dash-dot) */}
           <line x1={PAD - 8} y1={midY} x2={SVG_W - PAD + 8} y2={midY} stroke={muted} strokeDasharray="8 3 2 3" strokeWidth={0.8} opacity={0.6} />
 
-          {/* Passes — drawn on the operating (top) side for clarity */}
-          {tp.passes.filter((p) => isOn(p.op)).map((pass, pi) => {
+          {/* Passes — dimmed when another op is focused, so the highlighted op reads clearly */}
+          {tp.passes.map((pass, pi) => {
+            const dim = focus ? (pass.op === focus ? 1 : 0.12) : 1;
             const segs: React.ReactElement[] = [];
             for (let i = 1; i < pass.moves.length; i++) {
               const a = pass.moves[i - 1], b = pass.moves[i];
@@ -105,7 +150,7 @@ export default function ToolpathPreview({ toolpath: tp, partName, materialName }
                   stroke={rapid ? muted : pass.color}
                   strokeWidth={rapid ? 0.8 : 1.8}
                   strokeDasharray={rapid ? '3 3' : undefined}
-                  opacity={rapid ? 0.45 : 1}
+                  opacity={(rapid ? 0.45 : 1) * dim}
                   strokeLinecap="round"
                 />
               );
@@ -137,26 +182,34 @@ export default function ToolpathPreview({ toolpath: tp, partName, materialName }
         </svg>
       </div>
 
-      {/* Op legend / toggles with assumed cutter */}
+      {/* Op selector — click to focus a region, click again to show all */}
       <div className="px-4 py-3 grid grid-cols-1 sm:grid-cols-2 gap-1.5 border-t border-border">
-        {tp.passes.map((pass) => (
-          <button
-            key={pass.op}
-            onClick={() => toggle(pass.op)}
-            className={`flex items-start gap-2 text-left px-2.5 py-1.5 rounded-lg border transition-colors ${
-              isOn(pass.op) ? 'border-border bg-accent/30' : 'border-border/50 opacity-45'
-            }`}
-            title="Toggle this operation"
-          >
-            <span className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{ backgroundColor: pass.color }} />
-            <span className="min-w-0">
-              <span className="text-[11px] font-semibold text-foreground">
-                {pass.label} <span className="text-muted-foreground font-normal">· {pass.station} · S{pass.rpm} · F{pass.feed}</span>
+        {tp.passes.map((pass) => {
+          const isFocused = focus === pass.op;
+          const hasRegion = opInfo.some((o) => o.op === pass.op);
+          return (
+            <button
+              key={pass.op}
+              onClick={() => setFocus((cur) => (cur === pass.op ? null : pass.op))}
+              className={`flex items-start gap-2 text-left px-2.5 py-1.5 rounded-lg border transition-colors ${
+                isFocused
+                  ? 'border-primary bg-primary/10 ring-1 ring-primary/40'
+                  : focus
+                  ? 'border-border/50 opacity-55 hover:opacity-100'
+                  : 'border-border bg-accent/30 hover:bg-accent/50'
+              }`}
+              title={hasRegion ? 'Highlight where this operation acts' : 'Operation'}
+            >
+              <span className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{ backgroundColor: pass.color }} />
+              <span className="min-w-0">
+                <span className="text-[11px] font-semibold text-foreground">
+                  {pass.label} <span className="text-muted-foreground font-normal">· {pass.station} · S{pass.rpm} · F{pass.feed}</span>
+                </span>
+                <span className="block text-[10px] text-muted-foreground truncate">{pass.tool}</span>
               </span>
-              <span className="block text-[10px] text-muted-foreground truncate">{pass.tool}</span>
-            </span>
-          </button>
-        ))}
+            </button>
+          );
+        })}
       </div>
 
       <div className="px-4 pb-3 flex items-start gap-2">

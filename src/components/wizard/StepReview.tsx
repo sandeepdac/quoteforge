@@ -21,6 +21,7 @@ import { generatePartThumbnail } from '../../utils/partThumbnail';
 import { generateTurningToolpath } from '../../utils/toolpath';
 import ToolpathPreview from '../cad/ToolpathPreview';
 import MachiningPlanPanel from '../quote/MachiningPlanPanel';
+import MilledOperationStrategy from '../quote/MilledOperationStrategy';
 import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
@@ -259,6 +260,19 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
 
           {mc?.plan && mc.plan.setups.length > 0 && (
             <MachiningPlanPanel plan={mc.plan} setupTimeMin={mc.setupTimeMin} />
+          )}
+
+          {mc && mc.machineClass === 'mill' && mc.stockMm && (
+            <MilledOperationStrategy
+              stockMm={mc.stockMm}
+              counts={{
+                pocketCount: mc.pocketCount ?? 0,
+                bossCount: mc.bossCount ?? 0,
+                deepPocketCount: mc.deepPocketCount ?? 0,
+                holeCount: mc.holeCount ?? 0,
+              }}
+              removedVolumeCm3={mc.removedVolumeCm3}
+            />
           )}
 
           {toolpath && (
