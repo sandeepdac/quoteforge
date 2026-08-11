@@ -316,6 +316,7 @@ async function analyzeSolid(
           bossCount: mm.bossCount,
           deepPocketCount: mm.deepPocketCount,
           holeCount: mm.holeCount,
+          holeDiametersMm: mm.holeDiametersMm,
           sparseBillet: mm.sparseBillet,
         };
       } else {
@@ -718,6 +719,8 @@ export function fromAiData(
       bossCount: Math.max(0, milled?.bossCount ?? 0),
       deepPocketCount: 0,
       holeCount,
+      // Expand the drawing's hole schedule into one diameter per hole.
+      holeDiametersMm: holeDetails.flatMap((h) => Array(Math.max(0, h.count || 0)).fill(h.diameterMm)),
       sparseBillet: stockVolCm3 > 0 && removedVolCm3 / stockVolCm3 > 0.85,
     };
     const weightKg = d.weightKg && d.weightKg > 0 ? d.weightKg : (partVolCm3 * density) / 1000;

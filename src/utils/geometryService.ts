@@ -29,6 +29,8 @@ export interface GeometryMilled {
   deepPocketCount: number;
   maxDepthRatio: number;
   holeCount: number;
+  /** Measured hole diameters (mm) — for per-size drilling operations. */
+  holeDiametersMm?: number[];
   /** Total cylindrical faces (incl. fillets/rounds) — a superset of holeCount. */
   roundFaceCount?: number;
   /** Part fills a small fraction of its bbox → a solid billet is the wrong stock. */
