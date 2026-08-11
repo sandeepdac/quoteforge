@@ -31,15 +31,23 @@ async function startGeometryService(geometryUrl: string): Promise<ChildProcess |
   }
 
   const dir = path.join(process.cwd(), 'services', 'geometry');
-  const uvicorn = path.join(dir, '.venv', 'bin', 'uvicorn');
-  if (!fs.existsSync(uvicorn)) {
+  // venv layout differs by OS: Scripts\python.exe on Windows, bin/python on POSIX.
+  const isWin = process.platform === 'win32';
+  const venvBin = path.join(dir, '.venv', isWin ? 'Scripts' : 'bin');
+  const python = path.join(venvBin, isWin ? 'python.exe' : 'python');
+  if (!fs.existsSync(python)) {
     console.log('Geometry service: venv not found — skipping auto-start (app uses mesh fallback).');
-    console.log('  To enable exact B-Rep profiles: cd services/geometry && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt');
+    console.log(`  Looked for: ${python}`);
+    console.log(isWin
+      ? '  To enable exact B-Rep profiles: cd services\\geometry && python -m venv .venv && .venv\\Scripts\\pip install -r requirements.txt'
+      : '  To enable exact B-Rep profiles: cd services/geometry && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt');
     return null;
   }
 
   const port = (() => { try { return new URL(geometryUrl).port || '8000'; } catch { return '8000'; } })();
-  const child = spawn(uvicorn, ['main:app', '--host', '127.0.0.1', '--port', port], {
+  // Run uvicorn via the venv's python (-m uvicorn) so it works whether or not the
+  // uvicorn launcher script/.exe is on PATH, and identically on Windows and POSIX.
+  const child = spawn(python, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', port], {
     cwd: dir,
     env: { ...process.env, PYTHONPATH: dir },
   });
