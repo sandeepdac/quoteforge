@@ -11,10 +11,12 @@ import {
   CheckCircle2, 
   ArrowRight,
   ShieldCheck,
-  Cpu
+  Cpu,
+  Layers
 } from 'lucide-react';
 import { analyzeCadFile, ExtractedCadAnalysis, CadFileInput } from '../../utils/cadAnalyzer';
 import { solidFormatFor } from '../../utils/occtLoader';
+import { useQuotes } from '../../context/QuoteContext';
 
 /** Reads a file blob as a base64 string (without the data: prefix) for AI extraction. */
 function fileToBase64(file: Blob): Promise<string> {
@@ -36,9 +38,13 @@ interface StepUploadProps {
 }
 
 export default function StepUpload({ onContinue, onDataChange, data }: StepUploadProps) {
+  const { materials } = useQuotes();
   const [uploadedFile, setUploadedFile] = useState<{ name: string; size: number; type: string } | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<ExtractedCadAnalysis | null>(null);
+
+  const selectedMaterialId: string = data?.features?.materialId ?? materials[0]?.id ?? '';
+  const setMaterialId = (id: string) => onDataChange({ features: { ...data.features, materialId: id } });
   
   // Manual inputs fallback
   const [manualPartName, setManualPartName] = useState('');
@@ -50,7 +56,21 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
     try {
       const analysis = await analyzeCadFile(input);
       setAnalysisResult(analysis);
-      onDataChange({ cadAnalysis: analysis });
+      // Suggest the material the drawing/model named, if it matches the library —
+      // the user still confirms it above. An unlabelled STEP keeps the material
+      // already chosen, so the choice is never silently wrong.
+      const named = (analysis.materialName || '').toLowerCase().trim();
+      const match = named
+        ? materials.find((m) => {
+            const mn = m.name.toLowerCase();
+            return mn.includes(named) || named.includes(mn.split(' ')[0]);
+          })
+        : undefined;
+      onDataChange(
+        match
+          ? { cadAnalysis: analysis, features: { ...data.features, materialId: match.id } }
+          : { cadAnalysis: analysis }
+      );
     } catch (err) {
       console.error('CAD file analysis error:', err);
     } finally {
@@ -130,6 +150,32 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
         <p className="text-muted-foreground text-sm">
           Production-grade parser reads native 3D STEP CAD (.step/.stp) models and 2D PDF engineering drawings.
         </p>
+      </div>
+
+      {/* Material — chosen up front so it's never a silent default. A STEP rarely
+          states its material, so this is the one input the file can't give us. */}
+      <div className="bg-card border border-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="w-9 h-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+            <Layers size={18} />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-foreground">Stock material</p>
+            <p className="text-[11px] text-muted-foreground">Sets cutting speeds &amp; cost — confirm before quoting</p>
+          </div>
+        </div>
+        <select
+          value={selectedMaterialId}
+          onChange={(e) => setMaterialId(e.target.value)}
+          className="flex-1 bg-background border border-border rounded-lg px-3 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/50"
+        >
+          {materials.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+              {typeof m.pricePerKg === 'number' ? ` — $${m.pricePerKg.toFixed(2)}/kg` : ''}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Main Drag & Drop Zone */}

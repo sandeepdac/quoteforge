@@ -33,9 +33,10 @@ interface StepReviewProps {
   onSend: (opts: { margin: number; notes: string }) => void;
   onSaveDraft: (opts: { margin: number; notes: string }) => void;
   onBack: () => void;
+  onUpdate?: (updater: (prev: any) => any) => void;
 }
 
-export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onSaveDraft, onBack }: StepReviewProps) {
+export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onSaveDraft, onBack, onUpdate }: StepReviewProps) {
   const { customers, materials } = useQuotes();
   const { settings } = useSettings();
   const [margin, setMargin] = useState(settings.defaultMargin);
@@ -295,6 +296,27 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
         </div>
 
         <div className="space-y-6">
+          {/* Material confirm — last chance to correct before the quote is sent */}
+          {onUpdate && (
+            <div className="bg-card border border-border p-4 rounded-xl shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Material</h3>
+                {isMachining && <span className="text-[10px] text-muted-foreground">drives cutting speeds &amp; cost</span>}
+              </div>
+              <select
+                value={material?.id}
+                onChange={(e) => onUpdate((prev) => ({ ...prev, features: { ...prev.features, materialId: e.target.value } }))}
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                {materials.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}{typeof m.pricePerKg === 'number' ? ` — $${m.pricePerKg.toFixed(2)}/kg` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Pricing Controls */}
           <div className="bg-card border border-border p-6 rounded-xl shadow-sm space-y-6">
             <div className="space-y-4">

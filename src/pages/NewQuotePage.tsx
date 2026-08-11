@@ -79,18 +79,15 @@ export default function NewQuotePage() {
   const handleUploadContinue = (analysis?: ExtractedCadAnalysis) => {
     if (analysis) {
       setCadAnalysis(analysis);
-      
-      // Match material name with inventory
-      const matchedMat = materials.find(m => 
-        m.name.toLowerCase().includes(analysis.materialName?.toLowerCase() || '')
-      ) || materials[0];
 
+      // Material is the user's up-front choice (pre-filled from the drawing when it
+      // named one, on the Upload step). Never silently override it from the model
+      // here — an unlabelled STEP would otherwise re-default and mis-price.
       setQuoteData(prev => ({
         ...prev,
         partName: analysis.partName || 'Custom Fabricated Part',
         features: {
           ...prev.features,
-          materialId: matchedMat.id,
           lengthMm: analysis.lengthMm,
           widthMm: analysis.widthMm,
           heightMm: analysis.heightMm,
@@ -222,6 +219,7 @@ export default function NewQuotePage() {
             onSend={(opts) => handleFinalize(false, opts)}
             onSaveDraft={(opts) => handleFinalize(true, opts)}
             onBack={handleBack}
+            onUpdate={setQuoteData}
           />
         )}
       </div>
