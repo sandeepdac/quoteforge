@@ -233,6 +233,14 @@ export interface CncSettings {
   /** Added setup for a second op (back-face / turn-around) (min). */
   secondOpSetupMin: number;
   /**
+   * Optional FLAT charge per setup (currency), on top of the time-based setup
+   * cost. Reference CAM quotes bill a fixed sum per setup (e.g. $150/setup) that
+   * a pure time×rate model doesn't capture. 0 = off (default), amortised over the
+   * batch like the rest of setup. Set it to your shop's per-setup charge to match
+   * that billing model.
+   */
+  flatSetupChargePerSetup?: number;
+  /**
    * Shop efficiency factor (0.6–1.0). actual_time = theoretical_time / factor.
    * The single most important calibration parameter — expose it prominently.
    */

@@ -153,6 +153,10 @@ export default function SettingsPage() {
             <ToolingTab
               tools={settings.cnc?.toolLibrary ?? DEFAULT_TURNING_TOOLS}
               onSave={(toolLibrary) => updateSettings({ cnc: { toolLibrary } as Partial<CncSettings> as CncSettings })}
+              flatSetupCharge={settings.cnc?.flatSetupChargePerSetup ?? 0}
+              onSaveSetupCharge={(flatSetupChargePerSetup) =>
+                updateSettings({ cnc: { flatSetupChargePerSetup } as Partial<CncSettings> as CncSettings })
+              }
             />
           )}
 
@@ -255,9 +259,20 @@ function normalise(tools: ShopTool[]): ShopTool[] {
   });
 }
 
-function ToolingTab({ tools, onSave }: { tools: ShopTool[]; onSave: (t: ShopTool[]) => void }) {
+function ToolingTab({
+  tools,
+  onSave,
+  flatSetupCharge,
+  onSaveSetupCharge,
+}: {
+  tools: ShopTool[];
+  onSave: (t: ShopTool[]) => void;
+  flatSetupCharge: number;
+  onSaveSetupCharge: (v: number) => void;
+}) {
   const [rows, setRows] = useState<ShopTool[]>(() => normalise(tools));
   const [saved, setSaved] = useState(false);
+  const [charge, setCharge] = useState(String(flatSetupCharge || 0));
 
   const update = (op: TurningOp, patch: Partial<ShopTool>) => {
     setRows((rs) => rs.map((r) => (r.op === op ? { ...r, ...patch } : r)));
@@ -277,11 +292,36 @@ function ToolingTab({ tools, onSave }: { tools: ShopTool[]; onSave: (t: ShopTool
   return (
     <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
       <div className="border-b border-border pb-4">
-        <h3 className="text-lg font-bold">Turning Tool Library</h3>
+        <h3 className="text-lg font-bold">Machining & Tool Library</h3>
         <p className="text-sm text-muted-foreground mt-1">
-          Map each operation to the turret station and insert your shop runs. These drive the reference toolpath preview and the
+          Map each turning operation to the turret station and insert your shop runs. These drive the reference toolpath preview and the
           downloadable G-code on turned parts.
         </p>
+      </div>
+
+      {/* Flat setup charge — applies to turned AND milled quotes */}
+      <div className="bg-muted/20 border border-border rounded-lg p-4 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+        <div className="max-w-lg">
+          <p className="text-sm font-semibold text-foreground">Flat charge per setup</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            A fixed sum added <strong className="text-foreground">per setup</strong>, on top of time-based setup, then amortised over the
+            batch. CAM quotes typically bill a flat setup charge (e.g. $150/setup) that a pure time×rate model misses. Set 0 to disable.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-sm text-muted-foreground">$</span>
+          <input
+            type="number"
+            step="10"
+            min="0"
+            value={charge}
+            onChange={(e) => setCharge(e.target.value)}
+            onBlur={() => onSaveSetupCharge(Math.max(0, Number(charge) || 0))}
+            className="w-28 bg-background border border-border rounded px-2 py-1.5 text-sm text-right font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+            placeholder="0"
+          />
+          <span className="text-xs text-muted-foreground">/ setup</span>
+        </div>
       </div>
 
       <div className="overflow-x-auto">

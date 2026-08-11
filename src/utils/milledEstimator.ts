@@ -194,7 +194,10 @@ export function calculateMilledCosts(
     (cnc.millSetupFirstOpMin ?? cnc.setupTimeFirstOpMin) +
     (setups - 1) * (cnc.millSetupPerExtraOpMin ?? cnc.secondOpSetupMin) +
     toolCount * cnc.setupTimePerToolMin;
-  const setupCostTotal = setupTimeMin * cnc.setupRatePerMin;
+  // Time-based setup + an optional flat charge per setup (both one-time job costs,
+  // amortised over the batch). The flat charge matches how CAM quotes bill setup.
+  const flatSetupCharge = Math.max(0, cnc.flatSetupChargePerSetup ?? 0) * setups;
+  const setupCostTotal = setupTimeMin * cnc.setupRatePerMin + flatSetupCharge;
   const setupPerUnit = setupCostTotal / qty;
 
   // --- Fixturing: soft jaws / custom work-holding for multi-setup or bosses
@@ -225,7 +228,7 @@ export function calculateMilledCosts(
     { key: 'drill', name: 'Drilling', driver: `${holes} hole${holes === 1 ? '' : 's'} — ${secStr(drillSec)}`, value: opCost(drillSec), color: COLORS.drill },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${p.pocketCount} pocket${p.pocketCount === 1 ? '' : 's'}`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
-    { key: 'setup', name: `Setup ÷ ${qty}`, driver: `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''} (${setups} access dir.), batch of ${qty}`, value: setupPerUnit, color: COLORS.setup },
+    { key: 'setup', name: `Setup ÷ ${qty}`, driver: `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''} (${setups} access dir.)${flatSetupCharge > 0 ? ` + $${flatSetupCharge.toFixed(0)} flat` : ''}, batch of ${qty}`, value: setupPerUnit, color: COLORS.setup },
     { key: 'fixture', name: `Soft jaws / fixture ÷ ${qty}`, driver: needsSoftJaws ? `${setups} setups${p.bossCount > 0 ? `, ${p.bossCount} boss` : ''} → work-holding, made once` : '', value: fixtureCost, color: COLORS.fixture },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${toolCount} operations`, value: toolingCost, color: COLORS.tooling },
   ].filter((li) => li.value > 0.005);

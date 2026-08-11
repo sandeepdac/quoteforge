@@ -60,6 +60,35 @@ describe('setup amortisation (batch curve)', () => {
   });
 });
 
+describe('flat setup charge (CAM-style billing)', () => {
+  const withFlat = { ...DEFAULT_SHOP_SETTINGS, cnc: { ...DEFAULT_SHOP_SETTINGS.cnc!, flatSetupChargePerSetup: 150 } };
+  const twoSetup = { ...baseProfile, setupCount: 2 };
+
+  it('adds flat × setups to the setup cost, amortised over the batch', () => {
+    const off = calculateMilledCosts(input(twoSetup), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const on = calculateMilledCosts(input(twoSetup), 1, false, 0.25, withFlat);
+    // 2 setups × $150 = $300 extra at qty 1.
+    expect(on.setupCost - off.setupCost).toBeCloseTo(300, 5);
+  });
+
+  it('amortises the flat charge over the batch like the rest of setup', () => {
+    const on1 = calculateMilledCosts(input(twoSetup), 1, false, 0.25, withFlat);
+    const on10 = calculateMilledCosts(input(twoSetup), 10, false, 0.25, withFlat);
+    const off1 = calculateMilledCosts(input(twoSetup), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const off10 = calculateMilledCosts(input(twoSetup), 10, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    expect(on10.setupCost - off10.setupCost).toBeCloseTo(30, 5); // 300 / 10
+    expect(on1.setupCost - off1.setupCost).toBeCloseTo(300, 5);
+  });
+
+  it('is off by default (no change to the standard quote)', () => {
+    const def = calculateMilledCosts(input(twoSetup), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const explicitZero = calculateMilledCosts(input(twoSetup), 1, false, 0.25, {
+      ...DEFAULT_SHOP_SETTINGS, cnc: { ...DEFAULT_SHOP_SETTINGS.cnc!, flatSetupChargePerSetup: 0 },
+    });
+    expect(def.setupCost).toBeCloseTo(explicitZero.setupCost, 6);
+  });
+});
+
 describe('the three geometric rules move the price', () => {
   it('more setups (Rule 1) raise the setup cost', () => {
     const one = calculateMilledCosts(input({ ...baseProfile, setupCount: 1 }), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
