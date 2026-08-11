@@ -36,11 +36,15 @@ export default function MilledOperationStrategy({ stockMm, counts, removedVolume
   const planH = Math.min(200, Math.max(70, stockMm.y * pxPerMm));
   const elevH = Math.min(140, Math.max(44, stockMm.z * pxPerMm));
 
-  const primary = 'hsl(var(--primary))';
-  const border = 'hsl(var(--border))';
-  const muted = 'hsl(var(--muted-foreground))';
-  const stockFill = 'hsl(var(--muted-foreground) / 0.12)';
-  const cavityFill = 'hsl(var(--card))';
+  // Concrete colours (not CSS vars): var() does not resolve in SVG presentation
+  // attributes like fill=, so it silently falls back to solid black. These slate/
+  // blue tones read well in both light and dark themes.
+  const primary = '#2563eb';
+  const border = 'rgba(100,116,139,0.75)';
+  const muted = '#94a3b8';
+  const stockFill = 'rgba(148,163,184,0.20)';
+  const cavityFill = 'rgba(148,163,184,0.38)';
+  const HL = { pocket: 'rgba(37,99,235,0.22)', boss: 'rgba(37,99,235,0.32)', hole: 'rgba(37,99,235,0.5)', face: 'rgba(37,99,235,0.3)' };
 
   // Emphasis helpers keyed off the focused op's `touches`.
   const on = (k: keyof typeof t) => !!t[k];
@@ -97,7 +101,7 @@ export default function MilledOperationStrategy({ stockMm, counts, removedVolume
                 <rect
                   key={`pk${i}`}
                   x={px(p.x)} y={4 + p.y * planH} width={p.w * innerW} height={p.h * planH} rx={3}
-                  fill={on('pockets') ? 'hsl(var(--primary) / 0.18)' : cavityFill}
+                  fill={on('pockets') ? HL.pocket : cavityFill}
                   stroke={p.deep ? '#e11d48' : hi(lit)} strokeWidth={lit ? 1.8 : 1}
                   opacity={dim(lit)}
                 />
@@ -110,7 +114,7 @@ export default function MilledOperationStrategy({ stockMm, counts, removedVolume
                 <rect
                   key={`bs${i}`}
                   x={px(b.x)} y={4 + b.y * planH} width={b.w * innerW} height={Math.max(4, b.h * planH)} rx={2}
-                  fill={lit ? 'hsl(var(--primary) / 0.25)' : stockFill}
+                  fill={lit ? HL.boss : stockFill}
                   stroke={hi(lit)} strokeWidth={lit ? 1.5 : 0.8} opacity={dim(lit)}
                 />
               );
@@ -122,7 +126,7 @@ export default function MilledOperationStrategy({ stockMm, counts, removedVolume
                 <circle
                   key={`h${i}`}
                   cx={px(h.x)} cy={4 + h.y * planH} r={Math.max(2.5, h.r * innerW)}
-                  fill={lit ? 'hsl(var(--primary) / 0.35)' : cavityFill}
+                  fill={lit ? HL.hole : cavityFill}
                   stroke={hi(lit)} strokeWidth={lit ? 1.4 : 0.9} opacity={dim(lit)}
                 />
               );
@@ -147,7 +151,7 @@ export default function MilledOperationStrategy({ stockMm, counts, removedVolume
             {/* Facing: top face band */}
             <rect
               x={PADX} y={16} width={innerW} height={Math.max(4, elevH * 0.08)}
-              fill={on('face') ? 'hsl(var(--primary) / 0.3)' : 'transparent'}
+              fill={on('face') ? HL.face : 'transparent'}
               stroke={hi(on('face'))} strokeWidth={on('face') ? 2 : 0.8}
               opacity={on('face') ? 1 : focus ? 0.2 : 0.4}
             />
@@ -160,7 +164,7 @@ export default function MilledOperationStrategy({ stockMm, counts, removedVolume
                 <rect
                   key={`pe${i}`}
                   x={px(p.x)} y={16} width={w} height={d}
-                  fill={on('pockets') ? 'hsl(var(--primary) / 0.18)' : cavityFill}
+                  fill={on('pockets') ? HL.pocket : cavityFill}
                   stroke={p.deep ? '#e11d48' : hi(lit)} strokeWidth={lit ? 1.6 : 1} opacity={dim(lit)}
                 />
               );
