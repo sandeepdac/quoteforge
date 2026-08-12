@@ -140,7 +140,9 @@ export function nextStandardPlate(requiredMm: number): number {
   for (const t of STANDARD_PLATE_THICKNESS_MM) {
     if (t >= requiredMm - 1e-6) return t;
   }
-  return Math.ceil(requiredMm / 25.4) * 25.4;
+  // Round to 0.001 mm so the imperial-derived step (e.g. 6" = 152.4) doesn't carry
+  // float noise like 152.39999999999998 into the UI and cost drivers.
+  return Math.round(Math.ceil(requiredMm / 25.4) * 25.4 * 1000) / 1000;
 }
 
 /**

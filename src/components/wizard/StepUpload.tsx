@@ -17,6 +17,7 @@ import {
 import { analyzeCadFile, ExtractedCadAnalysis, CadFileInput } from '../../utils/cadAnalyzer';
 import { solidFormatFor } from '../../utils/occtLoader';
 import { useQuotes } from '../../context/QuoteContext';
+import { materialFamilyFor } from '../../utils/materials';
 
 /** Reads a file blob as a base64 string (without the data: prefix) for AI extraction. */
 function fileToBase64(file: Blob): Promise<string> {
@@ -56,16 +57,13 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
     try {
       const analysis = await analyzeCadFile(input);
       setAnalysisResult(analysis);
-      // Suggest the material the drawing/model named, if it matches the library —
-      // the user still confirms it above. An unlabelled STEP keeps the material
-      // already chosen, so the choice is never silently wrong.
-      const named = (analysis.materialName || '').toLowerCase().trim();
-      const match = named
-        ? materials.find((m) => {
-            const mn = m.name.toLowerCase();
-            return mn.includes(named) || named.includes(mn.split(' ')[0]);
-          })
-        : undefined;
+      // Suggest the material the drawing/model named, matched by cutting-data FAMILY
+      // (so "Aluminium 6082" finds the library's aluminium regardless of 6082/6061
+      // or the -ium/-um spelling). The user still confirms it above; an unlabelled
+      // STEP keeps whatever was already chosen, so the choice is never silently wrong.
+      const named = (analysis.materialName || '').trim();
+      const fam = named ? materialFamilyFor(named) : undefined;
+      const match = fam ? materials.find((m) => materialFamilyFor(m.name) === fam) : undefined;
       onDataChange(
         match
           ? { cadAnalysis: analysis, features: { ...data.features, materialId: match.id } }

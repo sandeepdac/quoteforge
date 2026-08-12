@@ -30,7 +30,9 @@ export const QuoteProvider = ({ children }: { children: ReactNode }) => {
   const [quotes, setQuotes] = usePersistentState<Quote[]>('quotes', mockQuotes);
   const [parts, setParts] = usePersistentState<Part[]>('parts', mockParts);
   const [customers, setCustomers] = usePersistentState<Customer[]>('customers', mockCustomers);
-  const [materials, setMaterials] = usePersistentState<Material[]>('materials', mockMaterials);
+  // Key bumped to re-seed the machining-stock library over the old sheet-metal one
+  // held in localStorage (prices are still editable in Materials afterwards).
+  const [materials, setMaterials] = usePersistentState<Material[]>('materials_cnc_v1', mockMaterials);
 
   const addQuote = (quote: Quote) => setQuotes([quote, ...quotes]);
   

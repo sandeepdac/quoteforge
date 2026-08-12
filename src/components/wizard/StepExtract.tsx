@@ -23,6 +23,8 @@ import { cn } from '../../utils/cn';
 
 interface StepExtractProps {
   cadAnalysis?: ExtractedCadAnalysis;
+  /** The material the user selected (drives the quote); preserved & shown so plan + cost agree. */
+  materialId?: string;
   onContinue: (extractedData: Partial<PartFeatures> & { materialId: string }) => void;
   onBack: () => void;
 }
@@ -35,15 +37,21 @@ const loadingMessages = [
   "Calculating volume, surface area, and mass..."
 ];
 
-export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExtractProps) {
+export default function StepExtract({ cadAnalysis, materialId, onContinue, onBack }: StepExtractProps) {
   const { materials } = useQuotes();
+  // The material actually used for the quote (the user's pick) — shown everywhere so
+  // the stock panel never disagrees with the cost table. Falls back to the analyzer's
+  // reading only when no selection has flowed through yet.
+  const selectedMaterialId = materialId || 'm1';
+  const shownMaterial = materials.find((m) => m.id === selectedMaterialId)?.name || cadAnalysis?.materialName;
+  const rMm = (v: number) => Math.round(v * 10) / 10;
   const [isLoading, setIsLoading] = useState(true);
   const [progress, setProgress] = useState(0);
   const [currentMessage, setCurrentMessage] = useState(loadingMessages[0]);
   
   // Local state for extracted features
   const [features, setFeatures] = useState<Partial<PartFeatures> & { materialId: string }>({
-    materialId: 'm1',
+    materialId: selectedMaterialId,
     lengthMm: cadAnalysis?.lengthMm || 350,
     widthMm: cadAnalysis?.widthMm || 200,
     heightMm: cadAnalysis?.heightMm || 45,
@@ -61,7 +69,7 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
   useEffect(() => {
     if (cadAnalysis) {
       setFeatures({
-        materialId: materials.find(m => m.name.toLowerCase().includes(cadAnalysis.materialName?.toLowerCase() || ''))?.id || 'm1',
+        materialId: selectedMaterialId, // the user's up-front pick — never re-derived from the model
         lengthMm: cadAnalysis.lengthMm,
         widthMm: cadAnalysis.widthMm,
         heightMm: cadAnalysis.heightMm,
@@ -500,7 +508,7 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
 
               <p className="text-[11px] text-muted-foreground leading-relaxed border-t border-border pt-2.5">
                 Priced from <strong className="text-foreground">cycle time</strong>: facing, roughing, finishing, drilling and part-off from the
-                turned profile, at rates for {cadAnalysis.materialName}. This estimates time only —
+                turned profile, at rates for {shownMaterial}. This estimates time only —
                 <strong className="text-foreground"> it does not generate toolpaths</strong>.
               </p>
             </div>
@@ -520,10 +528,10 @@ export default function StepExtract({ cadAnalysis, onContinue, onBack }: StepExt
                 <div className="bg-accent/40 border border-border p-3 rounded-lg">
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Billet stock</p>
                   <p className="text-sm font-bold text-foreground">
-                    {mp.stockMm.x} × {mp.stockMm.y} × {mp.stockMm.z} mm
+                    {rMm(mp.stockMm.x)} × {rMm(mp.stockMm.y)} × {rMm(mp.stockMm.z)} mm
                   </p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {mp.stockVolumeCm3} cm³ raw · {cadAnalysis.materialName}
+                    {mp.stockVolumeCm3} cm³ raw · {shownMaterial}
                   </p>
                 </div>
                 <div className="bg-accent/40 border border-border p-3 rounded-lg">

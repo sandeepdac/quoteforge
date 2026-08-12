@@ -196,10 +196,11 @@ export default function NewQuotePage() {
           />
         )}
         {currentStep === 2 && (
-          <StepExtract 
+          <StepExtract
             cadAnalysis={cadAnalysis}
-            onContinue={(extracted) => handleContinue(extracted)} 
-            onBack={handleBack} 
+            materialId={quoteData.features.materialId}
+            onContinue={(extracted) => handleContinue(extracted)}
+            onBack={handleBack}
           />
         )}
         {currentStep === 3 && (
