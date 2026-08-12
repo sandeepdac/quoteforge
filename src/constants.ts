@@ -30,6 +30,7 @@ export const DEFAULT_CNC_SETTINGS: CncSettings = {
   setupBillingMode: 'both',   // 'time' | 'flat' | 'both' — how the flat charge combines with time labour
 
   efficiencyFactor: 0.8, // actual = theoretical / 0.8 (real shops run below book)
+  feedrateRatioPercent: 100, // client-facing feed override; 100 = programmed feed (neutral)
   maxRpm: 6000,
   toolChangeSec: 3,
   barLoadSec: 8,
@@ -74,5 +75,6 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   defaultMargin: 0.25,
   rushPremiumPercent: 0.20,
   scrapFactor: 0.15,
+  currency: 'USD',
   cnc: DEFAULT_CNC_SETTINGS,
 };

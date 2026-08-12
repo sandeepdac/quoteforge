@@ -188,6 +188,9 @@ export function calculateMilledCosts(
   const { overheadPercent, rushPremiumPercent } = settings;
   const m = materialPropsFor(input.materialName);
   const eff = cnc.efficiencyFactor > 0 ? cnc.efficiencyFactor : 0.8;
+  // Client-facing feedrate override (Settings): 100% = programmed feed. Below 100
+  // runs cutting slower (more time), above 100 faster. Scales CUTTING time only.
+  const feedMult = 100 / Math.max(1, cnc.feedrateRatioPercent ?? 100);
   const machineRatePerMin = cnc.machineRatePerMin * (machineRateMultiplier > 0 ? machineRateMultiplier : 1);
   const qty = Math.max(1, Math.round(quantity || 1));
   const p = input.profile;
@@ -218,20 +221,20 @@ export function calculateMilledCosts(
   const millMrr = millingMrrCm3PerMin(m, millCfg);
   // Base (open, part-sized tool) time; the complexity delta is billed separately
   // so the line items sum cleanly to the subtotal.
-  const roughBaseSec = removedVol > 0 && millMrr > 0 ? (removedVol / millMrr) * 60 : 0;
+  const roughBaseSec = (removedVol > 0 && millMrr > 0 ? (removedVol / millMrr) * 60 : 0) * feedMult;
   const roughSec = roughBaseSec * deepMult;
 
   // --- Facing: skim the top face(s) that are cut, ~ stock footprint --------
   const footprintCm2 = (p.stockMm.x * p.stockMm.y) / 100;
   const finishRate = finishingRateCm2PerMin(m, millCfg);
-  const facingSec = finishRate > 0 ? (footprintCm2 / finishRate) * 60 : 0;
+  const facingSec = (finishRate > 0 ? (footprintCm2 / finishRate) * 60 : 0) * feedMult;
 
   // --- Finishing: walls + floors of the machined faces ---------------------
   // Contoured parts finish far slower (small ball at fine stepover); the multiplier
   // is 1 for prismatic parts and plates, so simple-part calibration is unchanged.
   const finishSculpt = sculptFinishMult(p);
   const finishAreaCm2 = FINISH_MACHINED_FRACTION * Math.max(0, p.surfaceAreaCm2);
-  const finishBaseSec = finishRate > 0 ? (finishAreaCm2 / finishRate) * 60 * finishSculpt : 0;
+  const finishBaseSec = (finishRate > 0 ? (finishAreaCm2 / finishRate) * 60 * finishSculpt : 0) * feedMult;
   const finishSec = finishBaseSec * deepMult;
   // Extra seconds attributable to small-tool feature detail (rough + finish).
   const complexitySec = (roughBaseSec + finishBaseSec) * (deepMult - 1);
@@ -240,7 +243,7 @@ export function calculateMilledCosts(
   const holes = Math.max(0, p.holeCount || 0);
   const throughDepthMm = Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z) || 10;
   const drillPerHole = DRILL_SEC_PER_HOLE_REF * (1 / Math.max(0.3, m.machinability)) * (throughDepthMm / 20);
-  const drillSec = holes * drillPerHole;
+  const drillSec = holes * drillPerHole * feedMult;
 
   // --- Cycle time (theoretical → actual via efficiency) --------------------
   const cuttingSec = roughSec + facingSec + finishSec + drillSec;

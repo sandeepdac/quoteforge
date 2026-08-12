@@ -10,15 +10,17 @@ import {
   Save,
   Moon,
   Sun,
-  RotateCcw
+  RotateCcw,
+  Calculator
 } from 'lucide-react';
 import { Wrench } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
 import { clearAllState } from '../utils/storage';
-import { DEFAULT_TURNING_TOOLS } from '../constants';
+import { DEFAULT_CNC_SETTINGS, DEFAULT_TURNING_TOOLS } from '../constants';
 import { CncSettings, ShopTool, TurningOp } from '../types';
+import { CURRENCIES } from '../utils/currency';
 
 export default function SettingsPage() {
   const { settings, updateSettings } = useSettings();
@@ -37,6 +39,7 @@ export default function SettingsPage() {
   const tabs = [
     { id: 'shop', name: 'Shop Info', icon: Building },
     { id: 'rates', name: 'Labor Rates', icon: DollarSign },
+    { id: 'estimate', name: 'Estimate', icon: Calculator },
     { id: 'margins', name: 'Margins', icon: Zap },
     { id: 'tooling', name: 'Tooling', icon: Wrench },
     { id: 'account', name: 'Preferences', icon: SettingsIcon },
@@ -112,6 +115,15 @@ export default function SettingsPage() {
                 </button>
               </div>
             </div>
+          )}
+
+          {activeTab === 'estimate' && (
+            <EstimateTab
+              cnc={settings.cnc ?? DEFAULT_CNC_SETTINGS}
+              currency={settings.currency ?? 'USD'}
+              onSaveCnc={(patch) => updateSettings({ cnc: patch as CncSettings })}
+              onSaveCurrency={(currency) => updateSettings({ currency })}
+            />
           )}
 
           {activeTab === 'margins' && (
@@ -261,6 +273,163 @@ function normalise(tools: ShopTool[]): ShopTool[] {
     const found = tools.find((t) => t.op === op);
     return found ?? DEFAULT_TURNING_TOOLS.find((t) => t.op === op)!;
   });
+}
+
+/**
+ * ESTIMATE settings — the client-facing cost inputs, mirroring a CAM estimator's
+ * Estimate panel: the shop enters its own machining rate, feed override, tool-
+ * change time and quoting currency, and every machining quote uses them.
+ */
+function EstimateTab({
+  cnc,
+  currency,
+  onSaveCnc,
+  onSaveCurrency,
+}: {
+  cnc: CncSettings;
+  currency: string;
+  onSaveCnc: (patch: Partial<CncSettings>) => void;
+  onSaveCurrency: (code: string) => void;
+}) {
+  const [rateHr, setRateHr] = useState(String(Math.round((cnc.machineRatePerMin ?? 1.25) * 60)));
+  const [feed, setFeed] = useState(String(cnc.feedrateRatioPercent ?? 100));
+  const [toolChange, setToolChange] = useState(String(cnc.millToolChangeSec ?? 10));
+  const [saved, setSaved] = useState('');
+  const flash = (what: string) => {
+    setSaved(what);
+    window.setTimeout(() => setSaved(''), 1600);
+  };
+
+  const saveRate = () => {
+    const perHr = Math.max(1, Number(rateHr) || 0);
+    setRateHr(String(Math.round(perHr)));
+    onSaveCnc({ machineRatePerMin: perHr / 60 });
+    flash('Machining rate');
+  };
+  const saveFeed = () => {
+    const pct = Math.min(300, Math.max(10, Math.round(Number(feed) || 100)));
+    setFeed(String(pct));
+    onSaveCnc({ feedrateRatioPercent: pct });
+    flash('Feedrate ratio');
+  };
+  const saveToolChange = () => {
+    const s = Math.max(0, Number(toolChange) || 0);
+    setToolChange(String(s));
+    onSaveCnc({ millToolChangeSec: s });
+    flash('Tool change time');
+  };
+
+  return (
+    <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
+      <div className="border-b border-border pb-4">
+        <h3 className="text-lg font-bold">Estimate Settings</h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          The cost inputs behind every machining quote. Enter your own shop rate, feed override and quoting currency — these drive the
+          machining time and cost on turned and milled parts.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <SettingField
+          label="Machining Rate"
+          hint="Spindle charge-out for cutting time"
+          unit="$ / hr"
+        >
+          <input
+            type="number"
+            step="5"
+            min="1"
+            value={rateHr}
+            onChange={(e) => setRateHr(e.target.value)}
+            onBlur={saveRate}
+            className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        </SettingField>
+
+        <SettingField
+          label="Feedrate Ratio"
+          hint="100% = programmed feed; lower = slower"
+          unit="%"
+        >
+          <input
+            type="number"
+            step="5"
+            min="10"
+            max="300"
+            value={feed}
+            onChange={(e) => setFeed(e.target.value)}
+            onBlur={saveFeed}
+            className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        </SettingField>
+
+        <SettingField
+          label="Tool Change Time"
+          hint="ATC swap time added per distinct tool"
+          unit="s"
+        >
+          <input
+            type="number"
+            step="1"
+            min="0"
+            value={toolChange}
+            onChange={(e) => setToolChange(e.target.value)}
+            onBlur={saveToolChange}
+            className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        </SettingField>
+
+        <SettingField label="Currency" hint="Symbol shown on machining quotes" unit="">
+          <select
+            value={currency}
+            onChange={(e) => {
+              onSaveCurrency(e.target.value);
+              flash('Currency');
+            }}
+            className="w-56 bg-background border border-border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+          >
+            {CURRENCIES.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </SettingField>
+      </div>
+
+      <div className="pt-6 border-t border-border flex items-center justify-between">
+        <p className="text-[11px] text-muted-foreground">
+          Changes save automatically and apply to the next quote you generate.
+        </p>
+        {saved && <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">{saved} saved ✓</span>}
+      </div>
+    </div>
+  );
+}
+
+function SettingField({
+  label,
+  hint,
+  unit,
+  children,
+}: {
+  label: string;
+  hint: string;
+  unit: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="p-4 rounded-lg border border-border bg-muted/10 space-y-2">
+      <div>
+        <p className="text-sm font-semibold text-foreground">{label}</p>
+        <p className="text-xs text-muted-foreground">{hint}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        {children}
+        {unit && <span className="text-xs text-muted-foreground font-medium">{unit}</span>}
+      </div>
+    </div>
+  );
 }
 
 function ToolingTab({

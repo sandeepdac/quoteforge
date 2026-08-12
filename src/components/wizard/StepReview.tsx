@@ -17,6 +17,7 @@ import { calculateQuoteCosts, calculateWinProbability } from '../../utils/estima
 import { calculateMachiningCosts } from '../../utils/cncEstimator';
 import { calculateMilledCosts } from '../../utils/milledEstimator';
 import { materialPropsFor } from '../../utils/materials';
+import { currencySymbol } from '../../utils/currency';
 import { generatePartThumbnail } from '../../utils/partThumbnail';
 import { generateTurningToolpath } from '../../utils/toolpath';
 import ToolpathPreview from '../cad/ToolpathPreview';
@@ -240,7 +241,7 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
               )}
             </div>
             {isMachining && mc?.plan && mc.plan.setups.length > 0 ? (
-              <MachiningCostTable costs={mc} overheadPercent={settings.overheadPercent} />
+              <MachiningCostTable costs={mc} overheadPercent={settings.overheadPercent} currency={currencySymbol(settings.currency)} />
             ) : (
               <table className="w-full text-sm">
                 <thead>
@@ -364,7 +365,7 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
               )}
               <div className="flex justify-between items-center pt-2">
                 <span className="text-base font-bold">Grand Total</span>
-                <span className="text-2xl font-black text-primary">${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="text-2xl font-black text-primary">{currencySymbol(settings.currency)}{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
           </div>

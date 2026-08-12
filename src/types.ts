@@ -252,6 +252,13 @@ export interface CncSettings {
    * The single most important calibration parameter — expose it prominently.
    */
   efficiencyFactor: number;
+  /**
+   * Client-facing feedrate override (%), mirroring a CAM estimator's "Feedrate
+   * Ratio". 100 = run cutting at the programmed feed (default); below 100 runs
+   * slower (more cutting time), above 100 faster. Scales CUTTING time only —
+   * tool changes, rapids and setup are unaffected.
+   */
+  feedrateRatioPercent?: number;
   /** Spindle rpm ceiling. */
   maxRpm: number;
   /** Turret index / tool-change time (s each). */
@@ -309,6 +316,8 @@ export interface ShopSettings {
   defaultMargin: number;
   rushPremiumPercent: number;
   scrapFactor: number;
+  /** ISO 4217 currency code the shop quotes in (e.g. 'USD', 'EUR', 'GBP'). */
+  currency?: string;
   /** CNC machining rates/speeds. Optional so older persisted settings still load. */
   cnc?: CncSettings;
 }

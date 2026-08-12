@@ -83,6 +83,9 @@ export function calculateMachiningCosts(
   const m = materialPropsFor(input.materialName);
   const eff = cnc.efficiencyFactor > 0 ? cnc.efficiencyFactor : 0.8;
   const machineRatePerMin = cnc.machineRatePerMin * (machineRateMultiplier > 0 ? machineRateMultiplier : 1);
+  // Client-facing feedrate override (Settings): 100% = programmed feed; scales
+  // CUTTING time only (air moves, bar-feed and setup are unaffected).
+  const feedMult = 100 / Math.max(1, cnc.feedrateRatioPercent ?? 100);
   const qty = Math.max(1, Math.round(quantity || 1));
 
   // --- Stock & material ----------------------------------------------------
@@ -103,7 +106,7 @@ export function calculateMachiningCosts(
   // Per-op actual seconds and cost (efficiency applied to cutting/air alike).
   const ratePerSec = machineRatePerMin / 60;
   const opCost = (sec: number) => (sec / eff) * ratePerSec;
-  const cycleTimeSec = t.cuttingSec / eff + t.airSec / eff + cnc.barLoadSec;
+  const cycleTimeSec = (t.cuttingSec * feedMult) / eff + t.airSec / eff + cnc.barLoadSec;
   const machineCost = (cycleTimeSec / 60) * machineRatePerMin;
 
   // --- Setup (amortised over the batch) ------------------------------------

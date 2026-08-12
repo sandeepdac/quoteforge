@@ -193,6 +193,29 @@ describe('contouredSetupCount — setup floor for contoured parts', () => {
   });
 });
 
+describe('feedrate ratio — client feed override scales cutting time', () => {
+  const feedProfile: MilledProfile = { ...baseProfile, removedVolumeCm3: 50, surfaceAreaCm2: 300, holeCount: 4 };
+  const runFeed = (pct: number | undefined) => {
+    const s = JSON.parse(JSON.stringify(DEFAULT_SHOP_SETTINGS));
+    if (pct === undefined) delete s.cnc.feedrateRatioPercent;
+    else s.cnc.feedrateRatioPercent = pct;
+    return calculateMilledCosts(input(feedProfile), 1, false, 0.25, s);
+  };
+
+  it('slower feed (50%) costs more machine time; faster (200%) costs less', () => {
+    const slow = runFeed(50);
+    const normal = runFeed(100);
+    const fast = runFeed(200);
+    expect(slow.cycleTimeSec).toBeGreaterThan(normal.cycleTimeSec);
+    expect(slow.machineCost).toBeGreaterThan(normal.machineCost);
+    expect(fast.machineCost).toBeLessThan(normal.machineCost);
+  });
+
+  it('100% is neutral — identical to leaving the ratio unset', () => {
+    expect(runFeed(100).machineCost).toBeCloseTo(runFeed(undefined).machineCost, 6);
+  });
+});
+
 describe('sculptured-surface finishing', () => {
   // Same volume + removed metal; one is a compact block, one is a contoured 3D part
   // (far more surface per unit volume → slow small-ball finishing).
