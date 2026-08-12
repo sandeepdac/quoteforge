@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateMilledCosts, MilledMachiningInput, MilledProfile } from './milledEstimator';
+import { calculateMilledCosts, contouredSetupCount, MilledMachiningInput, MilledProfile } from './milledEstimator';
 import { DEFAULT_SHOP_SETTINGS } from '../constants';
 
 // A 60×40×20 mm aluminium block with one open pocket (~12.5% removed), 1 setup.
@@ -150,6 +150,24 @@ describe('milling uses milling physics, not turning physics', () => {
     const air = c.lineItems.find((li) => li.key === 'noncut');
     expect(air).toBeDefined();
     expect(air!.value).toBeGreaterThan(0);
+  });
+});
+
+describe('contouredSetupCount — setup floor for contoured parts', () => {
+  const ftc07 = { surfaceAreaCm2: 3914, partVolumeCm3: 1727, stockMm: { x: 352, y: 136, z: 263 } };
+  const block = { surfaceAreaCm2: 2834, partVolumeCm3: 3324, stockMm: { x: 305, y: 98, z: 250 } };
+  const plate = { surfaceAreaCm2: 966, partVolumeCm3: 136, stockMm: { x: 280, y: 3, z: 190 } };
+
+  it('bumps a sculptured part above its geometric access count (FTC-07: 3 → 5)', () => {
+    expect(contouredSetupCount(3, ftc07)).toBe(5);
+  });
+
+  it('leaves a prismatic block at its measured count (no spurious re-clamps)', () => {
+    expect(contouredSetupCount(5, block)).toBe(5);
+  });
+
+  it('does not add setups for a thin plate', () => {
+    expect(contouredSetupCount(2, plate)).toBe(2);
   });
 });
 

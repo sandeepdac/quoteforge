@@ -13,7 +13,7 @@ import { analyzeCncDfm } from './dfmCnc';
 import { classifyPart, PartClass } from './partClass';
 import { computeStock } from './cncEstimator';
 import { TurningProfile } from './turning';
-import { MilledProfile } from './milledEstimator';
+import { MilledProfile, contouredSetupCount } from './milledEstimator';
 import { selectMachine, MachineRecommendation } from './machineSelection';
 import { materialPropsFor, milledBilletMm, nextStandardBar } from './materials';
 import { extractTurnedProfile, arrayBufferToBase64, GeometryResult } from './geometryService';
@@ -319,6 +319,9 @@ async function analyzeSolid(
           holeDiametersMm: mm.holeDiametersMm,
           sparseBillet: mm.sparseBillet,
         };
+        // A contoured part is re-clamped to finish curved faces from more angles
+        // than its geometric access-direction count — floor the setups upward.
+        milledProfile.setupCount = contouredSetupCount(mm.setupCount, milledProfile);
       } else {
         // Approximation: billet = bbox + allowance on standard plate; setups guessed.
         const billet = milledBilletMm({ x: meas.lengthMm, y: meas.widthMm, z: meas.heightMm });

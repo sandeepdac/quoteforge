@@ -545,7 +545,7 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                 <div className="bg-accent/40 border border-border p-3.5 rounded-lg flex items-center justify-between">
                   <div>
                     <p className="text-xs font-bold text-foreground">Setups</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">Access dir.</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">re-clamps</p>
                   </div>
                   <span className="text-lg font-bold text-foreground">{mp.setupCount}</span>
                 </div>

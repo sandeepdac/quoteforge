@@ -95,21 +95,49 @@ const SCULPT_K = 0.95;    // finish-slowdown gain above the threshold
 const SCULPT_POW = 2;     // quadratic: moderate blocks stay ~1×, truly contoured parts ramp hard
 const SCULPT_CAP = 10;    // finishing never more than 10× slower (tiny ball, fine stepover)
 
+/** Geometry a contour test needs: surface area, part volume, stock bbox. */
+interface ContourInput {
+  surfaceAreaCm2: number;
+  partVolumeCm3: number;
+  stockMm: { x: number; y: number; z: number };
+}
+
 /**
- * Finishing-time multiplier for a contoured part (1 = prismatic, up to SCULPT_CAP).
- * Driven by how much more surface the part has than a compact block of the same
- * volume; damped for plates (planar, fast) and quadratic so a moderately-featured
- * block barely moves while a sculptured 3D part (deep freeform faces) slows sharply.
+ * How much more surface a part carries than a compact block of the same volume,
+ * damped for plates. 0 for prismatic/plate parts, rising with 3D contour. Shared
+ * by the finishing-rate derate and the setup-count floor.
  */
-function sculptFinishMult(p: MilledProfile): number {
+function sculptExcess(p: ContourInput): number {
   const partVol = Math.max(1, p.partVolumeCm3);
   const cubeArea = 6 * Math.pow(partVol, 2 / 3); // cm² of a same-volume cube
   const ratio = p.surfaceAreaCm2 > 0 ? p.surfaceAreaCm2 / cubeArea : 1;
   const sd = [p.stockMm.x, p.stockMm.y, p.stockMm.z].sort((a, b) => a - b);
   // plateness → 1 when the thinnest dim is far smaller than the next (a flat plate).
   const plateness = sd[1] > 0 ? 1 - Math.min(1, sd[0] / (0.3 * sd[1])) : 0;
-  const excess = Math.max(0, ratio - SCULPT_START) * (1 - plateness);
-  return Math.min(SCULPT_CAP, 1 + SCULPT_K * Math.pow(excess, SCULPT_POW));
+  return Math.max(0, ratio - SCULPT_START) * (1 - plateness);
+}
+
+/**
+ * Finishing-time multiplier for a contoured part (1 = prismatic, up to SCULPT_CAP).
+ * Quadratic so a moderately-featured block barely moves while a sculptured 3D part
+ * (deep freeform faces, finished with a small ball) slows sharply.
+ */
+function sculptFinishMult(p: MilledProfile): number {
+  return Math.min(SCULPT_CAP, 1 + SCULPT_K * Math.pow(sculptExcess(p), SCULPT_POW));
+}
+
+/**
+ * Setup-count FLOOR for contoured parts. The geometry service counts distinct
+ * tool-access directions — the geometric minimum — but a contoured part is
+ * re-clamped to finish its curved faces from better angles, so a CAM plan uses
+ * more setups than access directions (e.g. NIST FTC-07: 3 access dirs, 5 setups).
+ * Add a bonus that is 0 for prismatic/plate parts and grows with the contour, so
+ * simple blocks (already matching their setup count) are left alone.
+ */
+export function contouredSetupCount(baseSetups: number, p: ContourInput): number {
+  const base = Math.max(1, Math.round(baseSetups || 1));
+  const bonus = Math.min(3, Math.round(sculptExcess(p) / 1.3));
+  return base + bonus;
 }
 
 function featureComplexityMult(p: MilledProfile): number {
