@@ -153,6 +153,40 @@ describe('milling uses milling physics, not turning physics', () => {
   });
 });
 
+describe('sculptured-surface finishing', () => {
+  // Same volume + removed metal; one is a compact block, one is a contoured 3D part
+  // (far more surface per unit volume → slow small-ball finishing).
+  const vol = 1700;
+  const prismatic: MilledProfile = {
+    stockMm: { x: 300, y: 150, z: 280 }, stockVolumeCm3: 12600, partVolumeCm3: vol,
+    removedVolumeCm3: 10900, surfaceAreaCm2: 900, setupCount: 3,
+    pocketCount: 0, bossCount: 0, deepPocketCount: 0, holeCount: 0,
+  };
+  const sculptured: MilledProfile = { ...prismatic, surfaceAreaCm2: 3900 }; // ~4.5× a same-vol cube
+  const thinPlate: MilledProfile = {
+    stockMm: { x: 280, y: 3, z: 190 }, stockVolumeCm3: 160, partVolumeCm3: 136,
+    removedVolumeCm3: 24, surfaceAreaCm2: 966, setupCount: 1,
+    pocketCount: 0, bossCount: 0, deepPocketCount: 0, holeCount: 0,
+  };
+  const run = (p: MilledProfile) => calculateMilledCosts(input(p), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+
+  it('a contoured part finishes far slower than a prismatic one of the same volume', () => {
+    const flat = run(prismatic);
+    const curved = run(sculptured);
+    const finOf = (c: typeof flat) => c.lineItems.find((li) => li.key === 'finish')!.value;
+    // High surface/volume → several times more finishing time.
+    expect(finOf(curved) / finOf(flat)).toBeGreaterThan(4);
+    expect(curved.machineCost).toBeGreaterThan(flat.machineCost);
+  });
+
+  it('does NOT slow a thin plate (planar finishing stays fast)', () => {
+    const plate = run(thinPlate);
+    // Plate has a high surface/volume ratio too, but plateness damps it to ~1×.
+    const fin = plate.lineItems.find((li) => li.key === 'finish')!;
+    expect(fin.driver).not.toMatch(/contoured/);
+  });
+});
+
 describe('feature complexity (small-tool detail)', () => {
   it('a feature-dense part costs much more machine time than a plain block', () => {
     // A cutting-dominated part (lots of removed volume + surface), identical except

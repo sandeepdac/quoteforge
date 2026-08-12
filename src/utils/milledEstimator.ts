@@ -83,6 +83,35 @@ const CX_DEEP = 0.35;   // per deep/narrow pocket (long thin tool)
 const CX_HOLE = 0.02;   // per hole (proxy for small-feature density)
 const CX_CAP = 3.0;     // never more than +300%
 
+// Sculptured-surface finishing. A contoured 3D part (freeform faces, organic
+// pockets, deep fillets) can't be finished with a big flat cutter — it needs a
+// small BALL at a fine stepover, several times slower per cm² than a flat wall.
+// A part's contour is signalled by how much MORE surface it has than a compact
+// block of the same volume (surface ÷ same-volume-cube surface). Thin plates also
+// have a high ratio but finish FAST (planar), so their contribution is damped by
+// "plateness" — otherwise a flat plate would be mistaken for a sculptured part.
+const SCULPT_START = 1.8; // surface/cube ratio at/below which a part is treated as prismatic
+const SCULPT_K = 0.95;    // finish-slowdown gain above the threshold
+const SCULPT_POW = 2;     // quadratic: moderate blocks stay ~1×, truly contoured parts ramp hard
+const SCULPT_CAP = 10;    // finishing never more than 10× slower (tiny ball, fine stepover)
+
+/**
+ * Finishing-time multiplier for a contoured part (1 = prismatic, up to SCULPT_CAP).
+ * Driven by how much more surface the part has than a compact block of the same
+ * volume; damped for plates (planar, fast) and quadratic so a moderately-featured
+ * block barely moves while a sculptured 3D part (deep freeform faces) slows sharply.
+ */
+function sculptFinishMult(p: MilledProfile): number {
+  const partVol = Math.max(1, p.partVolumeCm3);
+  const cubeArea = 6 * Math.pow(partVol, 2 / 3); // cm² of a same-volume cube
+  const ratio = p.surfaceAreaCm2 > 0 ? p.surfaceAreaCm2 / cubeArea : 1;
+  const sd = [p.stockMm.x, p.stockMm.y, p.stockMm.z].sort((a, b) => a - b);
+  // plateness → 1 when the thinnest dim is far smaller than the next (a flat plate).
+  const plateness = sd[1] > 0 ? 1 - Math.min(1, sd[0] / (0.3 * sd[1])) : 0;
+  const excess = Math.max(0, ratio - SCULPT_START) * (1 - plateness);
+  return Math.min(SCULPT_CAP, 1 + SCULPT_K * Math.pow(excess, SCULPT_POW));
+}
+
 function featureComplexityMult(p: MilledProfile): number {
   const cx =
     CX_BOSS * Math.max(0, p.bossCount || 0) +
@@ -163,8 +192,11 @@ export function calculateMilledCosts(
   const facingSec = finishRate > 0 ? (footprintCm2 / finishRate) * 60 : 0;
 
   // --- Finishing: walls + floors of the machined faces ---------------------
+  // Contoured parts finish far slower (small ball at fine stepover); the multiplier
+  // is 1 for prismatic parts and plates, so simple-part calibration is unchanged.
+  const finishSculpt = sculptFinishMult(p);
   const finishAreaCm2 = FINISH_MACHINED_FRACTION * Math.max(0, p.surfaceAreaCm2);
-  const finishBaseSec = finishRate > 0 ? (finishAreaCm2 / finishRate) * 60 : 0;
+  const finishBaseSec = finishRate > 0 ? (finishAreaCm2 / finishRate) * 60 * finishSculpt : 0;
   const finishSec = finishBaseSec * deepMult;
   // Extra seconds attributable to small-tool feature detail (rough + finish).
   const complexitySec = (roughBaseSec + finishBaseSec) * (deepMult - 1);
@@ -224,7 +256,7 @@ export function calculateMilledCosts(
     { key: 'material', name: 'Billet stock', driver: `${r1(p.stockMm.x)}×${r1(p.stockMm.y)}×${r1(p.stockMm.z)} mm ${m.label} — ${stockWeightKg.toFixed(3)} kg @ $${input.materialPricePerKg.toFixed(2)}/kg`, value: materialCost, color: COLORS.material },
     { key: 'facing', name: 'Face / skim', driver: `${r1(footprintCm2)} cm² footprint — ${secStr(facingSec)}`, value: opCost(facingSec), color: COLORS.facing },
     { key: 'rough', name: 'Roughing (hog-out)', driver: `${r1(removedVol)} cm³ removed @ ${r1(millMrr)} cm³/min — ${secStr(roughBaseSec)}`, value: opCost(roughBaseSec), color: COLORS.rough },
-    { key: 'finish', name: 'Finishing (walls/floors)', driver: `${r1(finishAreaCm2)} cm² @ ${r1(finishRate)} cm²/min — ${secStr(finishBaseSec)}`, value: opCost(finishBaseSec), color: COLORS.finish },
+    { key: 'finish', name: 'Finishing (walls/floors)', driver: `${r1(finishAreaCm2)} cm²${finishSculpt > 1.05 ? ` contoured ×${r1(finishSculpt)} (small ball)` : ` @ ${r1(finishRate)} cm²/min`} — ${secStr(finishBaseSec)}`, value: opCost(finishBaseSec), color: COLORS.finish },
     { key: 'drill', name: 'Drilling', driver: `${holes} hole${holes === 1 ? '' : 's'} — ${secStr(drillSec)}`, value: opCost(drillSec), color: COLORS.drill },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${p.pocketCount} pocket${p.pocketCount === 1 ? '' : 's'}`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
