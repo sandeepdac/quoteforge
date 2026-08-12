@@ -60,6 +60,17 @@ describe('milledBilletMm', () => {
     expect(billetVol).toBeGreaterThan(bboxVol);
   });
 
+  it('saws a large block dimension instead of ordering oversize plate', () => {
+    // NIST FTC-07: a 352 × 136 × 263 mm block. The 263 mm dim is too big to buy as
+    // plate — it must be SAWN (~265 mm), not rounded up to 11" (279 mm). The 136 mm
+    // dim is within flat-bar sizes and rounds to 5½" (139.7 mm).
+    const b = milledBilletMm({ x: 352.2, y: 136.3, z: 263.3 });
+    expect(b.x).toBeCloseTo(354.2, 1);   // longest → sawn
+    expect(b.y).toBe(139.7);             // 5½" flat bar
+    expect(b.z).toBeCloseTo(265.3, 1);   // sawn, NOT 279.4 (11")
+    expect(b.z).toBeLessThan(279);
+  });
+
   it('buys plate by THICKNESS for a thin plate, sawing the face to size', () => {
     // NIST FTC-11: a 68.2 × 68.2 × 3.0 mm coupon. You buy 1/4" (6.35 mm) plate and
     // saw a ~70 mm square from it — you do NOT round the 68 mm face up to a

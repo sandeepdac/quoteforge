@@ -133,7 +133,12 @@ export function nextStandardBar(requiredDiaMm: number): number {
 export const STANDARD_PLATE_THICKNESS_MM = [
   3.175, 4.763, 6.35, 7.938, 9.525, 12.7, 15.875, 19.05, 22.225, 25.4,
   31.75, 38.1, 44.45, 50.8, 63.5, 76.2, 88.9, 101.6,
+  114.3, 127, 139.7, 152.4, // 4½"–6" — big plate/flat-bar comes in ½" steps too
 ];
+
+/** Thickest stock bought as PLATE. A larger dimension is sawn from a block, not
+ *  ordered as (say) 11" plate — used to decide round-to-plate vs saw-to-size. */
+export const PLATE_MAX_MM = 152.4; // 6"
 
 /** Smallest standard plate thickness ≥ the required size (else round up to 25 mm steps). */
 export function nextStandardPlate(requiredMm: number): number {
@@ -183,9 +188,14 @@ export function milledBilletMm(
     if (isPlate) {
       // Only the thickness comes off a standard plate; the face is sawn to size.
       out[k] = k === smallest[0] ? nextStandardPlate(withAllowance) : withAllowance;
+    } else if (k === longest[0]) {
+      // Block/bar: the longest dimension is sawn to length.
+      out[k] = withAllowance;
     } else {
-      // Block/bar: saw the longest, round the two smaller to standard sizes.
-      out[k] = k === longest[0] ? withAllowance : nextStandardPlate(withAllowance);
+      // The two smaller dimensions round to a standard stock size only if they are
+      // small enough to buy as plate/flat-bar; a larger one is sawn from a block
+      // (you don't order 11" plate for a 263 mm dimension).
+      out[k] = withAllowance <= PLATE_MAX_MM ? nextStandardPlate(withAllowance) : withAllowance;
     }
   }
   return out;
