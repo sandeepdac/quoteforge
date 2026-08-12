@@ -183,6 +183,14 @@ describe('contouredSetupCount — setup floor for contoured parts', () => {
   it('does not add setups for a thin plate', () => {
     expect(contouredSetupCount(2, plate)).toBe(2);
   });
+
+  it('caps the sculpt bonus so a healthy access count is not inflated into an empty setup (12630: 5 → 5, not 6)', () => {
+    // Small feature-dense part: high surface/volume ratio would otherwise add +1,
+    // but the geometry already measured 5 access directions (= the real shop's 5
+    // ops), so the 6th would carry only a facing skim. The ceiling holds it at 5.
+    const denseSmall = { surfaceAreaCm2: 38, partVolumeCm3: 3.44, stockMm: { x: 33.4, y: 10.1, z: 25.4 } };
+    expect(contouredSetupCount(5, denseSmall)).toBe(5);
+  });
 });
 
 describe('sculptured-surface finishing', () => {

@@ -94,6 +94,7 @@ const SCULPT_START = 1.8; // surface/cube ratio at/below which a part is treated
 const SCULPT_K = 0.95;    // finish-slowdown gain above the threshold
 const SCULPT_POW = 2;     // quadratic: moderate blocks stay ~1×, truly contoured parts ramp hard
 const SCULPT_CAP = 10;    // finishing never more than 10× slower (tiny ball, fine stepover)
+const CONTOUR_SETUP_CEILING = 5; // the sculpt setup floor never lifts a part past 5 re-clamps
 
 /** Geometry a contour test needs: surface area, part volume, stock bbox. */
 interface ContourInput {
@@ -137,7 +138,13 @@ function sculptFinishMult(p: MilledProfile): number {
 export function contouredSetupCount(baseSetups: number, p: ContourInput): number {
   const base = Math.max(1, Math.round(baseSetups || 1));
   const bonus = Math.min(3, Math.round(sculptExcess(p) / 1.3));
-  return base + bonus;
+  // The sculpt bonus only LIFTS an under-counted contoured part toward the number
+  // of real re-clamps a CAM plan uses (FTC-07: 3 access dirs → 5). It must never
+  // push a part that already has a healthy access-direction count into extra,
+  // work-less setups: part 12630 measured 5 access directions (matching the real
+  // shop's 5 ops), and a spurious +1 left the 6th setup with only a facing skim.
+  // Cap the lifted value at CONTOUR_SETUP_CEILING, and never reduce below base.
+  return Math.min(base + bonus, Math.max(base, CONTOUR_SETUP_CEILING));
 }
 
 function featureComplexityMult(p: MilledProfile): number {
@@ -245,11 +252,44 @@ export function calculateMilledCosts(
   const cycleTimeSec = cuttingSec / eff + airSec / eff;
   const machineCost = (cycleTimeSec / 60) * machineRatePerMin;
 
+  // --- Per-setup / per-operation plan (tool-by-tool job sheet) -------------
+  // Built BEFORE setup billing because the plan is the source of truth for how
+  // many setups actually carry work. It redistributes the SAME cutting seconds
+  // into named, tool-assigned operations (face, adaptive/rest rough, wall/floor
+  // finish, a drill op per hole size, chamfer), spreads them across the setups,
+  // and sizes the setup count to the real work — never a phantom, facing-only
+  // re-clamp — without changing the calibrated total.
+  const sortedDims = [p.stockMm.x, p.stockMm.y, p.stockMm.z].sort((a, b) => a - b);
+  const plan = buildMilledPlan({
+    m,
+    minPlaneDimMm: sortedDims[1], // the smaller in-plane dimension (not the thickness)
+    facingSec,
+    roughBaseSec,
+    finishBaseSec,
+    roughComplexSec: roughBaseSec * (deepMult - 1),
+    finishComplexSec: finishBaseSec * (deepMult - 1),
+    drillSec,
+    removedVolCm3: removedVol,
+    millMrr,
+    finishAreaCm2,
+    finishRate,
+    holeCount: holes,
+    holeDiametersMm: p.holeDiametersMm,
+    maxDrillMm: cnc.maxDrillDiaMm ?? 20,
+    bossCount: p.bossCount,
+    setups: Math.max(1, Math.round(p.setupCount || 1)),
+    eff,
+    opCost,
+    toolChangeSec,
+    colors: COLORS,
+  });
+
   // --- Setup (amortised over the batch) — Rule 1 is the driver -------------
   // Milling setups are slower than the bar-lathe defaults: each one means
   // clamping a billet in a vise or soft jaws, tramming, probing and touching off
-  // every tool, so milling carries its own baseline times.
-  const setups = Math.max(1, Math.round(p.setupCount || 1));
+  // every tool, so milling carries its own baseline times. Bill on the setups the
+  // plan could actually fill — phantom facing-only re-clamps are merged away.
+  const setups = plan.setups.length;
   const setupTimeMin =
     (cnc.millSetupFirstOpMin ?? cnc.setupTimeFirstOpMin) +
     (setups - 1) * (cnc.millSetupPerExtraOpMin ?? cnc.secondOpSetupMin) +
@@ -297,37 +337,6 @@ export function calculateMilledCosts(
     { key: 'fixture', name: `Soft jaws / fixture ÷ ${qty}`, driver: needsSoftJaws ? `${setups} setups${p.bossCount > 0 ? `, ${p.bossCount} boss` : ''} → work-holding, made once` : '', value: fixtureCost, color: COLORS.fixture },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${toolCount} operations`, value: toolingCost, color: COLORS.tooling },
   ].filter((li) => li.value > 0.005);
-
-  // --- Per-setup / per-operation plan (tool-by-tool job sheet) -------------
-  // Redistributes the SAME cutting seconds into named operations, each assigned
-  // a real cutter from the shop milling tool library, and grouped into the
-  // measured setups — so the estimate reads like a CAM operation list (face,
-  // adaptive rough, rest-rough, wall/floor finish, a drill op per hole size,
-  // chamfer) without changing the calibrated total.
-  const sortedDims = [p.stockMm.x, p.stockMm.y, p.stockMm.z].sort((a, b) => a - b);
-  const plan = buildMilledPlan({
-    m,
-    minPlaneDimMm: sortedDims[1], // the smaller in-plane dimension (not the thickness)
-    facingSec,
-    roughBaseSec,
-    finishBaseSec,
-    roughComplexSec: roughBaseSec * (deepMult - 1),
-    finishComplexSec: finishBaseSec * (deepMult - 1),
-    drillSec,
-    removedVolCm3: removedVol,
-    millMrr,
-    finishAreaCm2,
-    finishRate,
-    holeCount: holes,
-    holeDiametersMm: p.holeDiametersMm,
-    maxDrillMm: cnc.maxDrillDiaMm ?? 20,
-    bossCount: p.bossCount,
-    setups,
-    eff,
-    opCost,
-    toolChangeSec,
-    colors: COLORS,
-  });
 
   // --- Batch quantity curve (setup amortisation) ---------------------------
   const perUnitFixed = materialCost + machineCost + toolingCost;

@@ -103,3 +103,37 @@ describe('milled plan reads like a CAM operation sheet', () => {
     expect(c.plan!.setups.every((s) => s.operations.length > 0)).toBe(true);
   });
 });
+
+describe('no phantom setups — work is distributed, not piled into setup 1', () => {
+  // Part 12630: geometry measured 5 access directions on a small feature-dense
+  // part. The plan must fill all 5 with real cutting, not leave 4 facing-only.
+  const dense12630: MilledProfile = {
+    stockMm: { x: 33.4, y: 10.1, z: 25.4 }, stockVolumeCm3: 8.57, partVolumeCm3: 3.44,
+    removedVolumeCm3: 5.13, surfaceAreaCm2: 38, setupCount: 5,
+    pocketCount: 0, bossCount: 10, deepPocketCount: 0, holeCount: 15,
+    holeDiametersMm: [1.5, 1.6, 2.2, 2.4, 2.4, 4, 4, 4, 4.5, 4.5, 5, 5, 6, 6, 1.4],
+  };
+  const run = (p: MilledProfile) =>
+    calculateMilledCosts({ materialName: 'Aluminium 6082', profile: p, materialPricePerKg: 16.5 }, 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+
+  it('fills every one of the 5 setups with a substantive operation', () => {
+    const c = run(dense12630);
+    expect(c.plan!.setups.length).toBe(5);
+    const facingOnly = c.plan!.setups.filter((s) => s.operations.every((o) => o.name === 'Facing'));
+    expect(facingOnly.length).toBe(0);
+    // and the estimator BILLS on the same 5 (setup line reflects the real count)
+    expect(c.setups).toBe(5);
+  });
+
+  it('never claims more setups than there is distinct work to fill', () => {
+    // Ask for 8 setups on a part with only a couple of real operations.
+    const sparse: MilledProfile = {
+      ...dense12630, setupCount: 8, holeCount: 1, holeDiametersMm: [4],
+      surfaceAreaCm2: 12, bossCount: 0,
+    };
+    const c = run(sparse);
+    expect(c.plan!.setups.length).toBeLessThan(8);
+    expect(c.plan!.setups.every((s) => s.operations.length > 0)).toBe(true);
+    expect(c.setups).toBe(c.plan!.setups.length); // billing matches the shown plan
+  });
+});
