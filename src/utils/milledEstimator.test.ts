@@ -87,6 +87,20 @@ describe('flat setup charge (CAM-style billing)', () => {
     });
     expect(def.setupCost).toBeCloseTo(explicitZero.setupCost, 6);
   });
+
+  it('billing mode: flat REPLACES labour, both STACKS, time ignores the flat', () => {
+    const cnc = { ...DEFAULT_SHOP_SETTINGS.cnc!, flatSetupChargePerSetup: 150 };
+    const time = calculateMilledCosts(input(twoSetup), 1, false, 0.25, { ...DEFAULT_SHOP_SETTINGS, cnc: { ...cnc, setupBillingMode: 'time' } });
+    const flat = calculateMilledCosts(input(twoSetup), 1, false, 0.25, { ...DEFAULT_SHOP_SETTINGS, cnc: { ...cnc, setupBillingMode: 'flat' } });
+    const both = calculateMilledCosts(input(twoSetup), 1, false, 0.25, { ...DEFAULT_SHOP_SETTINGS, cnc: { ...cnc, setupBillingMode: 'both' } });
+    // flat = 2 setups × $150 = $300 exactly (labour removed).
+    expect(flat.setupCost).toBeCloseTo(300, 5);
+    // both = time labour + $300.
+    expect(both.setupCost).toBeCloseTo(time.setupCost + 300, 5);
+    // time ignores the flat charge entirely.
+    const timeNoFlat = calculateMilledCosts(input(twoSetup), 1, false, 0.25, { ...DEFAULT_SHOP_SETTINGS, cnc: { ...cnc, flatSetupChargePerSetup: 0, setupBillingMode: 'time' } });
+    expect(time.setupCost).toBeCloseTo(timeNoFlat.setupCost, 5);
+  });
 });
 
 describe('the three geometric rules move the price', () => {

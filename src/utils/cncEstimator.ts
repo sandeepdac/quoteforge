@@ -112,10 +112,14 @@ export function calculateMachiningCosts(
     cnc.setupTimeFirstOpMin +
     (setups - 1) * cnc.secondOpSetupMin +
     t.toolCount * cnc.setupTimePerToolMin;
-  // Time-based setup + an optional flat charge per setup (both one-time job costs,
-  // amortised over the batch). The flat charge matches how CAM quotes bill setup.
+  // Setup billing: time-based labour, a flat per-setup charge, or both (one-time
+  // job costs amortised over the batch). 'flat' matches how CAM quotes bill setup.
   const flatSetupCharge = Math.max(0, cnc.flatSetupChargePerSetup ?? 0) * setups;
-  const setupCostTotal = setupTimeMin * cnc.setupRatePerMin + flatSetupCharge;
+  const setupLabour = setupTimeMin * cnc.setupRatePerMin;
+  const setupMode = cnc.setupBillingMode ?? 'both';
+  const setupLabourBilled = setupMode === 'flat' ? 0 : setupLabour;
+  const flatBilled = setupMode === 'time' ? 0 : flatSetupCharge;
+  const setupCostTotal = setupLabourBilled + flatBilled;
   const setupPerUnit = setupCostTotal / qty;
 
   // --- Tooling -------------------------------------------------------------
@@ -142,8 +146,8 @@ export function calculateMachiningCosts(
     { key: 'thread', name: 'Threading', driver: `${input.profile.threadCount} thread${input.profile.threadCount === 1 ? '' : 's'} — ${secStr(t.threadSec)}`, value: opCost(t.threadSec), color: COLORS.thread },
     { key: 'parting', name: 'Part-off', driver: `${secStr(t.partingSec)}`, value: opCost(t.partingSec), color: COLORS.parting },
     { key: 'noncut', name: 'Tool changes / load', driver: `${t.toolCount} tool changes, rapids + ${cnc.barLoadSec}s load`, value: (t.airSec / eff + cnc.barLoadSec) * ratePerSec, color: COLORS.noncut },
-    { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: (setupTimeMin * cnc.setupRatePerMin) / qty, color: COLORS.setup },
-    { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatSetupCharge > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatSetupCharge / qty, color: COLORS.setup },
+    { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
+    { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${t.toolCount} operations`, value: toolingCost, color: COLORS.tooling },
   ].filter((li) => li.value > 0.005);
 

@@ -27,6 +27,7 @@ export const DEFAULT_CNC_SETTINGS: CncSettings = {
   setupTimePerToolMin: 3,
   secondOpSetupMin: 20,
   flatSetupChargePerSetup: 0, // off by default; set to your per-setup charge (e.g. 150) to match CAM-quote billing
+  setupBillingMode: 'both',   // 'time' | 'flat' | 'both' — how the flat charge combines with time labour
 
   efficiencyFactor: 0.8, // actual = theoretical / 0.8 (real shops run below book)
   maxRpm: 6000,

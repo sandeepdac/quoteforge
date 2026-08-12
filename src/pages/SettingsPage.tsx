@@ -157,6 +157,10 @@ export default function SettingsPage() {
               onSaveSetupCharge={(flatSetupChargePerSetup) =>
                 updateSettings({ cnc: { flatSetupChargePerSetup } as Partial<CncSettings> as CncSettings })
               }
+              setupMode={settings.cnc?.setupBillingMode ?? 'both'}
+              onSaveSetupMode={(setupBillingMode) =>
+                updateSettings({ cnc: { setupBillingMode } as Partial<CncSettings> as CncSettings })
+              }
             />
           )}
 
@@ -264,11 +268,15 @@ function ToolingTab({
   onSave,
   flatSetupCharge,
   onSaveSetupCharge,
+  setupMode,
+  onSaveSetupMode,
 }: {
   tools: ShopTool[];
   onSave: (t: ShopTool[]) => void;
   flatSetupCharge: number;
   onSaveSetupCharge: (v: number) => void;
+  setupMode: 'time' | 'flat' | 'both';
+  onSaveSetupMode: (m: 'time' | 'flat' | 'both') => void;
 }) {
   const [rows, setRows] = useState<ShopTool[]>(() => normalise(tools));
   const [saved, setSaved] = useState(false);
@@ -308,19 +316,33 @@ function ToolingTab({
             batch. CAM quotes typically bill a flat setup charge (e.g. $150/setup) that a pure time×rate model misses. Set 0 to disable.
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-sm text-muted-foreground">$</span>
-          <input
-            type="number"
-            step="10"
-            min="0"
-            value={charge}
-            onChange={(e) => setCharge(e.target.value)}
-            onBlur={() => onSaveSetupCharge(Math.max(0, Number(charge) || 0))}
-            className="w-28 bg-background border border-border rounded px-2 py-1.5 text-sm text-right font-mono focus:outline-none focus:ring-1 focus:ring-primary"
-            placeholder="0"
-          />
-          <span className="text-xs text-muted-foreground">/ setup</span>
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">$</span>
+            <input
+              type="number"
+              step="10"
+              min="0"
+              value={charge}
+              onChange={(e) => setCharge(e.target.value)}
+              onBlur={() => onSaveSetupCharge(Math.max(0, Number(charge) || 0))}
+              className="w-28 bg-background border border-border rounded px-2 py-1.5 text-sm text-right font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+              placeholder="0"
+            />
+            <span className="text-xs text-muted-foreground">/ setup</span>
+          </div>
+          <div className="inline-flex rounded-md border border-border overflow-hidden text-[11px] font-semibold">
+            {([['time', 'Time'], ['flat', 'Flat'], ['both', 'Both']] as const).map(([m, label]) => (
+              <button
+                key={m}
+                onClick={() => onSaveSetupMode(m)}
+                title={m === 'time' ? 'Time-based labour only' : m === 'flat' ? 'Flat charge only (replaces labour)' : 'Time labour + flat charge'}
+                className={`px-2.5 py-1 transition-colors ${setupMode === m ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-accent'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
