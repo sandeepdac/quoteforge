@@ -146,9 +146,9 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
       {/* Main Drag & Drop Zone */}
       <div 
         {...getRootProps()} 
-        className={`border-2 border-dashed rounded-2xl p-7 flex flex-col items-center justify-center gap-4 transition-all cursor-pointer bg-card/60 relative overflow-hidden ${
-          isDragActive ? 'border-primary bg-primary/10 scale-[1.01]' : 'border-border hover:border-primary/50'
-        }`}
+        className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center gap-4 transition-all cursor-pointer bg-card/60 relative overflow-hidden ${
+          uploadedFile ? 'p-4' : 'p-7'
+        } ${isDragActive ? 'border-primary bg-primary/10 scale-[1.01]' : 'border-border hover:border-primary/50'}`}
       >
         <input {...getInputProps()} />
 
@@ -164,9 +164,9 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
             </div>
           </div>
         ) : uploadedFile ? (
-          <div className="flex flex-col items-center gap-4 text-center w-full max-w-md bg-accent/40 p-5 rounded-xl border border-border">
-            <div className="w-14 h-14 bg-primary/15 text-primary rounded-xl flex items-center justify-center relative">
-              {/\.step$|\.stp$/i.test(uploadedFile.name) ? <Box size={30} /> : <FileText size={30} />}
+          <div className="flex flex-col items-center gap-3 text-center w-full max-w-md bg-accent/40 p-4 rounded-xl border border-border">
+            <div className="w-12 h-12 bg-primary/15 text-primary rounded-xl flex items-center justify-center relative">
+              {/\.step$|\.stp$/i.test(uploadedFile.name) ? <Box size={26} /> : <FileText size={26} />}
               <button 
                 onClick={(e) => { 
                   e.stopPropagation(); 

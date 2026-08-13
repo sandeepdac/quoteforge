@@ -41,6 +41,11 @@ export default function TopBar() {
   const { section, page } = useBreadcrumb();
   const [search, setSearch] = useState('');
 
+  // The Quotations list already has its own prominent "New Quote" button, and the
+  // New Quote wizard is itself a new quote — so a second one in the top bar there
+  // is redundant. Hide it on those two pages.
+  const hideNewQuote = section === 'Quotations' && (page === 'All' || page === 'New Quote');
+
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();
     const term = search.trim();
@@ -81,12 +86,14 @@ export default function TopBar() {
       </div>
 
       <div className="flex items-center gap-4">
-        <Link
-          to="/quotes/new"
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:bg-primary/90 transition-colors shadow-sm"
-        >
-          <Plus size={16} /> New Quote
-        </Link>
+        {!hideNewQuote && (
+          <Link
+            to="/quotes/new"
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:bg-primary/90 transition-colors shadow-sm"
+          >
+            <Plus size={16} /> New Quote
+          </Link>
+        )}
         <button
           onClick={toggleTheme}
           aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
