@@ -113,8 +113,8 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in duration-300">
-      <div className="text-center space-y-2">
+    <div className="max-w-3xl mx-auto space-y-5 animate-in fade-in duration-300">
+      <div className="text-center space-y-1.5">
         <h2 className="text-2xl font-bold tracking-tight text-foreground">Upload Engineering CAD File</h2>
         <p className="text-muted-foreground text-sm">
           Production-grade parser reads native 3D STEP CAD (.step/.stp) models and 2D PDF engineering drawings.
@@ -150,7 +150,7 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
       {/* Main Drag & Drop Zone */}
       <div 
         {...getRootProps()} 
-        className={`border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center gap-5 transition-all cursor-pointer bg-card/60 relative overflow-hidden ${
+        className={`border-2 border-dashed rounded-2xl p-7 flex flex-col items-center justify-center gap-4 transition-all cursor-pointer bg-card/60 relative overflow-hidden ${
           isDragActive ? 'border-primary bg-primary/10 scale-[1.01]' : 'border-border hover:border-primary/50'
         }`}
       >

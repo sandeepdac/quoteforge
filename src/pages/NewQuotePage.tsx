@@ -253,10 +253,10 @@ export default function NewQuotePage() {
   };
 
   return (
-    <div className="py-4">
+    <div className="py-2">
       <StepIndicator currentStep={currentStep} steps={STEPS} />
-      
-      <div className="mt-6 transition-all duration-300">
+
+      <div className="mt-4 transition-all duration-300">
         {currentStep === 1 && (
           <StepUpload 
             data={quoteData} 
