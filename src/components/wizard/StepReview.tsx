@@ -7,13 +7,12 @@ import {
   Calendar, 
   Hammer,
   Zap,
-  Info,
   AlertTriangle,
   ChevronRight
 } from 'lucide-react';
 import { useQuotes } from '../../context/QuoteContext';
 import { useSettings } from '../../context/SettingsContext';
-import { calculateQuoteCosts, calculateWinProbability } from '../../utils/estimator';
+import { calculateQuoteCosts } from '../../utils/estimator';
 import { calculateMachiningCosts } from '../../utils/cncEstimator';
 import { calculateMilledCosts } from '../../utils/milledEstimator';
 import { materialPropsFor } from '../../utils/materials';
@@ -124,7 +123,6 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
 
   const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
-  const winProb = calculateWinProbability(margin, data.config.leadTimeDays);
   const mc = isMachining ? (costs as MachiningCosts) : null;
 
   // Reference turning toolpath (preview + downloadable G-code) for turned parts.
@@ -139,13 +137,6 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
       settings.cnc?.toolLibrary
     );
   }, [isTurnedPart, cadAnalysis, material, settings.cnc?.toolLibrary]);
-
-  const getWinProbColor = (prob: number) => {
-    if (prob > 80) return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
-    if (prob > 60) return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
-    if (prob > 40) return "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400";
-    return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
-  };
 
   const validUntil = new Date();
   validUntil.setDate(validUntil.getDate() + 30);
@@ -440,18 +431,7 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
             </div>
           </div>
 
-          <div className={cn("p-6 rounded-xl border flex flex-col items-center text-center space-y-4", getWinProbColor(winProb))}>
-            <div className="flex items-center gap-2">
-              <h3 className="text-xs font-bold uppercase tracking-widest">Win Probability</h3>
-              <Info size={14} className="opacity-50" />
-            </div>
-            <div className="text-4xl font-black">{winProb}%</div>
-            <p className="text-xs font-medium leading-relaxed opacity-80">
-              Based on historical data for {customer?.name} and current material market volatility.
-            </p>
-          </div>
-
-          <button 
+          <button
             onClick={onBack}
             className="w-full flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors group"
           >

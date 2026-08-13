@@ -176,8 +176,12 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
             </div>
             {analysisResult && (
               <div className="hidden sm:flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-xs font-medium shrink-0">
-                <CheckCircle2 size={15} /> Extracted
-                <span className="font-bold">{analysisResult.confidenceScore}%</span>
+                <CheckCircle2 size={15} />
+                {analysisResult.measurementSource === 'solid' ? (
+                  'Measured'
+                ) : (
+                  <>Extracted <span className="font-bold">{analysisResult.confidenceScore}%</span></>
+                )}
               </div>
             )}
             <button

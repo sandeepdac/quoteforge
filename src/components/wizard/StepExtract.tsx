@@ -176,10 +176,17 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
           </div>
         </div>
 
-        <div className="flex items-center gap-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider border border-emerald-500/20 shrink-0">
-          <Zap size={14} fill="currentColor" />
-          Confidence: {cadAnalysis?.confidenceScore ?? 94}%
-        </div>
+        {cadAnalysis?.measurementSource === 'solid' ? (
+          <div className="flex items-center gap-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider border border-emerald-500/20 shrink-0">
+            <CheckCircle2 size={14} />
+            Measured geometry
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider border border-emerald-500/20 shrink-0">
+            <Zap size={14} fill="currentColor" />
+            Read confidence: {cadAnalysis?.confidenceScore ?? 94}%
+          </div>
+        )}
       </div>
 
       {/* Out-of-scope: not a turned part */}
