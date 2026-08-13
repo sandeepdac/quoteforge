@@ -40,6 +40,16 @@ def test_deep_slot_is_flagged_deep():
     assert m["maxDepthRatio"] > 3.0
 
 
+def test_profiled_step_block_has_no_bosses():
+    # A stepped/profiled block has convex-ringed sub-surface faces but no recess
+    # (almost no concavity), so it must report ZERO bosses — the convex faces are
+    # external profile walls, not islands to rough around. (Regression: a profiled
+    # part previously reported many phantom bosses, inflating the complexity derate.)
+    m = _milled("step")
+    assert m["bossCount"] == 0
+    assert m["concaveEdges"] < 3  # a true recess would ring 3+ concave edges
+
+
 def test_multi_direction_needs_more_than_one_setup():
     m = _milled("multi")
     # Top pocket + side-drilled holes → at least two access directions.

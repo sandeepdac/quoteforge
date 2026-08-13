@@ -52,6 +52,15 @@ def build(outdir):
     deep = BRepAlgoAPI_Cut(tall, deep_tool).Shape()
     paths["deep"] = write(deep, os.path.join(outdir, "deep.step"))
 
+    # L-step block 60×40×20 with a 30×40×8 corner removed from the top. The step
+    # creates sub-surface, convex-ringed faces but NO recess (a prismatic profile,
+    # ~no concavity) — these must not be mistaken for bosses/islands.
+    step = BRepAlgoAPI_Cut(
+        BRepPrimAPI_MakeBox(60, 40, 20).Shape(),
+        BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 12), 30, 40, 8).Shape(),
+    ).Shape()
+    paths["step"] = write(step, os.path.join(outdir, "step.step"))
+
     # Block 60×60×20 with a pocket on top AND two holes drilled from a side
     # face → two access directions → 2+ setups.
     multi = BRepPrimAPI_MakeBox(60, 60, 20).Shape()

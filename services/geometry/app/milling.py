@@ -255,10 +255,17 @@ def analyze_milling(shape) -> dict:
         return True
 
     pockets: List[dict] = []
-    boss_count = 0
+    boss_faces: List = []
     access_dirs: List[np.ndarray] = []
     deep_pockets = 0
     max_depth_ratio = 0.0
+
+    # A boss/island the tool roughs AROUND is a real chunk of material, not a
+    # sliver or a thin profile wall: require a minimum footprint (width the size
+    # of a roughing pass, area a few tool-widths square). Scaled to the part so
+    # the same rule works on a 30 mm block and a 300 mm plate.
+    min_boss_width = max(3.0, 0.06 * diag)
+    min_boss_area = 2.0 * min_boss_width * min_boss_width
 
     for face in planar_faces:
         fid = _fid(face)
@@ -300,9 +307,27 @@ def analyze_milling(shape) -> dict:
         # 37 bosses claiming all six setups. Require positive evidence instead.
         elif (concave_edges > 0 and n_convex >= 3 and n_concave == 0
               and not _is_stock_face(centroid, normal)):
-            boss_count += 1
+            # A convex-ringed sub-surface face still implies a re-fixture
+            # direction, so it contributes to the setup count exactly as before.
             if _cluster_direction(access_dirs, normal) < 0:
                 access_dirs.append(normal)
+            # But it is only a machinable ISLAND (which drives the small-tool
+            # complexity derate) if it is a real chunk — not a sliver or a thin
+            # profile wall. The final islands-need-a-recess check is applied once
+            # all pockets are known (below).
+            if (_face_area(face) >= min_boss_area
+                    and _face_min_width(face, normal) >= min_boss_width):
+                boss_faces.append(face)
+
+    # An island rises from a machined recess, which shows up as concavity (a
+    # pocket floor rings 4+ concave edges). A part with almost no concave edges
+    # is a prismatic PROFILE — its convex-ringed faces are external walls, lands
+    # and chamfer facets, not bosses to rough around. Part 12630 (a profiled
+    # block, 1 concave edge) reported 10 such faces as bosses, inflating the
+    # complexity derate; the real island count is 0. Gate on the raw concave-edge
+    # count (more robust than the pocket detector). Setup count is unaffected —
+    # the access directions above are collected regardless of this gate.
+    boss_count = len(boss_faces) if concave_edges >= 3 else 0
 
     # --- Distinct hole features ---------------------------------------------
     # Group coaxial internal cylinders into ONE hole. A counterbored hole shows up
