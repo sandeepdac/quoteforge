@@ -293,6 +293,7 @@ export default function NewQuotePage() {
           <StepReview
             data={quoteData}
             cadAnalysis={cadAnalysis}
+            partImage={partImage ?? seedThumbnail}
             quoteNumber={quoteNumber}
             onSend={(opts) => handleFinalize(false, opts)}
             onSaveDraft={(opts) => handleFinalize(true, opts)}

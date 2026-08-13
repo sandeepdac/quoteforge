@@ -31,6 +31,8 @@ import { cn } from '../../utils/cn';
 interface StepReviewProps {
   data: any;
   cadAnalysis?: ExtractedCadAnalysis;
+  /** Rendered still of the 3D model captured on the extraction step (real part image). */
+  partImage?: string;
   quoteNumber: string;
   onSend: (opts: { margin: number; notes: string }) => void;
   onSaveDraft: (opts: { margin: number; notes: string }) => void;
@@ -38,7 +40,7 @@ interface StepReviewProps {
   onUpdate?: (updater: (prev: any) => any) => void;
 }
 
-export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onSaveDraft, onBack, onUpdate }: StepReviewProps) {
+export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, onSend, onSaveDraft, onBack, onUpdate }: StepReviewProps) {
   const { customers, materials } = useQuotes();
   const { settings } = useSettings();
   const [margin, setMargin] = useState(settings.defaultMargin);
@@ -214,7 +216,7 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
               <div className="flex gap-4">
                 <div className="w-16 h-16 bg-muted rounded border border-border overflow-hidden">
                   <img
-                    src={generatePartThumbnail(data.partName || 'Custom Machined Part', data.features)}
+                    src={partImage || generatePartThumbnail(data.partName || 'Custom Machined Part', data.features)}
                     alt={data.partName || 'Part'}
                     className="w-full h-full object-cover"
                   />
