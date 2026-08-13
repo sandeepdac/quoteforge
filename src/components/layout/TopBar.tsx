@@ -32,7 +32,7 @@ function useBreadcrumb(): { section: string; page: string } {
   }
 }
 
-const DEFAULT_LOGO = 'https://picsum.photos/seed/forgefabs/200/200';
+const DEFAULT_LOGO = '';
 
 export default function TopBar() {
   const { theme, toggleTheme } = useTheme();

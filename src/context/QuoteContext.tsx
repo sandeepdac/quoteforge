@@ -1,7 +1,5 @@
 import React, { createContext, useContext, ReactNode } from 'react';
 import { Quote, Part, Customer, Material } from '../types';
-import { mockQuotes } from '../data/mockQuotes';
-import { mockParts } from '../data/mockParts';
 import { mockCustomers } from '../data/mockCustomers';
 import { mockMaterials } from '../data/mockMaterials';
 import { usePersistentState } from '../hooks/usePersistentState';
@@ -27,9 +25,11 @@ interface QuoteContextType {
 const QuoteContext = createContext<QuoteContextType | undefined>(undefined);
 
 export const QuoteProvider = ({ children }: { children: ReactNode }) => {
-  const [quotes, setQuotes] = usePersistentState<Quote[]>('quotes', mockQuotes);
-  const [parts, setParts] = usePersistentState<Part[]>('parts', mockParts);
-  const [customers, setCustomers] = usePersistentState<Customer[]>('customers', mockCustomers);
+  // Quotes and parts start empty — they are created through the quoting wizard.
+  // Keys are bumped so any previously-seeded demo records clear on next load.
+  const [quotes, setQuotes] = usePersistentState<Quote[]>('quotes_v2', []);
+  const [parts, setParts] = usePersistentState<Part[]>('parts_v2', []);
+  const [customers, setCustomers] = usePersistentState<Customer[]>('customers_v2', mockCustomers);
   // Key bumped to re-seed the machining-stock library over the old sheet-metal one
   // held in localStorage (prices are still editable in Materials afterwards).
   const [materials, setMaterials] = usePersistentState<Material[]>('materials_cnc_v1', mockMaterials);

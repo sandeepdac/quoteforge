@@ -5,10 +5,9 @@ import {
   File, 
   X, 
   Info, 
-  Box, 
-  FileText, 
-  Sparkles, 
-  CheckCircle2, 
+  Box,
+  FileText,
+  CheckCircle2,
   ArrowRight,
   ShieldCheck,
   Cpu,
@@ -109,24 +108,6 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
     },
     multiple: false
   } as any);
-
-  const handleLoadSampleStep = async () => {
-    setAnalyzing(true);
-    try {
-      setUploadedFile({ name: 'P5-Round-Top-Flag.STEP', size: 95634, type: 'model/step' });
-      const res = await fetch('/samples/P5-Round-Top-Flag.STEP');
-      const buffer = await res.arrayBuffer();
-      await processFile({ name: 'P5-Round-Top-Flag.STEP', buffer });
-    } catch (err) {
-      console.error('Failed to load sample STEP file:', err);
-      setAnalyzing(false);
-    }
-  };
-
-  const handleLoadSamplePdf = async () => {
-    setUploadedFile({ name: 'P5-Round-Top-Flag.pdf', size: 252428, type: 'application/pdf' });
-    await processFile({ name: 'P5-Round-Top-Flag.pdf', pdfUrl: '/samples/P5-Round-Top-Flag.pdf' });
-  };
 
   const handleProceed = () => {
     if (analysisResult) {
@@ -245,46 +226,6 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
         )}
       </div>
 
-      {/* Quick Test Demo Presets */}
-      <div className="bg-card border border-border p-5 rounded-xl space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-            <Sparkles size={14} className="text-amber-500" />
-            Quick Demo Presets (Test Production CAD Reader)
-          </span>
-          <span className="text-[10px] text-muted-foreground">Click to load instantly</span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={handleLoadSampleStep}
-            className="flex items-center gap-3 p-3 rounded-lg border border-border hover:border-primary/60 hover:bg-primary/5 text-left transition-all group bg-background"
-          >
-            <div className="w-10 h-10 rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center group-hover:scale-105 transition-transform shrink-0">
-              <Box size={22} />
-            </div>
-            <div className="overflow-hidden">
-              <p className="text-xs font-semibold text-foreground truncate">P5 Round Top Flag.STEP</p>
-              <p className="text-[10px] text-muted-foreground">3D STEP B-Rep · SolidWorks 2023</p>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleLoadSamplePdf}
-            className="flex items-center gap-3 p-3 rounded-lg border border-border hover:border-primary/60 hover:bg-primary/5 text-left transition-all group bg-background"
-          >
-            <div className="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center group-hover:scale-105 transition-transform shrink-0">
-              <FileText size={22} />
-            </div>
-            <div className="overflow-hidden">
-              <p className="text-xs font-semibold text-foreground truncate">P5 Round Top Flag.pdf</p>
-              <p className="text-[10px] text-muted-foreground">2D Drawing · needs AI vision, else confirm manually</p>
-            </div>
-          </button>
-        </div>
-      </div>
 
       {/* Feature capabilities notice */}
       <div className="bg-primary/5 border border-primary/15 rounded-xl p-4 flex gap-3 text-xs text-foreground/80 leading-relaxed">

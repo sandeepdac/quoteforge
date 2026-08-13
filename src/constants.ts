@@ -69,9 +69,9 @@ export const DEFAULT_CNC_SETTINGS: CncSettings = {
 };
 
 export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
-  name: 'ForgeFab Dynamics',
-  address: '500 Fabrication Way, Industrial Park, OH 44101',
-  logo: 'https://picsum.photos/seed/forgefabs/200/200',
+  name: 'Your Machine Shop',
+  address: '',
+  logo: '',
   rates: {
     laserPerMin: 2.50,
     pressBrakePerMin: 1.80,

@@ -10,7 +10,6 @@ import {
   Save,
   Moon,
   Sun,
-  RotateCcw,
   Calculator,
   Paintbrush,
   Plus,
@@ -20,7 +19,6 @@ import { Wrench } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
-import { clearAllState } from '../utils/storage';
 import { DEFAULT_CNC_SETTINGS, DEFAULT_SECONDARY_OPS, DEFAULT_TURNING_TOOLS } from '../constants';
 import { CncSettings, SecondaryCategory, SecondaryOperation, ShopSettings, ShopTool, TurningOp } from '../types';
 import { CURRENCIES, currencySymbol } from '../utils/currency';
@@ -29,15 +27,6 @@ export default function SettingsPage() {
   const { settings, updateSettings } = useSettings();
   const { theme, toggleTheme } = useTheme();
   const [activeTab, setActiveTab] = useState('shop');
-
-  const handleResetDemoData = () => {
-    const confirmed = window.confirm(
-      'Reset all quotes, parts, customers, materials and shop settings back to the demo defaults? This clears locally saved data and cannot be undone.'
-    );
-    if (!confirmed) return;
-    clearAllState();
-    window.location.reload();
-  };
 
   const tabs = [
     { id: 'shop', name: 'Shop Info', icon: Building },
@@ -77,30 +66,7 @@ export default function SettingsPage() {
 
         <div className="flex-1 bg-card border border-border rounded-xl shadow-sm overflow-hidden">
           {activeTab === 'shop' && (
-            <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
-              <h3 className="text-lg font-bold border-b border-border pb-4">Shop Information</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <InputGroup label="Shop Name" defaultValue={settings.name} />
-                <InputGroup label="Shop Website" defaultValue="https://forgefabs.example.com" />
-                <div className="col-span-2">
-                  <InputGroup label="Main Address" defaultValue={settings.address} />
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Shop Logo</p>
-                  <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 bg-muted rounded-lg border border-border flex items-center justify-center overflow-hidden">
-                      <img src={settings.logo} alt="Logo" className="w-full h-full object-cover" />
-                    </div>
-                    <button className="text-xs font-bold text-primary hover:underline">Change Logo</button>
-                  </div>
-                </div>
-              </div>
-              <div className="pt-6 border-t border-border flex justify-end">
-                <button className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-shadow shadow">
-                  <Save size={16} /> Save Changes
-                </button>
-              </div>
-            </div>
+            <ShopInfoTab settings={settings} onSave={(patch) => updateSettings(patch)} />
           )}
 
           {activeTab === 'rates' && (
@@ -216,28 +182,6 @@ export default function SettingsPage() {
                     <div className="absolute right-0.5 top-0.5 w-4 h-4 bg-white rounded-full"></div>
                   </div>
                 </div>
-              </div>
-              <div className="flex items-center justify-between p-4 bg-muted/20 border border-border rounded-lg">
-                <div className="flex items-center gap-4">
-                  <div className="p-2 bg-accent rounded-lg text-foreground">
-                    <RotateCcw size={20} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold">Reset Demo Data</p>
-                    <p className="text-xs text-muted-foreground">Restore quotes, parts, customers &amp; settings to defaults</p>
-                  </div>
-                </div>
-                <button
-                  onClick={handleResetDemoData}
-                  className="px-4 py-2 border border-destructive/40 text-destructive rounded-md text-xs font-bold uppercase tracking-widest hover:bg-destructive/10 transition-colors"
-                >
-                  Reset
-                </button>
-              </div>
-
-              <div className="pt-6 border-t border-border mt-12 flex items-center justify-between">
-                <button className="text-xs font-bold text-destructive hover:underline">Delete Account</button>
-                <div className="text-[10px] text-muted-foreground font-mono">v4.1.2-stable (Forge Edition)</div>
               </div>
             </div>
           )}
@@ -391,6 +335,53 @@ function EstimateTab({
           Changes save automatically and apply to the next quote you generate.
         </p>
         {saved && <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">{saved} saved ✓</span>}
+      </div>
+    </div>
+  );
+}
+
+/** SHOP INFO — the shop identity shown on quotes/PDFs. Now actually persists. */
+function ShopInfoTab({
+  settings,
+  onSave,
+}: {
+  settings: ShopSettings;
+  onSave: (patch: Partial<ShopSettings>) => void;
+}) {
+  const [name, setName] = useState(settings.name);
+  const [address, setAddress] = useState(settings.address);
+  const [logo, setLogo] = useState(settings.logo);
+  const [saved, setSaved] = useState(false);
+
+  const save = () => {
+    onSave({ name: name.trim(), address: address.trim(), logo: logo.trim() });
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1600);
+  };
+  const field = 'w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary transition-all';
+
+  return (
+    <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
+      <h3 className="text-lg font-bold border-b border-border pb-4">Shop Information</h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Shop Name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} className={field} placeholder="Your Machine Shop" />
+        </div>
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Logo URL</label>
+          <input value={logo} onChange={(e) => setLogo(e.target.value)} className={field} placeholder="https://… (optional)" />
+        </div>
+        <div className="col-span-1 md:col-span-2 space-y-2">
+          <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Main Address</label>
+          <input value={address} onChange={(e) => setAddress(e.target.value)} className={field} placeholder="Street, City, State ZIP" />
+        </div>
+      </div>
+      <div className="pt-6 border-t border-border flex items-center justify-end gap-3">
+        {saved && <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Saved ✓</span>}
+        <button onClick={save} className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-shadow shadow">
+          <Save size={16} /> Save Changes
+        </button>
       </div>
     </div>
   );
@@ -791,19 +782,6 @@ function ToolingTab({
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function InputGroup({ label, defaultValue }: { label: string; defaultValue: string }) {
-  return (
-    <div className="space-y-2">
-      <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">{label}</label>
-      <input 
-        type="text" 
-        defaultValue={defaultValue} 
-        className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary transition-all"
-      />
     </div>
   );
 }
