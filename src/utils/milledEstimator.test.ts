@@ -193,6 +193,44 @@ describe('contouredSetupCount — setup floor for contoured parts', () => {
   });
 });
 
+describe('NRE-vs-recurring setup split (first order vs repeat)', () => {
+  const p: MilledProfile = { ...baseProfile, setupCount: 3, holeCount: 4 };
+  const run = (qty: number) => calculateMilledCosts(input(p), qty, false, 0.25, DEFAULT_SHOP_SETTINGS);
+
+  it('bills a one-time CAM programming NRE as its own line', () => {
+    const c = run(1);
+    const nre = c.lineItems.find((li) => li.key === 'nre');
+    expect(nre).toBeDefined();
+    expect(nre!.value).toBeGreaterThan(0);
+    expect(c.nreCost).toBeGreaterThan(0);
+  });
+
+  it('the repeat price is lower than the first-order price (NRE already paid)', () => {
+    const c = run(1);
+    const unit = c.subtotal + c.overhead + c.marginAmount;
+    expect(c.repeatUnitPrice).toBeLessThan(unit);
+  });
+
+  it('the first-order vs repeat gap shrinks as quantity rises', () => {
+    const c = run(1);
+    const gapAt = (q: number) => {
+      const pt = c.batchCurve.find((b) => b.quantity === q)!;
+      return pt.unitPrice - pt.repeatUnitPrice;
+    };
+    expect(gapAt(1)).toBeGreaterThan(gapAt(25));
+    expect(gapAt(25)).toBeGreaterThan(gapAt(500));
+  });
+
+  it('with programming NRE off and no fixture, first order equals repeat', () => {
+    const s = JSON.parse(JSON.stringify(DEFAULT_SHOP_SETTINGS));
+    s.cnc.programmingMinPerSetup = 0;
+    const flat: MilledProfile = { ...baseProfile, setupCount: 1, bossCount: 0 }; // <3 setups, no boss → no soft jaws
+    const c = calculateMilledCosts(input(flat), 10, false, 0.25, s);
+    const unit = c.subtotal + c.overhead + c.marginAmount;
+    expect(c.repeatUnitPrice).toBeCloseTo(unit, 6);
+  });
+});
+
 describe('feedrate ratio — client feed override scales cutting time', () => {
   const feedProfile: MilledProfile = { ...baseProfile, removedVolumeCm3: 50, surfaceAreaCm2: 300, holeCount: 4 };
   const runFeed = (pct: number | undefined) => {

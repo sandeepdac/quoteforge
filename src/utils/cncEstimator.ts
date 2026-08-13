@@ -57,6 +57,7 @@ const COLORS: Record<string, string> = {
   noncut: '#94a3b8',
   setup: '#ef4444',
   tooling: '#93c5fd',
+  nre: '#a855f7',
 };
 
 const r1 = (v: number) => Math.round(v * 10) / 10;
@@ -137,11 +138,20 @@ export function calculateMachiningCosts(
   // overhead + margin apply the same as the machining work.
   const secondaryCost = secondaryOpsCostPerUnit(input.secondaryOps, qty);
 
+  // --- One-time NRE: CAM programming (NRE) ---------------------------------
+  // Programming/proving the turning cycle is one-time and does not recur on a
+  // reorder; amortised over the first batch, excluded from the repeat price.
+  const programmingMin = Math.max(0, cnc.programmingMinPerSetup ?? 0) * setups;
+  const nreCost = programmingMin * cnc.setupRatePerMin;
+  const programmingPerUnit = nreCost / qty;
+
   // --- Roll-up (per unit) --------------------------------------------------
-  const subtotal = materialCost + machineCost + setupPerUnit + toolingCost + secondaryCost;
+  const subtotal = materialCost + machineCost + setupPerUnit + toolingCost + secondaryCost + programmingPerUnit;
   const overhead = subtotal * overheadPercent;
   const marginAmount = (subtotal + overhead) * marginPercent;
   const unitPrice = subtotal + overhead + marginAmount;
+  const withMarkup = (sub: number) => sub * (1 + overheadPercent) * (1 + marginPercent);
+  const repeatUnitPrice = withMarkup(subtotal - programmingPerUnit);
   const quoteTotal = unitPrice * qty;
   const rushPremium = isRush ? quoteTotal * rushPremiumPercent : 0;
 
@@ -161,6 +171,7 @@ export function calculateMachiningCosts(
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${t.toolCount} operations`, value: toolingCost, color: COLORS.tooling },
+    { key: 'nre', name: `CAM programming (one-time) ÷ ${qty}`, driver: `${r1(programmingMin)} min NRE over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty} — not billed again on reorder`, value: programmingPerUnit, color: COLORS.nre },
     ...secondaryOpsLineItems(input.secondaryOps, qty),
   ].filter((li) => li.value > 0.005);
 
@@ -209,13 +220,19 @@ export function calculateMachiningCosts(
     totalCost: planSetups.reduce((a, s) => a + s.cost, 0),
   };
 
-  // --- Batch quantity curve (setup amortisation) ---------------------------
+  // --- Batch quantity curve (setup + NRE amortisation) ---------------------
+  // First-order price carries the one-time programming NRE; the repeat price
+  // drops it (program already written) — the gap narrows with quantity.
   const batchCurve: BatchPricePoint[] = STANDARD_BATCH_QTYS.map((q) => {
-    const sPer = setupCostTotal / q + secondaryOpsCostPerUnit(input.secondaryOps, q);
-    const sub = materialCost + machineCost + sPer + toolingCost;
-    const oh = sub * overheadPercent;
-    const mg = (sub + oh) * marginPercent;
-    return { quantity: q, unitPrice: sub + oh + mg, setupPerUnit: sPer };
+    const recurringPer = setupCostTotal / q + secondaryOpsCostPerUnit(input.secondaryOps, q);
+    const nrePer = nreCost / q;
+    const repeatSub = materialCost + machineCost + recurringPer + toolingCost;
+    return {
+      quantity: q,
+      unitPrice: withMarkup(repeatSub + nrePer),
+      repeatUnitPrice: withMarkup(repeatSub),
+      setupPerUnit: recurringPer + nrePer,
+    };
   });
 
   return {
@@ -236,6 +253,8 @@ export function calculateMachiningCosts(
     cycleTimeSec: Math.round(cycleTimeSec),
     setupTimeMin: r1(setupTimeMin),
     setups,
+    nreCost,
+    repeatUnitPrice,
     efficiencyFactor: eff,
     batchCurve,
     plan,

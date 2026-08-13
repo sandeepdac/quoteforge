@@ -64,6 +64,7 @@ export const DEFAULT_CNC_SETTINGS: CncSettings = {
   millToolChangeSec: 10,
   millSetupFirstOpMin: 60,
   millSetupPerExtraOpMin: 45,
+  programmingMinPerSetup: 25, // one-time CAM programming per setup (NRE; not on reorder)
   toolLibrary: DEFAULT_TURNING_TOOLS,
 };
 

@@ -70,6 +70,7 @@ const COLORS: Record<string, string> = {
   setup: '#ef4444',
   fixture: '#fb923c',
   tooling: '#93c5fd',
+  nre: '#a855f7',
 };
 
 // Milling-specific tuning (first-order; the efficiency factor calibrates the rest).
@@ -327,11 +328,25 @@ export function calculateMilledCosts(
   // the same as machining (the shop marks up subcon like the rest of the job).
   const secondaryCost = secondaryOpsCostPerUnit(input.secondaryOps, qty);
 
+  // --- One-time NRE: CAM programming + fixturing ---------------------------
+  // Writing/proving the toolpaths and making the soft jaws are done ONCE for the
+  // part and do not recur on a reorder. They amortise over the first batch but
+  // are excluded from the repeat price. (Separating this is what lets us show a
+  // first-order vs repeat-order price — a ~30% swing at mid quantities.)
+  const programmingMin = Math.max(0, cnc.programmingMinPerSetup ?? 0) * setups;
+  const nreProgrammingCost = programmingMin * cnc.setupRatePerMin;
+  const nreCost = nreProgrammingCost + fixtureCostTotal; // one-time for the whole job
+  const programmingPerUnit = nreProgrammingCost / qty;
+
   // --- Roll-up (per unit) --------------------------------------------------
-  const subtotal = materialCost + machineCost + setupPerUnit + toolingCost + fixtureCost + secondaryCost;
+  // `subtotal` is the FIRST-order per-part cost (carries the amortised NRE). The
+  // repeat-order cost drops the one-time NRE (programming + fixture).
+  const subtotal = materialCost + machineCost + setupPerUnit + toolingCost + fixtureCost + secondaryCost + programmingPerUnit;
   const overhead = subtotal * overheadPercent;
   const marginAmount = (subtotal + overhead) * marginPercent;
   const unitPrice = subtotal + overhead + marginAmount;
+  const withMarkup = (sub: number) => sub * (1 + overheadPercent) * (1 + marginPercent);
+  const repeatUnitPrice = withMarkup(subtotal - programmingPerUnit - fixtureCost);
   const quoteTotal = unitPrice * qty;
   const rushPremium = isRush ? quoteTotal * rushPremiumPercent : 0;
 
@@ -347,19 +362,26 @@ export function calculateMilledCosts(
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${p.pocketCount} pocket${p.pocketCount === 1 ? '' : 's'}`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
-    { key: 'fixture', name: `Soft jaws / fixture ÷ ${qty}`, driver: needsSoftJaws ? `${setups} setups${p.bossCount > 0 ? `, ${p.bossCount} boss` : ''} → work-holding, made once` : '', value: fixtureCost, color: COLORS.fixture },
+    { key: 'nre', name: `CAM programming (one-time) ÷ ${qty}`, driver: `${r1(programmingMin)} min NRE over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty} — not billed again on reorder`, value: programmingPerUnit, color: COLORS.nre },
+    { key: 'fixture', name: `Soft jaws / fixture ÷ ${qty}`, driver: needsSoftJaws ? `${setups} setups${p.bossCount > 0 ? `, ${p.bossCount} boss` : ''} → work-holding, made once (one-time)` : '', value: fixtureCost, color: COLORS.fixture },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${toolCount} operations`, value: toolingCost, color: COLORS.tooling },
     ...secondaryOpsLineItems(input.secondaryOps, qty),
   ].filter((li) => li.value > 0.005);
 
-  // --- Batch quantity curve (setup amortisation) ---------------------------
+  // --- Batch quantity curve (setup + NRE amortisation) ---------------------
+  // First-order price carries the one-time NRE (programming + jaws); the repeat
+  // price drops it (programs written, fixtures exist) — the gap narrows with qty.
   const perUnitFixed = materialCost + machineCost + toolingCost;
   const batchCurve: BatchPricePoint[] = STANDARD_BATCH_QTYS.map((q) => {
-    const sPer = (setupCostTotal + fixtureCostTotal) / q + secondaryOpsCostPerUnit(input.secondaryOps, q);
-    const sub = perUnitFixed + sPer;
-    const oh = sub * overheadPercent;
-    const mg = (sub + oh) * marginPercent;
-    return { quantity: q, unitPrice: sub + oh + mg, setupPerUnit: sPer };
+    const recurringPer = setupCostTotal / q + secondaryOpsCostPerUnit(input.secondaryOps, q);
+    const nrePer = (nreProgrammingCost + fixtureCostTotal) / q;
+    const repeatSub = perUnitFixed + recurringPer;
+    return {
+      quantity: q,
+      unitPrice: withMarkup(repeatSub + nrePer),
+      repeatUnitPrice: withMarkup(repeatSub),
+      setupPerUnit: recurringPer + nrePer,
+    };
   });
 
   return {
@@ -380,6 +402,8 @@ export function calculateMilledCosts(
     cycleTimeSec: Math.round(cycleTimeSec),
     setupTimeMin: r1(setupTimeMin),
     setups,
+    nreCost,
+    repeatUnitPrice,
     efficiencyFactor: eff,
     batchCurve,
     machineClass: 'mill',

@@ -44,13 +44,16 @@ export interface ResolveParams {
 
 /** Map a machining breakdown onto the QuoteCosts shape (totals preserved exactly). */
 function machiningToQuoteCosts(mc: MachiningCosts): QuoteCosts {
+  // Everything not carried by the four named buckets (secondary ops, one-time
+  // programming NRE, …) lands in finishCost so the parts always sum to subtotal.
+  const finishCost = mc.subtotal - (mc.materialCost + mc.machineCost + mc.setupCost + mc.toolingCost);
   return {
     materialCost: mc.materialCost,
     laserCost: mc.machineCost, // machine (cycle) time
     bendCost: mc.setupCost,    // setup, amortised
     weldCost: 0,
     assemblyCost: mc.toolingCost,
-    finishCost: 0,
+    finishCost: Math.max(0, finishCost),
     subtotal: mc.subtotal,
     overhead: mc.overhead,
     marginAmount: mc.marginAmount,

@@ -108,6 +108,8 @@ export interface BatchPricePoint {
   unitPrice: number;
   /** Setup portion of the unit price at this quantity (for the curve annotation). */
   setupPerUnit: number;
+  /** Reorder price — one-time NRE (CAM programming + fixturing) already paid. */
+  repeatUnitPrice: number;
 }
 
 /** One cutting operation inside a setup, as an operator would read a job sheet. */
@@ -183,6 +185,10 @@ export interface MachiningCosts {
   /** Total setup time for the job (min), amortised over the batch. */
   setupTimeMin: number;
   setups: number;
+  /** One-time NRE for the job (CAM programming + soft jaws/fixture), not per part. */
+  nreCost: number;
+  /** Per-part price on a REORDER (NRE already paid) at the quoted quantity. */
+  repeatUnitPrice: number;
   efficiencyFactor: number;
   /** Price per part across standard batch sizes (setup amortisation curve). */
   batchCurve: BatchPricePoint[];
@@ -284,6 +290,12 @@ export interface CncSettings {
   millToolDiaMm?: number;
   /** ATC tool-change time (s) — slower than a lathe turret index. */
   millToolChangeSec?: number;
+  /**
+   * One-time CAM programming time per setup (min). This is NRE — writing and
+   * proving the toolpaths is done once for the part design and does NOT recur on
+   * a reorder. Amortised over the first batch; excluded from the repeat price.
+   */
+  programmingMinPerSetup?: number;
   /** Baseline setup time for a milled op (min): vise/soft jaws, tram, probe, touch-off. */
   millSetupFirstOpMin?: number;
   /** Added setup per extra milled setup (min) — re-fixture and re-probe. */

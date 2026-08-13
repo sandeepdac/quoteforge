@@ -409,6 +409,16 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
                 <span className="text-base font-bold">Grand Total</span>
                 <span className="text-2xl font-black text-primary">{currencySymbol(settings.currency)}{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
+              {mc && mc.repeatUnitPrice < unitPrice - 0.01 && (
+                <div className="flex justify-between items-center pt-2 mt-2 border-t border-dashed border-border text-sm">
+                  <span className="text-muted-foreground">
+                    Repeat order <span className="text-[10px]">(NRE {currencySymbol(settings.currency)}{mc.nreCost.toFixed(0)} already paid)</span>
+                  </span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                    {currencySymbol(settings.currency)}{mc.repeatUnitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/part
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 

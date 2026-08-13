@@ -363,24 +363,36 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
             {/* Batch quantity curve — setup amortisation */}
             {mc && (
               <div className="space-y-2 border-t border-border pt-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Price per part by quantity</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Price per part by quantity</span>
+                  <span className="text-[10px] text-muted-foreground flex items-center gap-3">
+                    <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-primary" /> First order</span>
+                    <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500" /> Repeat</span>
+                  </span>
+                </div>
                 <div className="space-y-1.5">
                   {mc.batchCurve.map((pt) => {
                     const maxUp = Math.max(...mc.batchCurve.map((p) => p.unitPrice), 0.0001);
                     const isCurrent = pt.quantity === data.config.quantity;
+                    const hasRepeatGap = pt.repeatUnitPrice < pt.unitPrice - 0.01;
                     return (
                       <div key={pt.quantity} className="flex items-center gap-2">
                         <span className={cn('text-[10px] w-8 tabular-nums shrink-0', isCurrent ? 'font-bold text-primary' : 'text-muted-foreground')}>×{pt.quantity}</span>
-                        <div className="flex-1 h-3 bg-muted rounded overflow-hidden">
+                        <div className="flex-1 h-3 bg-muted rounded overflow-hidden relative">
                           <div className={cn('h-full rounded', isCurrent ? 'bg-primary' : 'bg-primary/40')} style={{ width: `${(pt.unitPrice / maxUp) * 100}%` }}></div>
+                          {hasRepeatGap && (
+                            <div className="absolute top-0 h-full w-0.5 bg-emerald-500" style={{ left: `${(pt.repeatUnitPrice / maxUp) * 100}%` }} title={`Repeat order: $${fmt(pt.repeatUnitPrice)}`}></div>
+                          )}
                         </div>
                         <span className={cn('text-[10px] w-14 text-right tabular-nums shrink-0', isCurrent ? 'font-bold text-foreground' : 'text-muted-foreground')}>${fmt(pt.unitPrice)}</span>
+                        <span className="text-[10px] w-14 text-right tabular-nums shrink-0 text-emerald-600 dark:text-emerald-400">{hasRepeatGap ? `$${fmt(pt.repeatUnitPrice)}` : '—'}</span>
                       </div>
                     );
                   })}
                 </div>
                 <p className="text-[10px] text-muted-foreground/80 leading-tight">
-                  Setup ({mc.setupTimeMin} min) is amortised over the batch — dominant at low qty, negligible at high.
+                  Setup ({mc.setupTimeMin} min) amortises over the batch. <strong className="text-foreground">First order</strong> carries the one-time
+                  NRE (CAM programming{mc.machineClass === 'mill' ? ' + soft jaws' : ''}, ${fmt(mc.nreCost)}); the <strong className="text-emerald-600 dark:text-emerald-400">repeat</strong> price drops it.
                 </p>
               </div>
             )}

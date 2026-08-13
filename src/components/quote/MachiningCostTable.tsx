@@ -34,6 +34,7 @@ export default function MachiningCostTable({ costs, overheadPercent, currency = 
   const noncut = li('noncut');
   const setup = li('setup');
   const setupCharge = li('setupCharge');
+  const nre = li('nre');
   const fixture = li('fixture');
   const tooling = li('tooling');
   const secondaries = costs.lineItems.filter((l) => l.key === 'secondary');
@@ -103,7 +104,7 @@ export default function MachiningCostTable({ costs, overheadPercent, currency = 
                 <td className={num}>{money(noncut.value)}</td>
               </tr>
             )}
-            {[setup, setupCharge, fixture, tooling]
+            {[setup, setupCharge, nre, fixture, tooling]
               .filter((x): x is CostLineItem => !!x && x.value > 0.005)
               .map((x) => (
                 <tr key={x.key}>
