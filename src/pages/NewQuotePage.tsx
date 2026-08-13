@@ -26,6 +26,8 @@ export default function NewQuotePage() {
   // A rendered still of the 3D model, captured on the extraction step, used as the
   // part thumbnail instead of the generic schematic.
   const [partImage, setPartImage] = useState<string | undefined>(undefined);
+  // The source part's thumbnail when cloning (so the clone keeps the same image).
+  const [seedThumbnail, setSeedThumbnail] = useState<string | undefined>(undefined);
   // When editing an existing quote, we update it in place instead of creating one.
   const [editBase, setEditBase] = useState<Quote | null>(null);
   // Generate the quote number once so the Review preview matches the saved quote.
@@ -59,7 +61,10 @@ export default function NewQuotePage() {
 
   useEffect(() => {
     const state = location.state as
-      | { cloneData?: Quote; partData?: Part; editQuote?: Quote; editPart?: Part; editCad?: ExtractedCadAnalysis }
+      | {
+          cloneData?: Quote; partData?: Part; cloneCad?: ExtractedCadAnalysis;
+          editQuote?: Quote; editPart?: Part; editCad?: ExtractedCadAnalysis;
+        }
       | null;
     if (!state) return;
     const isEdit = !!state.editQuote;
@@ -67,7 +72,12 @@ export default function NewQuotePage() {
     const part = state.editPart ?? state.partData;
     if (!src && !part) return;
 
-    if (state.editCad) setCadAnalysis(state.editCad);
+    // Restore the CAD analysis for BOTH edit and clone, so a machining quote is
+    // re-priced on the machining model (not the fabrication fallback).
+    const cad = state.editCad ?? state.cloneCad;
+    if (cad) setCadAnalysis(cad);
+    // Carry the source part's image so a clone keeps the same thumbnail.
+    if (part?.thumbnail) setSeedThumbnail(part.thumbnail);
     setQuoteData((prev: any) => ({
       ...prev,
       partName: part?.name ?? prev.partName,
@@ -206,7 +216,7 @@ export default function NewQuotePage() {
       materialId,
       thicknessMm: cadAnalysis?.thicknessMm ?? material.thicknessMm,
       features: partFeatures,
-      thumbnail: partImage ?? generatePartThumbnail(partName, partFeatures),
+      thumbnail: partImage ?? seedThumbnail ?? generatePartThumbnail(partName, partFeatures),
       lastQuotedDate: new Date().toISOString().split('T')[0],
       quoteCount: 1,
     };

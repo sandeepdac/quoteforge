@@ -5,7 +5,7 @@ import { parseStepFile } from './stepParser';
 import { SAMPLE_STEP_BRACKET } from './sampleCadFiles';
 
 const realStep = readFileSync(
-  resolve(process.cwd(), 'public/samples/P5-Round-Top-Flag.STEP'),
+  resolve(process.cwd(), 'test-fixtures/P5-Round-Top-Flag.STEP'),
   'utf-8'
 );
 

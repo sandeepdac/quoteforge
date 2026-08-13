@@ -4,7 +4,7 @@ import { resolve } from 'path';
 import { analyzeCadFile } from './cadAnalyzer';
 
 const realStep = readFileSync(
-  resolve(process.cwd(), 'public/samples/P5-Round-Top-Flag.STEP'),
+  resolve(process.cwd(), 'test-fixtures/P5-Round-Top-Flag.STEP'),
   'utf-8'
 );
 

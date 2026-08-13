@@ -59,7 +59,7 @@ export default function QuoteDetailPage() {
   };
 
   const handleClone = () => {
-    navigate('/quotes/new', { state: { cloneData: quote, partData: part } });
+    navigate('/quotes/new', { state: { cloneData: quote, partData: part, cloneCad: quote.cadAnalysis } });
   };
 
   const handleEdit = () => {
