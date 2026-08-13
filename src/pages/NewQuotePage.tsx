@@ -12,19 +12,21 @@ import { calculateWinProbability } from '../utils/estimator';
 import { resolveQuoteCosts } from '../utils/quoteCosts';
 import { generateQuoteNumber, generateId } from '../utils/idGenerator';
 import { generatePartThumbnail } from '../utils/partThumbnail';
-import { ExtractedCadAnalysis } from '../utils/cadAnalyzer';
+import { ExtractedCadAnalysis, stripCadForStorage } from '../utils/cadAnalyzer';
 
 const STEPS = ['Upload', 'AI Extraction', 'Quantity', 'Review'];
 
 export default function NewQuotePage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { addQuote, addPart, materials } = useQuotes();
+  const { addQuote, updateQuote, addPart, materials } = useQuotes();
   const { settings } = useSettings();
   const [currentStep, setCurrentStep] = useState(1);
   const [cadAnalysis, setCadAnalysis] = useState<ExtractedCadAnalysis | undefined>(undefined);
+  // When editing an existing quote, we update it in place instead of creating one.
+  const [editBase, setEditBase] = useState<Quote | null>(null);
   // Generate the quote number once so the Review preview matches the saved quote.
-  const [quoteNumber] = useState(generateQuoteNumber);
+  const [quoteNumber, setQuoteNumber] = useState(generateQuoteNumber);
 
   const [quoteData, setQuoteData] = useState<any>({
     partName: 'Custom Fabricated Part',
@@ -53,27 +55,41 @@ export default function NewQuotePage() {
   });
 
   useEffect(() => {
-    const state = location.state as { cloneData?: Quote; partData?: Part } | null;
-    if (!state?.cloneData && !state?.partData) return;
-    const clone = state.cloneData;
-    const part = state.partData;
+    const state = location.state as
+      | { cloneData?: Quote; partData?: Part; editQuote?: Quote; editPart?: Part; editCad?: ExtractedCadAnalysis }
+      | null;
+    if (!state) return;
+    const isEdit = !!state.editQuote;
+    const src = state.editQuote ?? state.cloneData;
+    const part = state.editPart ?? state.partData;
+    if (!src && !part) return;
+
+    if (state.editCad) setCadAnalysis(state.editCad);
     setQuoteData((prev: any) => ({
       ...prev,
       partName: part?.name ?? prev.partName,
       features: part?.features
         ? { ...prev.features, materialId: part.materialId, ...part.features }
         : prev.features,
-      config: clone
+      config: src
         ? {
-            customerId: clone.customerId,
-            quantity: clone.quantity,
-            leadTimeDays: clone.leadTimeDays,
-            shippingType: clone.shippingType,
-            isRush: clone.isRushOrder,
+            customerId: src.customerId,
+            quantity: src.quantity,
+            leadTimeDays: src.leadTimeDays,
+            shippingType: src.shippingType,
+            isRush: src.isRushOrder,
           }
         : prev.config,
     }));
-    setCurrentStep(3);
+    if (isEdit && state.editQuote) {
+      setEditBase(state.editQuote);
+      setQuoteNumber(state.editQuote.quoteNumber);
+      // Jump straight to Review (the extraction data + cost are restored). Clones
+      // land on Quantity as before.
+      setCurrentStep(state.editCad ? 4 : 3);
+    } else {
+      setCurrentStep(3);
+    }
   }, [location.state]);
 
   const handleUploadContinue = (analysis?: ExtractedCadAnalysis) => {
@@ -140,6 +156,42 @@ export default function NewQuotePage() {
       settings,
     });
     const { costs, unitPrice, grandTotal, machiningCosts, machineClass } = resolved;
+    const persistedCad = cadAnalysis ? stripCadForStorage(cadAnalysis) : undefined;
+
+    // --- Editing an existing quote: update it in place + log a revision ------
+    if (editBase) {
+      const changes: string[] = [];
+      if (editBase.quantity !== quoteData.config.quantity) changes.push(`qty ${editBase.quantity}→${quoteData.config.quantity}`);
+      if (Math.abs(editBase.marginPercent - margin) > 0.0001) changes.push(`margin ${(editBase.marginPercent * 100).toFixed(0)}%→${(margin * 100).toFixed(0)}%`);
+      if (editBase.leadTimeDays !== quoteData.config.leadTimeDays) changes.push(`lead ${editBase.leadTimeDays}→${quoteData.config.leadTimeDays}d`);
+      if (editBase.customerId !== quoteData.config.customerId) changes.push('customer changed');
+      const summary = changes.length ? `Edited — ${changes.join(', ')}` : 'Re-priced';
+      const updated: Quote = {
+        ...editBase,
+        status: isDraft ? 'draft' : editBase.status === 'draft' ? 'sent' : editBase.status,
+        customerId: quoteData.config.customerId,
+        quantity: quoteData.config.quantity,
+        leadTimeDays: quoteData.config.leadTimeDays,
+        shippingType: quoteData.config.shippingType,
+        isRushOrder: quoteData.config.isRush,
+        marginPercent: margin,
+        notes: opts?.notes ?? editBase.notes,
+        costs,
+        totalUnitPrice: unitPrice,
+        grandTotal,
+        winProbability: calculateWinProbability(margin, quoteData.config.leadTimeDays),
+        machineClass,
+        machiningCosts,
+        cadAnalysis: persistedCad ?? editBase.cadAnalysis,
+        revisions: [
+          ...(editBase.revisions ?? [{ at: editBase.createdDate, summary: 'Quote created', unitPrice: editBase.totalUnitPrice, grandTotal: editBase.grandTotal }]),
+          { at: new Date().toISOString(), summary, unitPrice, grandTotal },
+        ],
+      };
+      updateQuote(updated);
+      navigate(`/quotes/${updated.id}`);
+      return;
+    }
 
     // Persist the actual measured part so the quote references its real geometry,
     // and it shows up in the Parts catalog — instead of pointing at a mock part.
@@ -177,6 +229,10 @@ export default function NewQuotePage() {
       winProbability: calculateWinProbability(margin, quoteData.config.leadTimeDays),
       machineClass,
       machiningCosts,
+      cadAnalysis: persistedCad,
+      revisions: [
+        { at: new Date().toISOString(), summary: 'Quote created from CAD extraction', unitPrice, grandTotal },
+      ],
     };
 
     addQuote(newQuote);

@@ -1,4 +1,16 @@
+import type { ExtractedCadAnalysis } from './utils/cadAnalyzer';
+
 export type QuoteStatus = 'draft' | 'sent' | 'won' | 'lost' | 'expired';
+
+/** One entry in a quote's edit history. */
+export interface QuoteRevision {
+  /** ISO timestamp of the change. */
+  at: string;
+  /** Human-readable summary of what changed. */
+  summary: string;
+  unitPrice: number;
+  grandTotal: number;
+}
 
 export interface Material {
   id: string;
@@ -77,6 +89,15 @@ export interface Quote {
   machineClass?: 'turn' | 'mill';
   /** Full machining cost breakdown (cycle-time model) when this is a machining quote. */
   machiningCosts?: MachiningCosts;
+  /** Edit history (newest last). Seeded on creation, appended on each edit. */
+  revisions?: QuoteRevision[];
+  /**
+   * CAD extraction persisted so the quote can be re-opened for editing with its
+   * features, strategy and cost intact. The heavy tessellated mesh / raw STEP
+   * data are stripped before saving (localStorage-friendly), so the live 3D
+   * viewer needs the file re-uploaded; everything else restores.
+   */
+  cadAnalysis?: ExtractedCadAnalysis;
 }
 
 export interface QuoteCosts {

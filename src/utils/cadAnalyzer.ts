@@ -120,6 +120,20 @@ function densityFor(materialName: string): number {
 }
 
 /**
+ * Strip the heavy tessellated mesh and raw STEP parse tree so a cadAnalysis can
+ * be persisted in localStorage. The measured geometry, profiles, plan, features
+ * and DFM are kept — enough to re-open the quote for editing and re-price it —
+ * but the live 3D viewer will need the file re-uploaded (typed-array meshes do
+ * not survive JSON and would blow the storage quota).
+ */
+export function stripCadForStorage(a: ExtractedCadAnalysis): ExtractedCadAnalysis {
+  const { stepMesh, stepData, ...rest } = a;
+  void stepMesh;
+  void stepData;
+  return rest as ExtractedCadAnalysis;
+}
+
+/**
  * Main dispatcher. Routes any input to the most accurate path available:
  *   • 3D solids (STEP/IGES/BREP) → tessellate + measure exact geometry
  *   • 2D drawings (PDF/PNG/JPG)  → read dimensions with AI vision

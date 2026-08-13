@@ -14,7 +14,8 @@ import {
   XCircle,
   History,
   Info,
-  Copy
+  Copy,
+  Pencil
 } from 'lucide-react';
 import { useQuotes } from '../context/QuoteContext';
 import { useSettings } from '../context/SettingsContext';
@@ -44,6 +45,7 @@ export default function QuoteDetailPage() {
   const customer = getCustomerById(quote.customerId);
   const part = getPartById(quote.partId);
   const material = part ? getMaterialById(part.materialId) : undefined;
+  const mc = quote.machiningCosts;
 
   const handleDelete = () => {
     if (confirm('Are you sure you want to delete this quote?')) {
@@ -58,6 +60,10 @@ export default function QuoteDetailPage() {
 
   const handleClone = () => {
     navigate('/quotes/new', { state: { cloneData: quote, partData: part } });
+  };
+
+  const handleEdit = () => {
+    navigate('/quotes/new', { state: { editQuote: quote, editPart: part, editCad: quote.cadAnalysis } });
   };
 
   const handleDownload = () => {
@@ -91,14 +97,14 @@ export default function QuoteDetailPage() {
 
       <div className="flex flex-wrap gap-3 pb-6 border-b border-border">
         {quote.status === 'draft' && (
-          <>
-            <button onClick={() => setStatus('sent')} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-all">
-              <Send size={16} /> Send Quote
-            </button>
-            <button className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
-              Edit
-            </button>
-          </>
+          <button onClick={() => setStatus('sent')} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-all">
+            <Send size={16} /> Send Quote
+          </button>
+        )}
+        {(quote.status === 'draft' || quote.status === 'sent') && (
+          <button onClick={handleEdit} className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
+            <Pencil size={16} /> Edit
+          </button>
         )}
         {quote.status === 'sent' && (
           <>
@@ -175,35 +181,40 @@ export default function QuoteDetailPage() {
               <div className="flex-1 space-y-6">
                 <div>
                   <Link to={`/parts/${part?.id}`} className="text-lg font-semibold text-primary hover:underline">{part?.name}</Link>
-                  <p className="text-sm text-muted-foreground">{material?.name} {material?.thicknessMm}mm</p>
+                  <p className="text-sm text-muted-foreground">
+                    {material?.name}
+                    {quote.machineClass
+                      ? ` · ${quote.machineClass === 'turn' ? 'Turned' : 'Milled'} part`
+                      : ` ${material?.thicknessMm}mm`}
+                  </p>
                 </div>
-                
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
-                  <div>
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Perimeter</p>
-                    <p className="text-sm font-medium">{part?.features.perimeterMm} mm</p>
+
+                {quote.machineClass ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
+                    <Feature label="Setups" value={mc?.setups ?? '—'} />
+                    <Feature label="Holes" value={mc?.holeCount ?? part?.features.holeCount ?? 0} />
+                    <Feature
+                      label="Stock"
+                      value={mc?.stockMm
+                        ? `${mc.stockMm.x}×${mc.stockMm.y}×${mc.stockMm.z} mm`
+                        : mc?.barDiameterMm
+                          ? `⌀${mc.barDiameterMm} bar`
+                          : '—'}
+                    />
+                    <Feature label="Cycle time" value={mc?.cycleTimeSec != null ? `${mc.cycleTimeSec} s` : '—'} />
+                    <Feature label="Material yield" value={mc?.buyToFlyRatio != null ? `${Math.round(mc.buyToFlyRatio * 100)}%` : '—'} />
+                    <Feature label="Weight" value={`${part?.features.weightKg.toFixed(2)} kg`} />
                   </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Bends</p>
-                    <p className="text-sm font-medium">{part?.features.bendCount}</p>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
+                    <Feature label="Perimeter" value={`${part?.features.perimeterMm} mm`} />
+                    <Feature label="Bends" value={part?.features.bendCount ?? 0} />
+                    <Feature label="Pierces" value={part?.features.pierceCount ?? 0} />
+                    <Feature label="Welding" value={`${part?.features.weldLengthMm} mm`} />
+                    <Feature label="Holes" value={part?.features.holeCount ?? 0} />
+                    <Feature label="Weight" value={`${part?.features.weightKg.toFixed(2)} kg`} />
                   </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Pierces</p>
-                    <p className="text-sm font-medium">{part?.features.pierceCount}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Welding</p>
-                    <p className="text-sm font-medium">{part?.features.weldLengthMm} mm</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Holes</p>
-                    <p className="text-sm font-medium">{part?.features.holeCount}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Weight</p>
-                    <p className="text-sm font-medium">{part?.features.weightKg.toFixed(2)} kg</p>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
@@ -224,11 +235,22 @@ export default function QuoteDetailPage() {
                    <History size={14} /> Version History
                  </p>
                  <div className="space-y-4 border-l-2 border-border ml-2 pl-4 py-2">
-                   <div className="relative">
-                      <div className="absolute -left-[24px] top-1.5 w-3 h-3 rounded-full bg-primary ring-4 ring-background"></div>
-                      <p className="text-xs font-bold">{new Date(quote.createdDate).toLocaleDateString()}</p>
-                      <p className="text-xs text-muted-foreground">Quote created from CAD extraction</p>
-                   </div>
+                   {(quote.revisions && quote.revisions.length > 0
+                     ? quote.revisions
+                     : [{ at: quote.createdDate, summary: 'Quote created from CAD extraction', unitPrice: quote.totalUnitPrice, grandTotal: quote.grandTotal }]
+                   )
+                     .slice()
+                     .reverse()
+                     .map((rev, i) => (
+                       <div className="relative" key={rev.at + i}>
+                         <div className={cn('absolute -left-[24px] top-1.5 w-3 h-3 rounded-full ring-4 ring-background', i === 0 ? 'bg-primary' : 'bg-muted-foreground/40')}></div>
+                         <div className="flex items-baseline justify-between gap-3">
+                           <p className="text-xs font-bold">{new Date(rev.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</p>
+                           <span className="text-[11px] font-mono text-muted-foreground">${rev.unitPrice.toFixed(2)}/ea</span>
+                         </div>
+                         <p className="text-xs text-muted-foreground">{rev.summary}</p>
+                       </div>
+                     ))}
                  </div>
               </div>
             </div>
@@ -347,6 +369,15 @@ export default function QuoteDetailPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function Feature({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-[10px] text-muted-foreground font-bold uppercase">{label}</p>
+      <p className="text-sm font-medium">{value}</p>
     </div>
   );
 }
