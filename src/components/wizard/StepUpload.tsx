@@ -9,7 +9,6 @@ import {
   FileText,
   CheckCircle2,
   ArrowRight,
-  ShieldCheck,
   Cpu,
   Layers
 } from 'lucide-react';
@@ -114,11 +113,8 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
 
   return (
     <div className="max-w-3xl mx-auto space-y-5 animate-in fade-in duration-300">
-      <div className="text-center space-y-1.5">
+      <div className="text-center">
         <h2 className="text-2xl font-bold tracking-tight text-foreground">Upload Engineering CAD File</h2>
-        <p className="text-muted-foreground text-sm">
-          Production-grade parser reads native 3D STEP CAD (.step/.stp) models and 2D PDF engineering drawings.
-        </p>
       </div>
 
       {/* Material — chosen up front so it's never a silent default. A STEP rarely
@@ -206,24 +202,13 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
             <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center group shadow-inner">
               <Upload className="group-hover:translate-y-[-3px] transition-transform" size={32} />
             </div>
-            <div className="text-center space-y-1">
+            <div className="text-center">
               <p className="font-semibold text-foreground text-base">Drop your CAD drawing or 3D STEP model here</p>
-              <p className="text-xs text-muted-foreground">
-                3D solids <strong className="text-foreground">.STEP .STP .IGES .IGS .BREP</strong> are measured exactly; drawings <strong className="text-foreground">.PDF .PNG .JPG</strong> are read by AI vision (up to 50MB)
-              </p>
             </div>
           </>
         )}
       </div>
 
-
-      {/* Feature capabilities notice */}
-      <div className="bg-primary/5 border border-primary/15 rounded-xl p-4 flex gap-3 text-xs text-foreground/80 leading-relaxed">
-        <ShieldCheck className="text-primary shrink-0 mt-0.5" size={20} />
-        <p>
-          <strong>Prod-Grade CAD Pipeline:</strong> Automatically calculates 3D bounding box (L x W x H), surface area, pierce points, cylindrical holes, bend lines, material callouts, and estimated manufacturing operations with instant WebGL 3D/2D preview in the next step.
-        </p>
-      </div>
 
       {/* Continue button if file loaded */}
       {analysisResult && (

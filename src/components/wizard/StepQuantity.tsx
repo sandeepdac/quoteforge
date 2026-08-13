@@ -116,9 +116,9 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
   const quantityPresets = [1, 10, 50, 100, 500];
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
       {/* Left Column: Inputs */}
-      <div className="lg:col-span-2 space-y-8 animate-in slide-in-from-left-4 duration-500">
+      <div className="lg:col-span-2 space-y-6 animate-in slide-in-from-left-4 duration-500">
         <div className="space-y-6">
           <h2 className="text-xl font-semibold">Quantity & Logistics</h2>
           
@@ -229,8 +229,8 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
           </div>
         </div>
 
-        <div className="flex justify-between items-center pt-8">
-          <button 
+        <div className="flex justify-between items-center pt-4">
+          <button
             onClick={onBack}
             className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
           >

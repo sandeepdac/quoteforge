@@ -149,6 +149,13 @@ export default function NewQuotePage() {
     setCurrentStep(prev => prev - 1);
   };
 
+  // Start every step at the top. The app scrolls inside <main>, not the window,
+  // so without this you keep the previous step's scroll position — landing at the
+  // bottom of the next step (e.g. past the customer selector on Quantity).
+  useEffect(() => {
+    document.querySelector('main')?.scrollTo({ top: 0 });
+  }, [currentStep]);
+
   const handleFinalize = (isDraft: boolean, opts?: { margin?: number; notes?: string }) => {
     const material = materials.find(m => m.id === quoteData.features.materialId) || materials[0];
     // Use the margin chosen on the Review step (falls back to the shop default), and

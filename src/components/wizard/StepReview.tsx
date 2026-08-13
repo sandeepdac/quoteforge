@@ -148,33 +148,49 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
   const validUntil = new Date();
   validUntil.setDate(validUntil.getDate() + 30);
 
+  const sym = currencySymbol(settings.currency);
+  const money = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
   return (
-    <div className="max-w-5xl mx-auto space-y-8 animate-in zoom-in-95 duration-500">
-      <div className="flex flex-col md:flex-row justify-between gap-6 pb-6 border-b border-border">
-        <div className="space-y-1">
+    <div className="max-w-5xl mx-auto space-y-6 animate-in zoom-in-95 duration-500">
+      {/* Price-forward header — the quote total is the first thing you see. */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 bg-card border border-border rounded-2xl p-5 shadow-sm">
+        <div className="space-y-1.5">
           <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-bold">{quoteNumber}</h2>
+            <h2 className="text-xl font-bold">{quoteNumber}</h2>
             <span className="bg-muted text-muted-foreground px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest">Draft</span>
           </div>
-          <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-            <div className="flex items-center gap-1"><Calendar size={14} /> Created: {new Date().toLocaleDateString()}</div>
-            <div className="flex items-center gap-1"><Calendar size={14} /> Valid Until: {validUntil.toLocaleDateString()}</div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1"><Hammer size={13} /> {customer?.name ?? 'No customer selected'}</span>
+            <span className="flex items-center gap-1"><Calendar size={13} /> Valid until {validUntil.toLocaleDateString()}</span>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <button onClick={() => onSaveDraft({ margin, notes })} className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium border border-border hover:bg-accent transition-colors">
-            <Save size={16} /> Save Draft
-          </button>
-          <button onClick={() => onSend({ margin, notes })} className="flex items-center gap-2 px-6 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-shadow shadow">
-            <Send size={16} /> Send to Customer
-          </button>
+        <div className="flex items-center gap-5">
+          <div className="text-right leading-tight">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Grand Total</p>
+            <p className="text-3xl font-black text-primary">{sym}{money(grandTotal)}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              {sym}{money(unitPrice)}/unit × {data.config.quantity}
+              {mc && mc.repeatUnitPrice < unitPrice - 0.01 && (
+                <span className="text-emerald-600 dark:text-emerald-400"> · repeat {sym}{money(mc.repeatUnitPrice)}</span>
+              )}
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 shrink-0">
+            <button onClick={() => onSend({ margin, notes })} className="flex items-center justify-center gap-2 px-5 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-shadow shadow">
+              <Send size={15} /> Send to Customer
+            </button>
+            <button onClick={() => onSaveDraft({ margin, notes })} className="flex items-center justify-center gap-2 px-5 py-2 rounded-md text-sm font-medium border border-border hover:bg-accent transition-colors">
+              <Save size={15} /> Save Draft
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
           {/* Customer & Part Info */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-card border border-border p-5 rounded-lg space-y-4">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 border-b border-border pb-3">
                 <MapPin size={14} /> Customer Details
