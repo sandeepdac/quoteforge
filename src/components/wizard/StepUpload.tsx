@@ -164,38 +164,33 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
             </div>
           </div>
         ) : uploadedFile ? (
-          <div className="flex flex-col items-center gap-3 text-center w-full max-w-md bg-accent/40 p-4 rounded-xl border border-border">
-            <div className="w-12 h-12 bg-primary/15 text-primary rounded-xl flex items-center justify-center relative">
-              {/\.step$|\.stp$/i.test(uploadedFile.name) ? <Box size={26} /> : <FileText size={26} />}
-              <button 
-                onClick={(e) => { 
-                  e.stopPropagation(); 
-                  setUploadedFile(null); 
-                  setAnalysisResult(null); 
-                }}
-                className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow hover:scale-110 transition-transform"
-                title="Remove File"
-              >
-                <X size={12} />
-              </button>
+          <div className="w-full flex items-center gap-3 text-left">
+            <div className="w-11 h-11 bg-primary/15 text-primary rounded-lg flex items-center justify-center shrink-0">
+              {/\.step$|\.stp$/i.test(uploadedFile.name) ? <Box size={22} /> : <FileText size={22} />}
             </div>
-
-            <div>
-              <p className="font-semibold text-foreground text-sm truncate max-w-xs">{uploadedFile.name}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-foreground text-sm truncate">{uploadedFile.name}</p>
+              <p className="text-xs text-muted-foreground">
                 {(uploadedFile.size / 1024).toFixed(1)} KB • {/\.step$|\.stp$/i.test(uploadedFile.name) ? '3D STEP CAD File' : '2D Engineering Drawing'}
               </p>
             </div>
-
             {analysisResult && (
-              <div className="w-full bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 text-emerald-600 dark:text-emerald-400 text-xs flex items-center justify-between">
-                <span className="flex items-center gap-1.5 font-medium">
-                  <CheckCircle2 size={16} />
-                  CAD Geometry & Title Block Extracted
-                </span>
-                <span className="font-bold">{analysisResult.confidenceScore}% Score</span>
+              <div className="hidden sm:flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-xs font-medium shrink-0">
+                <CheckCircle2 size={15} /> Extracted
+                <span className="font-bold">{analysisResult.confidenceScore}%</span>
               </div>
             )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setUploadedFile(null);
+                setAnalysisResult(null);
+              }}
+              className="bg-muted text-muted-foreground rounded-full p-1.5 shrink-0 hover:bg-destructive hover:text-destructive-foreground transition-colors"
+              title="Remove file"
+            >
+              <X size={14} />
+            </button>
           </div>
         ) : (
           <>
