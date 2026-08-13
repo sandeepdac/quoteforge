@@ -24,6 +24,8 @@ interface CadViewer3DProps {
   selectedMaterialName?: string;
   stepMesh?: TessellatedMesh;
   className?: string;
+  /** Called once with a PNG data-URL of the rendered model (for the part thumbnail). */
+  onSnapshot?: (dataUrl: string) => void;
 }
 
 type MeshStatus = 'idle' | 'ready' | 'fallback';
@@ -68,8 +70,15 @@ function makeTextSprite(text: string, colorCss: string): THREE.Sprite {
   return sprite;
 }
 
-export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, className = '' }: CadViewer3DProps) {
+export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, className = '', onSnapshot }: CadViewer3DProps) {
   const mountRef = useRef<HTMLDivElement>(null);
+  // Snapshot plumbing: keep the latest callback in a ref so the heavy scene
+  // effect doesn't re-run when it changes, and capture only once per model.
+  const onSnapshotRef = useRef(onSnapshot);
+  useEffect(() => { onSnapshotRef.current = onSnapshot; });
+  const snapshotDoneRef = useRef(false);
+  // A new model should be re-captured; a theme/toggle re-render should not.
+  useEffect(() => { snapshotDoneRef.current = false; }, [cadData, stepMesh]);
   const [isWireframe, setIsWireframe] = useState(false);
   const [showBoundingBox, setShowBoundingBox] = useState(true);
   const [showHoles, setShowHoles] = useState(true);
@@ -210,7 +219,7 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
     scene.add(dirLight2);
 
     // 4. Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     mountRef.current.appendChild(renderer.domElement);
@@ -479,6 +488,7 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
     domElem.addEventListener('wheel', handleWheel, { passive: false });
 
     // Animation Loop
+    let snapFrame = 0;
     const animate = () => {
       animationFrameRef.current = requestAnimationFrame(animate);
 
@@ -488,6 +498,20 @@ export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, c
 
       if (rendererRef.current && sceneRef.current && cameraRef.current) {
         rendererRef.current.render(sceneRef.current, cameraRef.current);
+        // Capture a still of the real model once it has settled, for the part
+        // thumbnail. preserveDrawingBuffer keeps the frame readable after render.
+        snapFrame++;
+        if (!snapshotDoneRef.current && meshStatus === 'ready' && snapFrame === 45 && onSnapshotRef.current) {
+          try {
+            const url = rendererRef.current.domElement.toDataURL('image/png');
+            if (url && url.length > 2000) {
+              onSnapshotRef.current(url);
+              snapshotDoneRef.current = true;
+            }
+          } catch {
+            snapshotDoneRef.current = true; // don't retry on tainted/failed canvas
+          }
+        }
       }
     };
 

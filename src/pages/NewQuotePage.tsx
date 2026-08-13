@@ -23,6 +23,9 @@ export default function NewQuotePage() {
   const { settings } = useSettings();
   const [currentStep, setCurrentStep] = useState(1);
   const [cadAnalysis, setCadAnalysis] = useState<ExtractedCadAnalysis | undefined>(undefined);
+  // A rendered still of the 3D model, captured on the extraction step, used as the
+  // part thumbnail instead of the generic schematic.
+  const [partImage, setPartImage] = useState<string | undefined>(undefined);
   // When editing an existing quote, we update it in place instead of creating one.
   const [editBase, setEditBase] = useState<Quote | null>(null);
   // Generate the quote number once so the Review preview matches the saved quote.
@@ -203,7 +206,7 @@ export default function NewQuotePage() {
       materialId,
       thicknessMm: cadAnalysis?.thicknessMm ?? material.thicknessMm,
       features: partFeatures,
-      thumbnail: generatePartThumbnail(partName, partFeatures),
+      thumbnail: partImage ?? generatePartThumbnail(partName, partFeatures),
       lastQuotedDate: new Date().toISOString().split('T')[0],
       quoteCount: 1,
     };
@@ -257,6 +260,7 @@ export default function NewQuotePage() {
             materialId={quoteData.features.materialId}
             onContinue={(extracted) => handleContinue(extracted)}
             onBack={handleBack}
+            onSnapshot={setPartImage}
           />
         )}
         {currentStep === 3 && (

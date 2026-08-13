@@ -27,6 +27,8 @@ interface StepExtractProps {
   materialId?: string;
   onContinue: (extractedData: Partial<PartFeatures> & { materialId: string }) => void;
   onBack: () => void;
+  /** Receives a rendered still of the 3D model, to persist as the part thumbnail. */
+  onSnapshot?: (dataUrl: string) => void;
 }
 
 const loadingMessages = [
@@ -37,7 +39,7 @@ const loadingMessages = [
   "Calculating volume, surface area, and mass..."
 ];
 
-export default function StepExtract({ cadAnalysis, materialId, onContinue, onBack }: StepExtractProps) {
+export default function StepExtract({ cadAnalysis, materialId, onContinue, onBack, onSnapshot }: StepExtractProps) {
   const { materials } = useQuotes();
   // The material actually used for the quote (the user's pick) — shown everywhere so
   // the stock panel never disagrees with the cost table. Falls back to the analyzer's
@@ -206,7 +208,7 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
           </div>
 
           {cadAnalysis?.stepData ? (
-            <CadViewer3D cadData={cadAnalysis.stepData} selectedMaterialName={selectedMatObj.name} stepMesh={cadAnalysis.stepMesh} />
+            <CadViewer3D cadData={cadAnalysis.stepData} selectedMaterialName={selectedMatObj.name} stepMesh={cadAnalysis.stepMesh} onSnapshot={onSnapshot} />
           ) : cadAnalysis?.fileType === 'IMAGE' && cadAnalysis?.pdfUrl ? (
             <div className="rounded-xl border border-border overflow-hidden bg-card">
               <div className="bg-slate-900 px-4 py-2.5 flex items-center gap-2 border-b border-slate-800 text-slate-200 text-xs">
