@@ -25,6 +25,8 @@ import { DEFAULT_CNC_SETTINGS } from '../constants';
 import { materialPropsFor } from './materials';
 import { millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, MillingToolConfig } from './milling';
 import { buildMilledPlan } from './milledPlanner';
+import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
+import type { SecondaryOperation } from './secondaryOps';
 
 /** A milled part reduced to the drivers a cycle-time model needs. */
 export interface MilledProfile {
@@ -51,6 +53,8 @@ export interface MilledMachiningInput {
   materialName: string;
   profile: MilledProfile;
   materialPricePerKg: number;
+  /** Secondary operations selected for this quote (plating, inspection, …). */
+  secondaryOps?: SecondaryOperation[];
 }
 
 const STANDARD_BATCH_QTYS = [1, 5, 25, 100, 500];
@@ -317,8 +321,14 @@ export function calculateMilledCosts(
   // --- Tooling -------------------------------------------------------------
   const toolingCost = toolCount * cnc.toolingCostPerOp;
 
+  // --- Secondary operations (plating / anodise / inspection …) -------------
+  // Subcontract finishing + inspection: a lot charge amortised over the batch
+  // plus a per-part cost. Folded into the subtotal so overhead + margin apply
+  // the same as machining (the shop marks up subcon like the rest of the job).
+  const secondaryCost = secondaryOpsCostPerUnit(input.secondaryOps, qty);
+
   // --- Roll-up (per unit) --------------------------------------------------
-  const subtotal = materialCost + machineCost + setupPerUnit + toolingCost + fixtureCost;
+  const subtotal = materialCost + machineCost + setupPerUnit + toolingCost + fixtureCost + secondaryCost;
   const overhead = subtotal * overheadPercent;
   const marginAmount = (subtotal + overhead) * marginPercent;
   const unitPrice = subtotal + overhead + marginAmount;
@@ -339,12 +349,13 @@ export function calculateMilledCosts(
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
     { key: 'fixture', name: `Soft jaws / fixture ÷ ${qty}`, driver: needsSoftJaws ? `${setups} setups${p.bossCount > 0 ? `, ${p.bossCount} boss` : ''} → work-holding, made once` : '', value: fixtureCost, color: COLORS.fixture },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${toolCount} operations`, value: toolingCost, color: COLORS.tooling },
+    ...secondaryOpsLineItems(input.secondaryOps, qty),
   ].filter((li) => li.value > 0.005);
 
   // --- Batch quantity curve (setup amortisation) ---------------------------
   const perUnitFixed = materialCost + machineCost + toolingCost;
   const batchCurve: BatchPricePoint[] = STANDARD_BATCH_QTYS.map((q) => {
-    const sPer = (setupCostTotal + fixtureCostTotal) / q;
+    const sPer = (setupCostTotal + fixtureCostTotal) / q + secondaryOpsCostPerUnit(input.secondaryOps, q);
     const sub = perUnitFixed + sPer;
     const oh = sub * overheadPercent;
     const mg = (sub + oh) * marginPercent;

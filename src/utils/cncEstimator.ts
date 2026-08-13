@@ -24,6 +24,8 @@ import {
 import { DEFAULT_CNC_SETTINGS, DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor, nextStandardBar } from './materials';
 import { estimateTurningTimes, TurningProfile } from './turning';
+import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
+import type { SecondaryOperation } from './secondaryOps';
 
 export interface MachiningInput {
   /** True for a rotationally-symmetric (turned) part. Only these are costed here. */
@@ -36,6 +38,8 @@ export interface MachiningInput {
   /** Number of setups (1 = single op; 2 = back-face / second op). */
   setups: number;
   materialPricePerKg: number;
+  /** Secondary operations selected for this quote (plating, inspection, …). */
+  secondaryOps?: SecondaryOperation[];
 }
 
 const STANDARD_BATCH_QTYS = [1, 5, 25, 100, 500];
@@ -128,8 +132,13 @@ export function calculateMachiningCosts(
   // --- Tooling -------------------------------------------------------------
   const toolingCost = t.toolCount * cnc.toolingCostPerOp;
 
+  // --- Secondary operations (plating / passivate / inspection …) -----------
+  // Lot charge amortised over the batch + per-part cost; folded into subtotal so
+  // overhead + margin apply the same as the machining work.
+  const secondaryCost = secondaryOpsCostPerUnit(input.secondaryOps, qty);
+
   // --- Roll-up (per unit) --------------------------------------------------
-  const subtotal = materialCost + machineCost + setupPerUnit + toolingCost;
+  const subtotal = materialCost + machineCost + setupPerUnit + toolingCost + secondaryCost;
   const overhead = subtotal * overheadPercent;
   const marginAmount = (subtotal + overhead) * marginPercent;
   const unitPrice = subtotal + overhead + marginAmount;
@@ -152,6 +161,7 @@ export function calculateMachiningCosts(
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${t.toolCount} operations`, value: toolingCost, color: COLORS.tooling },
+    ...secondaryOpsLineItems(input.secondaryOps, qty),
   ].filter((li) => li.value > 0.005);
 
   // --- Per-setup / per-operation plan (a turning job sheet) ----------------
@@ -201,7 +211,7 @@ export function calculateMachiningCosts(
 
   // --- Batch quantity curve (setup amortisation) ---------------------------
   const batchCurve: BatchPricePoint[] = STANDARD_BATCH_QTYS.map((q) => {
-    const sPer = setupCostTotal / q;
+    const sPer = setupCostTotal / q + secondaryOpsCostPerUnit(input.secondaryOps, q);
     const sub = materialCost + machineCost + sPer + toolingCost;
     const oh = sub * overheadPercent;
     const mg = (sub + oh) * marginPercent;

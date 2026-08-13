@@ -36,6 +36,7 @@ export default function MachiningCostTable({ costs, overheadPercent, currency = 
   const setupCharge = li('setupCharge');
   const fixture = li('fixture');
   const tooling = li('tooling');
+  const secondaries = costs.lineItems.filter((l) => l.key === 'secondary');
 
   const cell = 'px-4 py-2 text-sm';
   const num = 'px-4 py-2 text-sm text-right tabular-nums whitespace-nowrap';
@@ -115,6 +116,27 @@ export default function MachiningCostTable({ costs, overheadPercent, currency = 
                   <td className={num}>{money(x.value)}</td>
                 </tr>
               ))}
+
+            {/* Secondary operations (finishing / inspection) */}
+            {secondaries.length > 0 && (
+              <tr className="bg-muted/20">
+                <td className={`${cell} font-bold text-foreground`} colSpan={3}>Secondary operations</td>
+                <td className={`${num} font-semibold`}>{money(secondaries.reduce((a, s) => a + s.value, 0))}</td>
+              </tr>
+            )}
+            {secondaries.map((x, i) => (
+              <tr key={`sec-${i}`}>
+                <td className={`${cell} pl-8`}>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: x.color }} />
+                    <span className="text-foreground">{x.name}</span>
+                  </span>
+                </td>
+                <td className={`${cell} text-muted-foreground`}>{x.driver}</td>
+                <td className={num}>—</td>
+                <td className={num}>{money(x.value)}</td>
+              </tr>
+            ))}
 
             {/* Subtotal */}
             <tr className="bg-muted/10 font-semibold border-t-2 border-border">

@@ -1,4 +1,18 @@
-import { CncSettings, ShopSettings, ShopTool } from './types';
+import { CncSettings, SecondaryOperation, ShopSettings, ShopTool } from './types';
+
+/**
+ * A shop's default finishing / inspection catalogue. These are the non-machining
+ * work centres a job routes through (TurnCircuit's op 60 SCANOD plate, op 70
+ * inspection). Editable per shop in Settings → Secondary Ops.
+ */
+export const DEFAULT_SECONDARY_OPS: SecondaryOperation[] = [
+  { id: 'plate-gold', name: 'Gold plate 2µm (subcon)', category: 'plating', lotCharge: 200, perPartCost: 2.5, leadTimeDays: 10 },
+  { id: 'anodize-2', name: 'Anodise Type II (colour)', category: 'anodize', lotCharge: 120, perPartCost: 3.0, leadTimeDays: 7 },
+  { id: 'anodize-3', name: 'Hard anodise Type III', category: 'anodize', lotCharge: 150, perPartCost: 5.0, leadTimeDays: 7 },
+  { id: 'passivate', name: 'Passivate (stainless)', category: 'passivate', lotCharge: 90, perPartCost: 1.5, leadTimeDays: 5 },
+  { id: 'heat-treat', name: 'Heat treat / temper', category: 'heattreat', lotCharge: 180, perPartCost: 4.0, leadTimeDays: 10 },
+  { id: 'fai', name: 'First-article inspection (FAI)', category: 'inspection', lotCharge: 85, perPartCost: 0.75, leadTimeDays: 2 },
+];
 
 /**
  * Default turning tool library for a sliding-head bar shop. Editable per shop in
@@ -76,5 +90,6 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   rushPremiumPercent: 0.20,
   scrapFactor: 0.15,
   currency: 'USD',
+  secondaryOps: DEFAULT_SECONDARY_OPS,
   cnc: DEFAULT_CNC_SETTINGS,
 };

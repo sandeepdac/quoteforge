@@ -18,6 +18,7 @@ import { calculateMachiningCosts } from '../../utils/cncEstimator';
 import { calculateMilledCosts } from '../../utils/milledEstimator';
 import { materialPropsFor } from '../../utils/materials';
 import { currencySymbol } from '../../utils/currency';
+import { DEFAULT_SECONDARY_OPS } from '../../constants';
 import { generatePartThumbnail } from '../../utils/partThumbnail';
 import { generateTurningToolpath } from '../../utils/toolpath';
 import ToolpathPreview from '../cad/ToolpathPreview';
@@ -43,6 +44,14 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
   const [margin, setMargin] = useState(settings.defaultMargin);
   const [notes, setNotes] = useState('');
 
+  // Secondary operations (finishing / inspection) the shop offers, and which
+  // ones the estimator applies to this quote.
+  const secondaryCatalog = settings.secondaryOps ?? DEFAULT_SECONDARY_OPS;
+  const [secondaryIds, setSecondaryIds] = useState<string[]>([]);
+  const selectedSecondaryOps = secondaryCatalog.filter((o) => secondaryIds.includes(o.id));
+  const toggleSecondary = (id: string) =>
+    setSecondaryIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+
   const customer = customers.find(c => c.id === data.config.customerId);
   const material = materials.find(m => m.id === data.features.materialId) || materials[0];
 
@@ -63,6 +72,7 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
           profile: cadAnalysis.turningProfile,
           setups: cadAnalysis.setups ?? 1,
           materialPricePerKg: material.pricePerKg,
+          secondaryOps: selectedSecondaryOps,
         },
         data.config.quantity,
         data.config.isRush,
@@ -83,7 +93,7 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
         removedVolumeCm3: Math.max(0, base.stockVolumeCm3 - partVolumeCm3),
       };
       const mc = calculateMilledCosts(
-        { materialName: material.name, profile, materialPricePerKg: material.pricePerKg },
+        { materialName: material.name, profile, materialPricePerKg: material.pricePerKg, secondaryOps: selectedSecondaryOps },
         data.config.quantity,
         data.config.isRush,
         margin,
@@ -108,7 +118,7 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
       { key: 'finish', name: 'Finishing (Applied)', driver: `${f.surfaceAreaM2.toFixed(3)}m² surface area`, value: qc.finishCost, color: '#93c5fd' },
     ].filter((li) => li.value > 0.005);
     return { costs: qc, lineItems: items };
-  }, [data, settings, material, margin, isTurnedPart, isMilledPart, cadAnalysis, f]);
+  }, [data, settings, material, margin, isTurnedPart, isMilledPart, cadAnalysis, f, secondaryIds]);
 
   const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
@@ -240,6 +250,38 @@ export default function StepReview({ data, cadAnalysis, quoteNumber, onSend, onS
                 </div>
               )}
             </div>
+            {isMachining && secondaryCatalog.length > 0 && (
+              <div className="px-4 py-3 border-b border-border bg-muted/10">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+                  Secondary operations <span className="font-normal normal-case tracking-normal">— finishing &amp; inspection, added to the quote</span>
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {secondaryCatalog.map((op) => {
+                    const on = secondaryIds.includes(op.id);
+                    const sym = currencySymbol(settings.currency);
+                    return (
+                      <button
+                        key={op.id}
+                        onClick={() => toggleSecondary(op.id)}
+                        className={cn(
+                          'text-left rounded-md border px-3 py-1.5 text-xs transition-colors',
+                          on
+                            ? 'border-teal-500 bg-teal-500/10 text-foreground'
+                            : 'border-border bg-background text-muted-foreground hover:border-teal-500/50 hover:text-foreground'
+                        )}
+                        title={op.leadTimeDays ? `~${op.leadTimeDays} day turnaround` : undefined}
+                      >
+                        <span className={cn('inline-block w-2 h-2 rounded-full mr-2 align-middle', on ? 'bg-teal-500' : 'bg-muted-foreground/30')} />
+                        <span className="font-semibold">{op.name}</span>
+                        <span className="block text-[10px] text-muted-foreground mt-0.5">
+                          {op.lotCharge > 0 ? `${sym}${op.lotCharge.toFixed(0)} lot` : ''}{op.lotCharge > 0 && op.perPartCost > 0 ? ' + ' : ''}{op.perPartCost > 0 ? `${sym}${op.perPartCost.toFixed(2)}/part` : ''}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {isMachining && mc?.plan && mc.plan.setups.length > 0 ? (
               <MachiningCostTable costs={mc} overheadPercent={settings.overheadPercent} currency={currencySymbol(settings.currency)} />
             ) : (

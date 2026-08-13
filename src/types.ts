@@ -294,6 +294,32 @@ export interface CncSettings {
   toolLibrary?: ShopTool[];
 }
 
+export type SecondaryCategory =
+  | 'plating'
+  | 'anodize'
+  | 'coating'
+  | 'passivate'
+  | 'heattreat'
+  | 'inspection'
+  | 'other';
+
+/**
+ * A non-machining work centre a job passes through after the mill/lathe:
+ * subcontract finishing (plating, anodise, coating, heat-treat) or inspection.
+ * Billed as a one-time lot charge (amortised over the batch) plus a per-part cost.
+ */
+export interface SecondaryOperation {
+  id: string;
+  name: string;
+  category: SecondaryCategory;
+  /** One-time charge per batch (subcon minimum / lot fee); amortised over qty. */
+  lotCharge: number;
+  /** Cost per part. */
+  perPartCost: number;
+  /** Informational turnaround (days). */
+  leadTimeDays?: number;
+}
+
 export interface ShopSettings {
   name: string;
   address: string;
@@ -318,6 +344,8 @@ export interface ShopSettings {
   scrapFactor: number;
   /** ISO 4217 currency code the shop quotes in (e.g. 'USD', 'EUR', 'GBP'). */
   currency?: string;
+  /** Shop catalogue of secondary operations (finishing / inspection). */
+  secondaryOps?: SecondaryOperation[];
   /** CNC machining rates/speeds. Optional so older persisted settings still load. */
   cnc?: CncSettings;
 }

@@ -11,16 +11,19 @@ import {
   Moon,
   Sun,
   RotateCcw,
-  Calculator
+  Calculator,
+  Paintbrush,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { Wrench } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
 import { clearAllState } from '../utils/storage';
-import { DEFAULT_CNC_SETTINGS, DEFAULT_TURNING_TOOLS } from '../constants';
-import { CncSettings, ShopTool, TurningOp } from '../types';
-import { CURRENCIES } from '../utils/currency';
+import { DEFAULT_CNC_SETTINGS, DEFAULT_SECONDARY_OPS, DEFAULT_TURNING_TOOLS } from '../constants';
+import { CncSettings, SecondaryCategory, SecondaryOperation, ShopTool, TurningOp } from '../types';
+import { CURRENCIES, currencySymbol } from '../utils/currency';
 
 export default function SettingsPage() {
   const { settings, updateSettings } = useSettings();
@@ -42,6 +45,7 @@ export default function SettingsPage() {
     { id: 'estimate', name: 'Estimate', icon: Calculator },
     { id: 'margins', name: 'Margins', icon: Zap },
     { id: 'tooling', name: 'Tooling', icon: Wrench },
+    { id: 'secondary', name: 'Secondary Ops', icon: Paintbrush },
     { id: 'account', name: 'Preferences', icon: SettingsIcon },
   ];
 
@@ -173,6 +177,14 @@ export default function SettingsPage() {
               onSaveSetupMode={(setupBillingMode) =>
                 updateSettings({ cnc: { setupBillingMode } as Partial<CncSettings> as CncSettings })
               }
+            />
+          )}
+
+          {activeTab === 'secondary' && (
+            <SecondaryOpsTab
+              ops={settings.secondaryOps ?? DEFAULT_SECONDARY_OPS}
+              currency={currencySymbol(settings.currency)}
+              onSave={(secondaryOps) => updateSettings({ secondaryOps })}
             />
           )}
 
@@ -402,6 +414,153 @@ function EstimateTab({
           Changes save automatically and apply to the next quote you generate.
         </p>
         {saved && <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">{saved} saved ✓</span>}
+      </div>
+    </div>
+  );
+}
+
+const SECONDARY_CATEGORIES: SecondaryCategory[] = [
+  'plating', 'anodize', 'coating', 'passivate', 'heattreat', 'inspection', 'other',
+];
+
+/**
+ * SECONDARY OPS catalogue — the shop's finishing / inspection work centres and
+ * their rates (subcon lot charge + per-part). These are selectable per quote and
+ * fold into the machining cost with the shop's overhead + margin.
+ */
+function SecondaryOpsTab({
+  ops,
+  currency,
+  onSave,
+}: {
+  ops: SecondaryOperation[];
+  currency: string;
+  onSave: (ops: SecondaryOperation[]) => void;
+}) {
+  const [rows, setRows] = useState<SecondaryOperation[]>(() => ops.map((o) => ({ ...o })));
+  const [saved, setSaved] = useState(false);
+
+  const update = (id: string, patch: Partial<SecondaryOperation>) => {
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    setSaved(false);
+  };
+  const remove = (id: string) => {
+    setRows((rs) => rs.filter((r) => r.id !== id));
+    setSaved(false);
+  };
+  const add = () => {
+    setRows((rs) => [
+      ...rs,
+      { id: `op-${Date.now()}`, name: 'New operation', category: 'other', lotCharge: 0, perPartCost: 0 },
+    ]);
+    setSaved(false);
+  };
+  const save = () => {
+    onSave(rows);
+    setSaved(true);
+  };
+  const reset = () => {
+    setRows(DEFAULT_SECONDARY_OPS.map((o) => ({ ...o })));
+    setSaved(false);
+  };
+
+  const numInput =
+    'w-24 bg-background border border-border rounded px-2 py-1 font-mono text-sm text-right focus:outline-none focus:ring-1 focus:ring-primary';
+
+  return (
+    <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
+      <div className="border-b border-border pb-4">
+        <h3 className="text-lg font-bold">Secondary Operations</h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          Finishing &amp; inspection work centres a job routes through after machining (plating, anodise, heat-treat, FAI). Each carries a
+          one-time <strong className="text-foreground">lot charge</strong> (amortised over the batch) plus a <strong className="text-foreground">per-part</strong> cost.
+          Pick which apply on the quote review screen.
+        </p>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground text-left">
+              <th className="pb-2 pr-3">Operation</th>
+              <th className="pb-2 pr-3">Category</th>
+              <th className="pb-2 pr-3 text-right">Lot charge ({currency})</th>
+              <th className="pb-2 pr-3 text-right">Per part ({currency})</th>
+              <th className="pb-2 pr-3 text-right">Lead (days)</th>
+              <th className="pb-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} className="border-t border-border">
+                <td className="py-2 pr-3">
+                  <input
+                    value={r.name}
+                    onChange={(e) => update(r.id, { name: e.target.value })}
+                    className="w-full min-w-[200px] bg-background border border-border rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </td>
+                <td className="py-2 pr-3">
+                  <select
+                    value={r.category}
+                    onChange={(e) => update(r.id, { category: e.target.value as SecondaryCategory })}
+                    className="bg-background border border-border rounded px-2 py-1 text-sm capitalize focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    {SECONDARY_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </td>
+                <td className="py-2 pr-3 text-right">
+                  <input
+                    type="number" step="5" min="0" value={r.lotCharge}
+                    onChange={(e) => update(r.id, { lotCharge: Math.max(0, Number(e.target.value) || 0) })}
+                    className={numInput}
+                  />
+                </td>
+                <td className="py-2 pr-3 text-right">
+                  <input
+                    type="number" step="0.5" min="0" value={r.perPartCost}
+                    onChange={(e) => update(r.id, { perPartCost: Math.max(0, Number(e.target.value) || 0) })}
+                    className={numInput}
+                  />
+                </td>
+                <td className="py-2 pr-3 text-right">
+                  <input
+                    type="number" step="1" min="0" value={r.leadTimeDays ?? ''}
+                    onChange={(e) => update(r.id, { leadTimeDays: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0) })}
+                    className="w-16 bg-background border border-border rounded px-2 py-1 font-mono text-sm text-right focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder="—"
+                  />
+                </td>
+                <td className="py-2 text-right">
+                  <button onClick={() => remove(r.id)} className="text-muted-foreground hover:text-destructive p-1" title="Remove">
+                    <Trash2 size={15} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <button onClick={add} className="flex items-center gap-2 text-xs font-bold text-primary hover:underline">
+        <Plus size={14} /> Add operation
+      </button>
+
+      <div className="pt-6 border-t border-border flex items-center justify-between">
+        <button onClick={reset} className="text-xs font-bold text-muted-foreground hover:text-foreground uppercase tracking-widest">
+          Reset to defaults
+        </button>
+        <div className="flex items-center gap-3">
+          {saved && <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Saved ✓</span>}
+          <button
+            onClick={save}
+            className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-shadow shadow"
+          >
+            <Save size={16} /> Save Catalogue
+          </button>
+        </div>
       </div>
     </div>
   );
