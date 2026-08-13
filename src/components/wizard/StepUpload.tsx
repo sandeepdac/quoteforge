@@ -45,11 +45,6 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
 
   const selectedMaterialId: string = data?.features?.materialId ?? materials[0]?.id ?? '';
   const setMaterialId = (id: string) => onDataChange({ features: { ...data.features, materialId: id } });
-  
-  // Manual inputs fallback
-  const [manualPartName, setManualPartName] = useState('');
-  const [manualWidth, setManualWidth] = useState('');
-  const [manualLength, setManualLength] = useState('');
 
   const processFile = async (input: CadFileInput) => {
     setAnalyzing(true);
@@ -115,11 +110,6 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
     } else {
       onContinue();
     }
-  };
-
-  const handleManualContinue = (e: React.FormEvent) => {
-    e.preventDefault();
-    onContinue();
   };
 
   return (
@@ -247,60 +237,6 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
             <ArrowRight size={16} />
           </button>
         </div>
-      )}
-
-      {!analysisResult && (
-        <>
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-border"></span>
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-3 text-muted-foreground font-medium">or enter dimensions manually</span>
-            </div>
-          </div>
-
-          <form onSubmit={handleManualContinue} className="grid grid-cols-2 gap-4">
-            <div className="col-span-2 space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Part Name</label>
-              <input 
-                type="text" 
-                placeholder="e.g. Front Panel Chassis" 
-                className="w-full bg-background border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                value={manualPartName}
-                onChange={(e) => setManualPartName(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Estimated Width (mm)</label>
-              <input 
-                type="number" 
-                placeholder="200" 
-                className="w-full bg-background border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                value={manualWidth}
-                onChange={(e) => setManualWidth(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Estimated Length (mm)</label>
-              <input 
-                type="number" 
-                placeholder="350" 
-                className="w-full bg-background border border-border rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                value={manualLength}
-                onChange={(e) => setManualLength(e.target.value)}
-              />
-            </div>
-            <div className="col-span-2 pt-2 flex justify-end">
-              <button 
-                type="submit"
-                className="bg-primary text-primary-foreground px-8 py-2.5 rounded-lg text-sm font-medium hover:bg-primary/90 transition-all shadow-sm"
-              >
-                Continue
-              </button>
-            </div>
-          </form>
-        </>
       )}
     </div>
   );

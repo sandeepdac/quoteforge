@@ -146,7 +146,7 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
   const notRotational = !!(cadAnalysis?.measurementSource === 'solid' && cadAnalysis?.isTurned === false && !isMilled);
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 animate-in slide-in-from-bottom-4 duration-500 pb-10">
+    <div className="max-w-6xl mx-auto space-y-6 animate-in slide-in-from-bottom-4 duration-500 pb-6">
       {/* Top Banner */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-card border border-border p-5 rounded-2xl shadow-sm">
         <div className="flex items-center gap-3.5">
@@ -726,7 +726,7 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
       </div>
 
       {/* Action Navigation */}
-      <div className="flex justify-between items-center pt-6 border-t border-border">
+      <div className="flex justify-between items-center pt-4 border-t border-border">
         <button 
           onClick={onBack}
           className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold border border-border hover:bg-accent transition-colors"

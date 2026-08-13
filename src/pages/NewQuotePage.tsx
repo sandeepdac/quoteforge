@@ -14,7 +14,7 @@ import { generateQuoteNumber, generateId } from '../utils/idGenerator';
 import { generatePartThumbnail } from '../utils/partThumbnail';
 import { ExtractedCadAnalysis, stripCadForStorage } from '../utils/cadAnalyzer';
 
-const STEPS = ['Upload', 'AI Extraction', 'Quantity', 'Review'];
+const STEPS = ['Upload', 'Extraction', 'Quantity', 'Review'];
 
 export default function NewQuotePage() {
   const navigate = useNavigate();
@@ -256,7 +256,7 @@ export default function NewQuotePage() {
     <div className="py-4">
       <StepIndicator currentStep={currentStep} steps={STEPS} />
       
-      <div className="mt-8 transition-all duration-300">
+      <div className="mt-6 transition-all duration-300">
         {currentStep === 1 && (
           <StepUpload 
             data={quoteData} 
