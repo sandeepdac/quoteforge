@@ -22,7 +22,7 @@ import { useTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
 import { clearAllState } from '../utils/storage';
 import { DEFAULT_CNC_SETTINGS, DEFAULT_SECONDARY_OPS, DEFAULT_TURNING_TOOLS } from '../constants';
-import { CncSettings, SecondaryCategory, SecondaryOperation, ShopTool, TurningOp } from '../types';
+import { CncSettings, SecondaryCategory, SecondaryOperation, ShopSettings, ShopTool, TurningOp } from '../types';
 import { CURRENCIES, currencySymbol } from '../utils/currency';
 
 export default function SettingsPage() {
@@ -105,7 +105,12 @@ export default function SettingsPage() {
 
           {activeTab === 'rates' && (
             <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
-              <h3 className="text-lg font-bold border-b border-border pb-4">Equipment & Labor Rates</h3>
+              <div className="border-b border-border pb-4">
+                <h3 className="text-lg font-bold">Equipment &amp; Labor Rates</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Fabrication rates (laser / brake / weld / finish) — used only for sheet-metal &amp; fabrication quotes. <strong className="text-foreground">CNC machining</strong> rates live under the <strong className="text-foreground">Estimate</strong> tab.
+                </p>
+              </div>
               <div className="space-y-6">
                 <RateRow label="Laser Cutting" value={settings.rates.laserPerMin} unit="/ min" description="Per-minute cost for fiber laser operation" />
                 <RateRow label="Press Brake" value={settings.rates.pressBrakePerMin} unit="/ min" description="Bending setup and stroke time cost" />
@@ -131,38 +136,10 @@ export default function SettingsPage() {
           )}
 
           {activeTab === 'margins' && (
-            <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
-              <h3 className="text-lg font-bold border-b border-border pb-4">Standard Margins</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="space-y-2">
-                  <div className="flex justify-between items-end">
-                    <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Default Profit Margin</p>
-                    <span className="text-lg font-bold text-primary">{(settings.defaultMargin * 100).toFixed(0)}%</span>
-                  </div>
-                  <input type="range" min="5" max="50" className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary" />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-end">
-                    <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Rush Order Premium</p>
-                    <span className="text-lg font-bold text-orange-500">{(settings.rushPremiumPercent * 100).toFixed(0)}%</span>
-                  </div>
-                  <input type="range" min="10" max="100" className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-orange-500" />
-                </div>
-                <div className="space-y-2">
-                   <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest leading-loose">Shop Overhead (%)</p>
-                   <input type="number" defaultValue={(settings.overheadPercent * 100).toFixed(0)} className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm" />
-                </div>
-                <div className="space-y-2">
-                   <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest leading-loose">Scrap Factor (%)</p>
-                   <input type="number" defaultValue={(settings.scrapFactor * 100).toFixed(0)} className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm" />
-                </div>
-              </div>
-              <div className="pt-6 border-t border-border flex justify-end">
-                <button className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-shadow shadow">
-                  <Save size={16} /> Sync Rules
-                </button>
-              </div>
-            </div>
+            <MarginsTab
+              settings={settings}
+              onSave={(patch) => updateSettings(patch)}
+            />
           )}
 
           {activeTab === 'tooling' && (
@@ -414,6 +391,77 @@ function EstimateTab({
           Changes save automatically and apply to the next quote you generate.
         </p>
         {saved && <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">{saved} saved ✓</span>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * MARGINS — overhead, default margin, rush premium and scrap. These apply to
+ * EVERY quote, machining included (overhead + margin ride on the subtotal), so
+ * the inputs must actually persist (previously they were dead defaultValues).
+ */
+function MarginsTab({
+  settings,
+  onSave,
+}: {
+  settings: ShopSettings;
+  onSave: (patch: Partial<ShopSettings>) => void;
+}) {
+  const [margin, setMargin] = useState(Math.round(settings.defaultMargin * 100));
+  const [rush, setRush] = useState(Math.round(settings.rushPremiumPercent * 100));
+  const [overhead, setOverhead] = useState(Math.round(settings.overheadPercent * 100));
+  const [scrap, setScrap] = useState(Math.round(settings.scrapFactor * 100));
+  const [saved, setSaved] = useState(false);
+
+  const save = () => {
+    onSave({
+      defaultMargin: Math.max(0, margin) / 100,
+      rushPremiumPercent: Math.max(0, rush) / 100,
+      overheadPercent: Math.max(0, overhead) / 100,
+      scrapFactor: Math.max(0, scrap) / 100,
+    });
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1600);
+  };
+
+  const numCls = 'w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary';
+
+  return (
+    <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
+      <div className="border-b border-border pb-4">
+        <h3 className="text-lg font-bold">Standard Margins</h3>
+        <p className="text-sm text-muted-foreground mt-1">Overhead and margin ride on every quote's subtotal — machining included.</p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="space-y-2">
+          <div className="flex justify-between items-end">
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Default Profit Margin</p>
+            <span className="text-lg font-bold text-primary">{margin}%</span>
+          </div>
+          <input type="range" min="0" max="60" value={margin} onChange={(e) => setMargin(Number(e.target.value))} className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary" />
+        </div>
+        <div className="space-y-2">
+          <div className="flex justify-between items-end">
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Rush Order Premium</p>
+            <span className="text-lg font-bold text-orange-500">{rush}%</span>
+          </div>
+          <input type="range" min="0" max="100" value={rush} onChange={(e) => setRush(Number(e.target.value))} className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-orange-500" />
+        </div>
+        <div className="space-y-2">
+          <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest leading-loose">Shop Overhead (%)</p>
+          <input type="number" min="0" value={overhead} onChange={(e) => setOverhead(Number(e.target.value))} className={numCls} />
+        </div>
+        <div className="space-y-2">
+          <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest leading-loose">Scrap Factor (%)</p>
+          <input type="number" min="0" value={scrap} onChange={(e) => setScrap(Number(e.target.value))} className={numCls} />
+        </div>
+      </div>
+      <div className="pt-6 border-t border-border flex items-center justify-end gap-3">
+        {saved && <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Saved ✓</span>}
+        <button onClick={save} className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-shadow shadow">
+          <Save size={16} /> Save Margins
+        </button>
       </div>
     </div>
   );
