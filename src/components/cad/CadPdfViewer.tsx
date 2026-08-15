@@ -215,26 +215,6 @@ export default function CadPdfViewer({ pdfFileName = 'Drawing.pdf', pdfData = SA
         </div>
       </div>
       )}
-
-      {/* Drawing Intelligence Summary Footer */}
-      <div className="bg-slate-900 border-t border-slate-800 p-3 px-4 flex items-center justify-between text-xs text-slate-300">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-emerald-400 font-medium">
-            <CheckCircle2 size={15} />
-            <span>Title Block Recognized</span>
-          </div>
-          <span className="text-slate-500">|</span>
-          <span className="text-slate-400">Material: <strong className="text-slate-100">{pdfData.material}</strong></span>
-          <span className="text-slate-500">|</span>
-          <span className="text-slate-400">Finish: <strong className="text-slate-100">{pdfData.finish}</strong></span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-sky-400 font-semibold bg-sky-950 border border-sky-800 px-2 py-0.5 rounded-full">
-            AI Optical Confidence: 94%
-          </span>
-        </div>
-      </div>
     </div>
   );
 }

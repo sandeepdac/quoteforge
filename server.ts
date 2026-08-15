@@ -214,7 +214,14 @@ Return ONLY the JSON object.`;
         return res.json({ success: false, message: 'Model response was not a JSON object.' });
       }
 
-      console.log(`[analyze-cad] OK — extracted ${Object.keys(parsedData as object).length} fields`);
+      // Log the key values so a "read nothing usable" result (e.g. a PMI
+      // isometric drawing with no orthographic dimensions) is diagnosable
+      // rather than silently landing on the all-zero fallback.
+      const p = parsedData as any;
+      const dims = p.partClass === 'turned'
+        ? `⌀${p.turned?.odMm ?? 0}×${p.turned?.lengthMm ?? 0}`
+        : `${p.milled?.lengthMm ?? p.lengthMm ?? 0}×${p.milled?.widthMm ?? p.widthMm ?? 0}×${p.milled?.heightMm ?? p.heightMm ?? 0}`;
+      console.log(`[analyze-cad] OK — class=${p.partClass ?? '?'} dims=${dims}mm mat=${p.materialName ?? '?'} wt=${p.weightKg ?? 0}kg conf=${p.confidenceScore ?? '?'}`);
       return res.json({ success: true, data: parsedData });
     } catch (err: any) {
       console.error('[analyze-cad] Gemini error:', err?.message || err);
