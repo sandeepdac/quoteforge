@@ -98,6 +98,13 @@ async function startServer() {
 
       const ai = new GoogleGenAI({ apiKey });
 
+      // Model is env-overridable so a deprecation never needs a code change.
+      // Default to the rolling "-latest" alias, which Google keeps pointed at a
+      // current Flash model (avoids the "model no longer available" 404 you get
+      // by pinning an old version like gemini-2.5-flash). Set GEMINI_MODEL in
+      // .env to pin a specific one (e.g. gemini-2.0-flash) if you prefer.
+      const model = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+
       const source = isStep
         ? `the raw text of a STEP (ISO 10303) B-Rep CAD file (${fileName}). Infer the overall size from the CARTESIAN_POINT coordinate ranges (X/Y/Z extents in the file's units — assume millimetres unless a CONVERSION_BASED_UNIT says inches, then convert), the part class from whether the geometry is rotationally symmetric (a dominant axis with CYLINDRICAL_SURFACE faces sharing it → turned; prismatic planar faces in many directions → milled), holes from coaxial cylindrical faces, and the part name from the PRODUCT / FILE_NAME entities`
         : `a 2D engineering drawing (${fileName}). Read the drawing's dimensions and callouts`;
@@ -154,14 +161,14 @@ Return ONLY the JSON object.`;
           ? stepText.slice(0, MAX_STEP_CHARS) + '\n...[truncated]'
           : stepText;
         const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model,
           contents: [{ role: 'user', parts: [{ text: prompt + '\n\n=== STEP FILE ===\n' + clipped }] }],
           config: generationConfig
         });
         responseText = response.text || '';
       } else if (fileBase64 && mimeType) {
         const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model,
           contents: [
             {
               role: 'user',
@@ -181,7 +188,7 @@ Return ONLY the JSON object.`;
         responseText = response.text || '';
       } else {
         const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model,
           contents: prompt,
           config: generationConfig
         });
