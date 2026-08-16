@@ -11,6 +11,7 @@ import {
   Settings
 } from 'lucide-react';
 import { cn } from '../../utils/cn';
+import Logo from '../common/Logo';
 
 const navItems = [
   { name: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -25,11 +26,11 @@ const navItems = [
 export default function Sidebar() {
   return (
     <aside className="w-60 border-r border-border bg-card flex flex-col h-screen sticky top-0 shrink-0">
-      <div className="p-6 flex items-center gap-2">
-        <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-          <div className="w-4 h-4 bg-primary-foreground rounded-sm rotate-45"></div>
-        </div>
-        <h1 className="text-lg font-semibold tracking-tight text-foreground">QuoteForge</h1>
+      <div className="p-6 flex items-center gap-2.5">
+        <Logo size={30} />
+        <h1 className="text-lg font-bold tracking-tight text-foreground">
+          Quote<span className="text-primary">Forge</span>
+        </h1>
       </div>
 
       <nav className="flex-1 px-4 space-y-1 py-1">
