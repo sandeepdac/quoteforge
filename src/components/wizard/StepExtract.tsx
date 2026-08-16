@@ -20,6 +20,7 @@ import CadViewer3D from '../cad/CadViewer3D';
 import CadPdfViewer from '../cad/CadPdfViewer';
 import DfmPanel from '../cad/DfmPanel';
 import { cn } from '../../utils/cn';
+import { useMoney } from '../../utils/useMoney';
 
 interface StepExtractProps {
   cadAnalysis?: ExtractedCadAnalysis;
@@ -41,6 +42,7 @@ const loadingMessages = [
 
 export default function StepExtract({ cadAnalysis, materialId, onContinue, onBack, onSnapshot }: StepExtractProps) {
   const { materials } = useQuotes();
+  const { symbol } = useMoney();
   // The material actually used for the quote (the user's pick) — shown everywhere so
   // the stock panel never disagrees with the cost table. Falls back to the analyzer's
   // reading only when no selection has flowed through yet.
@@ -343,7 +345,7 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                   onChange={(e) => setFeatures({...features, materialId: e.target.value})}
                 >
                   {materials.map(m => (
-                    <option key={m.id} value={m.id}>{m.name} ({m.thicknessMm}mm) — ${m.pricePerKg}/kg</option>
+                    <option key={m.id} value={m.id}>{m.name} ({m.thicknessMm}mm) — {symbol}{m.pricePerKg}/kg</option>
                   ))}
                 </select>
               </div>

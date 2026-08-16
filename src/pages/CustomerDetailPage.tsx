@@ -22,6 +22,7 @@ import {
   ResponsiveContainer 
 } from 'recharts';
 import { useQuotes } from '../context/QuoteContext';
+import { useMoney } from '../utils/useMoney';
 import StatusPill from '../components/common/StatusPill';
 import { cn } from '../utils/cn';
 
@@ -29,6 +30,7 @@ export default function CustomerDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { getCustomerById, quotes, parts } = useQuotes();
+  const { symbol } = useMoney();
 
   const customer = getCustomerById(id || '');
   if (!customer) {
@@ -98,7 +100,7 @@ export default function CustomerDetailPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <StatsCard icon={FileText} label="Total Quotes" value={totalQuotes} />
             <StatsCard icon={TrendingUp} label="Win Rate" value={decided > 0 ? `${winRate.toFixed(0)}%` : '—'} color={winRate > 40 ? 'text-green-600' : 'text-blue-600'} />
-            <StatsCard icon={DollarSign} label="Won Revenue" value={`$${(totalRevenue / 1000).toFixed(1)}k`} />
+            <StatsCard icon={DollarSign} label="Won Revenue" value={`${symbol}${(totalRevenue / 1000).toFixed(1)}k`} />
             <StatsCard icon={Calendar} label="Avg. Lead" value={totalQuotes > 0 ? `${avgLeadDays.toFixed(0)}d` : '—'} />
           </div>
 
@@ -112,8 +114,8 @@ export default function CustomerDetailPage() {
                   <LineChart data={trendData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
                     <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                    <YAxis axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                    <RechartsTooltip formatter={(v: number) => [`$${v.toLocaleString()}`, 'Quoted']} />
+                    <YAxis axisLine={false} tickLine={false} tickFormatter={(v) => `${symbol}${(v / 1000).toFixed(0)}k`} />
+                    <RechartsTooltip formatter={(v: number) => [`${symbol}${v.toLocaleString()}`, 'Quoted']} />
                     <Line type="monotone" dataKey="value" stroke="var(--primary)" strokeWidth={3} dot={{ r: 4, fill: 'var(--primary)', strokeWidth: 0 }} activeDot={{ r: 6 }} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -157,7 +159,7 @@ export default function CustomerDetailPage() {
                             <Link to={`/quotes/${q.id}`} className="text-sm font-medium text-primary hover:underline">{q.quoteNumber}</Link>
                           </td>
                           <td className="px-6 py-4 text-sm font-medium">{part?.name}</td>
-                          <td className="px-6 py-4 text-sm font-mono">${q.grandTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                          <td className="px-6 py-4 text-sm font-mono">{symbol}{q.grandTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                           <td className="px-6 py-4 text-sm text-muted-foreground">{new Date(q.createdDate).toLocaleDateString()}</td>
                           <td className="px-6 py-4"><StatusPill status={q.status} /></td>
                         </tr>

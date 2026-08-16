@@ -2,10 +2,12 @@ import React, { useState } from 'react';
 import { Search, Filter, Plus, Users, UserPlus, ArrowRight, TrendingUp, Mail, Phone } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuotes } from '../context/QuoteContext';
+import { useMoney } from '../utils/useMoney';
 import { cn } from '../utils/cn';
 
 export default function CustomersPage() {
   const { customers, quotes } = useQuotes();
+  const { symbol } = useMoney();
   const [searchTerm, setSearchTerm] = useState('');
 
   // Per-customer activity is computed LIVE from real quotes, not stored aggregates.
@@ -100,7 +102,7 @@ export default function CustomersPage() {
                     </td>
                     <td className="px-6 py-4 text-sm text-foreground">{totalQuotes}</td>
                     <td className="px-6 py-4 text-sm font-medium text-foreground">
-                      ${totalRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      {symbol}{totalRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                     </td>
                     <td className="px-6 py-4 text-sm text-muted-foreground">
                       {lastQuoteDate ? new Date(lastQuoteDate).toLocaleDateString() : 'Never'}

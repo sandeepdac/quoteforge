@@ -26,10 +26,12 @@ import KpiCard from '../components/common/KpiCard';
 import StatusPill from '../components/common/StatusPill';
 import { useQuotes } from '../context/QuoteContext';
 import { useTheme } from '../context/ThemeContext';
+import { useMoney } from '../utils/useMoney';
 
 export default function DashboardPage() {
   const { quotes, getCustomerById, getPartById, materials, customers } = useQuotes();
   const { theme } = useTheme();
+  const { symbol } = useMoney();
 
   // Theme-aware chart styling.
   const gridColor = theme === 'dark' ? '#27272a' : '#e5e5e5';
@@ -125,7 +127,7 @@ export default function DashboardPage() {
           title="Open Quotes"
           value={openQuotes.length}
           icon={FileText}
-          description={`$${(openValue / 1000).toFixed(1)}k in play`}
+          description={`${symbol}${(openValue / 1000).toFixed(1)}k in play`}
           color="primary"
         />
         <KpiCard
@@ -144,7 +146,7 @@ export default function DashboardPage() {
         />
         <KpiCard
           title="Revenue Pipeline"
-          value={`$${(pipelineValue / 1000).toFixed(1)}k`}
+          value={`${symbol}${(pipelineValue / 1000).toFixed(1)}k`}
           icon={DollarSign}
           description="Awaiting decision"
           color="primary"
@@ -265,7 +267,7 @@ export default function DashboardPage() {
                       <td className="px-6 py-4 text-muted-foreground truncate max-w-[150px]">{part?.name}</td>
                       <td className="px-6 py-4"><StatusPill status={quote.status} /></td>
                       <td className="px-6 py-4 text-right font-medium text-foreground">
-                        ${quote.grandTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        {symbol}{quote.grandTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                       </td>
                     </tr>
                   );
@@ -326,9 +328,9 @@ export default function DashboardPage() {
               </div>
               <h4 className="text-white text-sm leading-relaxed font-normal opacity-90">
                 You have <span className="text-[#2563eb] font-bold tracking-tight">{openQuotes.length}</span> open
-                quotes worth <span className="text-[#2563eb] font-bold tracking-tight">${(openValue / 1000).toFixed(1)}k</span>,
+                quotes worth <span className="text-[#2563eb] font-bold tracking-tight">{symbol}{(openValue / 1000).toFixed(1)}k</span>,
                 with an average win probability of <span className="text-[#16a34a] font-bold tracking-tight">{avgOpenWinProb}%</span>.
-                Closed-won revenue to date is <span className="text-[#16a34a] font-bold tracking-tight">${(wonRevenue / 1000).toFixed(1)}k</span>.
+                Closed-won revenue to date is <span className="text-[#16a34a] font-bold tracking-tight">{symbol}{(wonRevenue / 1000).toFixed(1)}k</span>.
               </h4>
             </div>
             <Link to="/analytics" className="mt-6 w-full py-2.5 bg-[#262626] text-white text-[11px] font-bold uppercase tracking-widest rounded-md hover:bg-[#333333] border border-[#3a3a3a] transition-all text-center">

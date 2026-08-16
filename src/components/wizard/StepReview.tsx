@@ -61,6 +61,9 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
   const isMilledPart = !!(cadAnalysis?.milledProfile && !cadAnalysis?.isTurned);
   const isMachining = isTurnedPart || isMilledPart;
 
+  const sym = currencySymbol(settings.currency);
+  const money = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
   const { costs, lineItems } = useMemo(() => {
     if (isTurnedPart && cadAnalysis?.turningProfile) {
       const density = materialPropsFor(material.name).densityGCm3;
@@ -112,7 +115,7 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
       settings
     );
     const items: CostLineItem[] = [
-      { key: 'material', name: 'Material Cost', driver: `${f.weightKg.toFixed(2)}kg @ $${material.pricePerKg.toFixed(2)}/kg`, value: qc.materialCost, color: '#2563eb' },
+      { key: 'material', name: 'Material Cost', driver: `${f.weightKg.toFixed(2)}kg @ ${sym}${material.pricePerKg.toFixed(2)}/kg`, value: qc.materialCost, color: '#2563eb' },
       { key: 'laser', name: 'Laser Cutting', driver: `${f.perimeterMm}mm perimeter, ${f.pierceCount} pierces`, value: qc.laserCost, color: '#3b82f6' },
       { key: 'bending', name: 'Bending & Forming', driver: `${f.bendCount} bends, ${f.isSimpleBending ? 'Simple' : 'Compound'}`, value: qc.bendCost, color: '#60a5fa' },
       { key: 'weld', name: 'Welding & Assembly', driver: `${f.weldLengthMm}mm welding, ${f.holeCount} holes`, value: qc.weldCost + qc.assemblyCost, color: '#8b5cf6' },
@@ -140,9 +143,6 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
 
   const validUntil = new Date();
   validUntil.setDate(validUntil.getDate() + 30);
-
-  const sym = currencySymbol(settings.currency);
-  const money = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
     <div className="max-w-5xl mx-auto space-y-6 animate-in zoom-in-95 duration-500">
@@ -307,12 +307,12 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
                     <tr key={li.key}>
                       <td className="px-4 py-3">{li.name}</td>
                       <td className="px-4 py-3 text-right text-muted-foreground">{li.driver}</td>
-                      <td className="px-4 py-3 text-right font-medium">${li.value.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right font-medium">{sym}{li.value.toFixed(2)}</td>
                     </tr>
                   ))}
                   <tr className="bg-muted/10 font-semibold">
                     <td className="px-4 py-3" colSpan={2}>{isMachining ? 'Machining' : 'Factory'} Subtotal (incl. {settings.overheadPercent*100}% overhead)</td>
-                    <td className="px-4 py-3 text-right">${(costs.subtotal + costs.overhead).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right">{sym}{(costs.subtotal + costs.overhead).toFixed(2)}</td>
                   </tr>
                 </tbody>
               </table>
@@ -362,7 +362,7 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
               >
                 {materials.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.name}{typeof m.pricePerKg === 'number' ? ` — $${m.pricePerKg.toFixed(2)}/kg` : ''}
+                    {m.name}{typeof m.pricePerKg === 'number' ? ` — ${sym}${m.pricePerKg.toFixed(2)}/kg` : ''}
                   </option>
                 ))}
               </select>
@@ -394,24 +394,24 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
             <div className="space-y-4 pt-6 border-t border-border">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Unit Cost</span>
-                <span className="font-medium font-mono">${(costs.subtotal + costs.overhead).toFixed(2)}</span>
+                <span className="font-medium font-mono">{sym}{(costs.subtotal + costs.overhead).toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Unit Margin</span>
-                <span className="font-medium font-mono">${costs.marginAmount.toFixed(2)}</span>
+                <span className="font-medium font-mono">{sym}{costs.marginAmount.toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center py-2 px-3 bg-accent/50 rounded-lg">
                 <span className="text-sm font-bold">Total Unit Price</span>
-                <span className="text-lg font-black text-foreground">${unitPrice.toFixed(2)}</span>
+                <span className="text-lg font-black text-foreground">{sym}{unitPrice.toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center pt-2 border-t border-border border-dashed">
                 <span className="text-sm text-muted-foreground">Quantity x {data.config.quantity}</span>
-                <span className="text-sm font-medium">${(unitPrice * data.config.quantity).toFixed(2)}</span>
+                <span className="text-sm font-medium">{sym}{(unitPrice * data.config.quantity).toFixed(2)}</span>
               </div>
               {costs.rushPremium > 0 && (
                 <div className="flex justify-between items-center text-orange-500 font-medium">
                   <span className="text-xs uppercase tracking-wider font-bold italic flex items-center gap-1"><Zap size={10} fill="currentColor" /> Rush Premium</span>
-                  <span className="text-sm font-bold">+${costs.rushPremium.toFixed(2)}</span>
+                  <span className="text-sm font-bold">+{sym}{costs.rushPremium.toFixed(2)}</span>
                 </div>
               )}
               <div className="flex justify-between items-center pt-2">

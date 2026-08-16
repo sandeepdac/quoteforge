@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, Search, Save, Trash2 } from 'lucide-react';
 import { useQuotes } from '../context/QuoteContext';
+import { useMoney } from '../utils/useMoney';
 import { cn } from '../utils/cn';
 
 function formatUpdated(iso?: string): string {
@@ -12,6 +13,7 @@ function formatUpdated(iso?: string): string {
 
 export default function MaterialsPage() {
   const { materials, addMaterial, updateMaterial, deleteMaterial } = useQuotes();
+  const { symbol } = useMoney();
   const [searchTerm, setSearchTerm] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   // Per-row draft price edits, keyed by material id.
@@ -116,7 +118,7 @@ export default function MaterialsPage() {
             />
           </div>
           <div className="space-y-1">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Price/kg ($)</label>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Price/kg ({symbol})</label>
             <input
               required
               type="number"
@@ -173,7 +175,7 @@ export default function MaterialsPage() {
                     <td className="px-6 py-4 text-sm text-muted-foreground">{material.density.toLocaleString()} kg/m³</td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-1">
-                        <span className="text-sm font-semibold">$</span>
+                        <span className="text-sm font-semibold">{symbol}</span>
                         <input
                           type="number"
                           step="0.01"

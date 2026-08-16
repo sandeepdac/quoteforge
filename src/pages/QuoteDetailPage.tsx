@@ -18,6 +18,7 @@ import {
   Pencil
 } from 'lucide-react';
 import { useQuotes } from '../context/QuoteContext';
+import { useMoney } from '../utils/useMoney';
 import { useSettings } from '../context/SettingsContext';
 import StatusPill from '../components/common/StatusPill';
 import { cn } from '../utils/cn';
@@ -28,6 +29,7 @@ export default function QuoteDetailPage() {
   const navigate = useNavigate();
   const { getQuoteById, getCustomerById, getPartById, getMaterialById, deleteQuote, updateQuote } = useQuotes();
   const { settings } = useSettings();
+  const { symbol } = useMoney();
 
   const quote = getQuoteById(id || '');
   const [actualCostInput, setActualCostInput] = useState(
@@ -246,7 +248,7 @@ export default function QuoteDetailPage() {
                          <div className={cn('absolute -left-[24px] top-1.5 w-3 h-3 rounded-full ring-4 ring-background', i === 0 ? 'bg-primary' : 'bg-muted-foreground/40')}></div>
                          <div className="flex items-baseline justify-between gap-3">
                            <p className="text-xs font-bold">{new Date(rev.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</p>
-                           <span className="text-[11px] font-mono text-muted-foreground">${rev.unitPrice.toFixed(2)}/ea</span>
+                           <span className="text-[11px] font-mono text-muted-foreground">{symbol}{rev.unitPrice.toFixed(2)}/ea</span>
                          </div>
                          <p className="text-xs text-muted-foreground">{rev.summary}</p>
                        </div>
@@ -262,12 +264,12 @@ export default function QuoteDetailPage() {
              <div className="space-y-4">
                <div>
                   <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Grand Total</p>
-                  <p className="text-3xl font-black text-foreground">${quote.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  <p className="text-3xl font-black text-foreground">{symbol}{quote.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                </div>
                <div className="pt-4 space-y-3 border-t border-border">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Unit Price</span>
-                    <span className="font-bold">${quote.totalUnitPrice.toFixed(2)}</span>
+                    <span className="font-bold">{symbol}{quote.totalUnitPrice.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Quantity</span>
@@ -323,7 +325,7 @@ export default function QuoteDetailPage() {
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Estimator Accuracy</h3>
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Estimated factory cost</span>
-                <span className="font-mono font-medium">${estFactoryCost.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                <span className="font-mono font-medium">{symbol}{estFactoryCost.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Actual production cost ($)</label>
@@ -363,7 +365,7 @@ export default function QuoteDetailPage() {
                 {quote.lossReason
                   ? `Marked lost — reason: ${quote.lossReason}.`
                   : 'Marked lost. No specific reason was recorded.'}
-                {` ${part?.name ?? 'This part'} in ${material?.name ?? 'the selected material'} was quoted at $${quote.totalUnitPrice.toFixed(2)}/ea over ${quote.leadTimeDays} days.`}
+                {` ${part?.name ?? 'This part'} in ${material?.name ?? 'the selected material'} was quoted at ${symbol}${quote.totalUnitPrice.toFixed(2)}/ea over ${quote.leadTimeDays} days.`}
               </p>
             </div>
           )}
@@ -383,10 +385,11 @@ function Feature({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function BreakdownRow({ label, value }: { label: string; value: number }) {
+  const { symbol } = useMoney();
   return (
     <div className="flex justify-between text-xs">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono text-foreground font-medium">${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      <span className="font-mono text-foreground font-medium">{symbol}{value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
     </div>
   );
 }

@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { Search, Filter, ArrowUpDown, Plus } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuotes } from '../context/QuoteContext';
+import { useMoney } from '../utils/useMoney';
 import StatusPill from '../components/common/StatusPill';
 import { QuoteStatus } from '../types';
 import { cn } from '../utils/cn';
 
 export default function QuotesListPage() {
   const { quotes, customers, parts } = useQuotes();
+  const { symbol } = useMoney();
   const [searchParams, setSearchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState(searchParams.get('search') ?? '');
   const [statusFilter, setStatusFilter] = useState<QuoteStatus | 'all'>('all');
@@ -133,7 +135,7 @@ export default function QuotesListPage() {
                     <td className="px-6 py-4 text-sm text-foreground">{part?.name}</td>
                     <td className="px-6 py-4 text-sm text-foreground">{quote.quantity}</td>
                     <td className="px-6 py-4 text-sm font-medium text-foreground">
-                      ${quote.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {symbol}{quote.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4">
                       <StatusPill status={quote.status} />

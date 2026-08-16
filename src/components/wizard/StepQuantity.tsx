@@ -18,6 +18,7 @@ import { materialPropsFor } from '../../utils/materials';
 import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
+import { currencySymbol } from '../../utils/currency';
 
 interface StepQuantityProps {
   data: any;
@@ -40,6 +41,7 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
   const isTurnedPart = !!(cadAnalysis?.isTurned && cadAnalysis?.turningProfile);
   const isMilledPart = !!(cadAnalysis?.milledProfile && !cadAnalysis?.isTurned);
   const isMachining = isTurnedPart || isMilledPart;
+  const sym = currencySymbol(settings.currency);
 
   const { costs, lineItems } = useMemo(() => {
     if (isTurnedPart && cadAnalysis?.turningProfile) {
@@ -96,7 +98,7 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
     );
     // Each process cost tied back to the measured feature that drives it.
     const items: CostLineItem[] = [
-      { key: 'material', name: 'Material', driver: `${f.weightKg} kg × $${currentMaterial.pricePerKg.toFixed(2)}/kg (+${(settings.scrapFactor * 100).toFixed(0)}% scrap)`, value: qc.materialCost, color: '#2563eb' },
+      { key: 'material', name: 'Material', driver: `${f.weightKg} kg × ${sym}${currentMaterial.pricePerKg.toFixed(2)}/kg (+${(settings.scrapFactor * 100).toFixed(0)}% scrap)`, value: qc.materialCost, color: '#2563eb' },
       { key: 'laser', name: 'Laser cutting', driver: `${Math.round(f.perimeterMm)} mm cut path · ${f.pierceCount} pierces`, value: qc.laserCost, color: '#3b82f6' },
       { key: 'bending', name: 'Press brake', driver: f.bendCount > 0 ? `${f.bendCount} bend${f.bendCount > 1 ? 's' : ''} (${f.isSimpleBending ? 'simple' : 'compound'}) + setup` : 'no bends', value: qc.bendCost, color: '#60a5fa' },
       { key: 'welding', name: 'Welding', driver: `${Math.round(f.weldLengthMm)} mm · ${f.weldCount} joint${f.weldCount === 1 ? '' : 's'}`, value: qc.weldCost, color: '#8b5cf6' },
@@ -256,7 +258,7 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Unit Price</p>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-3xl font-bold">${unitPrice.toFixed(2)}</span>
+                  <span className="text-3xl font-bold">{sym}{unitPrice.toFixed(2)}</span>
                   <span className="text-xs text-muted-foreground">/ ea</span>
                 </div>
               </div>
@@ -279,7 +281,7 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                         <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: li.color }}></span>
                         <span className="text-sm font-medium text-foreground truncate">{li.name}</span>
                       </div>
-                      <span className="text-sm font-semibold text-foreground tabular-nums">${fmt(li.value)}</span>
+                      <span className="text-sm font-semibold text-foreground tabular-nums">{sym}{fmt(li.value)}</span>
                     </div>
                     <div className="flex items-center gap-2 pl-4">
                       <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
@@ -381,18 +383,18 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                         <div className="flex-1 h-3 bg-muted rounded overflow-hidden relative">
                           <div className={cn('h-full rounded', isCurrent ? 'bg-primary' : 'bg-primary/40')} style={{ width: `${(pt.unitPrice / maxUp) * 100}%` }}></div>
                           {hasRepeatGap && (
-                            <div className="absolute top-0 h-full w-0.5 bg-emerald-500" style={{ left: `${(pt.repeatUnitPrice / maxUp) * 100}%` }} title={`Repeat order: $${fmt(pt.repeatUnitPrice)}`}></div>
+                            <div className="absolute top-0 h-full w-0.5 bg-emerald-500" style={{ left: `${(pt.repeatUnitPrice / maxUp) * 100}%` }} title={`Repeat order: ${sym}${fmt(pt.repeatUnitPrice)}`}></div>
                           )}
                         </div>
-                        <span className={cn('text-[10px] w-14 text-right tabular-nums shrink-0', isCurrent ? 'font-bold text-foreground' : 'text-muted-foreground')}>${fmt(pt.unitPrice)}</span>
-                        <span className="text-[10px] w-14 text-right tabular-nums shrink-0 text-emerald-600 dark:text-emerald-400">{hasRepeatGap ? `$${fmt(pt.repeatUnitPrice)}` : '—'}</span>
+                        <span className={cn('text-[10px] w-14 text-right tabular-nums shrink-0', isCurrent ? 'font-bold text-foreground' : 'text-muted-foreground')}>{sym}{fmt(pt.unitPrice)}</span>
+                        <span className="text-[10px] w-14 text-right tabular-nums shrink-0 text-emerald-600 dark:text-emerald-400">{hasRepeatGap ? `${sym}${fmt(pt.repeatUnitPrice)}` : '—'}</span>
                       </div>
                     );
                   })}
                 </div>
                 <p className="text-[10px] text-muted-foreground/80 leading-tight">
                   Setup ({mc.setupTimeMin} min) amortises over the batch. <strong className="text-foreground">First order</strong> carries the one-time
-                  NRE (CAM programming{mc.machineClass === 'mill' ? ' + soft jaws' : ''}, ${fmt(mc.nreCost)}); the <strong className="text-emerald-600 dark:text-emerald-400">repeat</strong> price drops it.
+                  NRE (CAM programming{mc.machineClass === 'mill' ? ' + soft jaws' : ''}, {sym}{fmt(mc.nreCost)}); the <strong className="text-emerald-600 dark:text-emerald-400">repeat</strong> price drops it.
                 </p>
               </div>
             )}
@@ -401,33 +403,33 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
             <div className="space-y-2 border-t border-border pt-4">
               <div className="flex justify-between text-sm text-muted-foreground">
                 <span>{isMachining ? 'Machining subtotal' : 'Manufacturing subtotal'}</span>
-                <span className="tabular-nums">${fmt(costs.subtotal)}</span>
+                <span className="tabular-nums">{sym}{fmt(costs.subtotal)}</span>
               </div>
               <div className="flex justify-between text-sm text-muted-foreground">
                 <span>Overhead ({(settings.overheadPercent * 100).toFixed(0)}%)</span>
-                <span className="tabular-nums">${fmt(costs.overhead)}</span>
+                <span className="tabular-nums">{sym}{fmt(costs.overhead)}</span>
               </div>
               <div className="flex justify-between text-sm text-muted-foreground">
                 <span>Margin ({(settings.defaultMargin * 100).toFixed(0)}%)</span>
-                <span className="tabular-nums">${fmt(costs.marginAmount)}</span>
+                <span className="tabular-nums">{sym}{fmt(costs.marginAmount)}</span>
               </div>
               <div className="flex justify-between text-sm font-medium text-foreground pt-1 border-t border-border/60">
                 <span>Unit price</span>
-                <span className="tabular-nums">${fmt(unitPrice)}</span>
+                <span className="tabular-nums">{sym}{fmt(unitPrice)}</span>
               </div>
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>× {data.config.quantity} unit{data.config.quantity === 1 ? '' : 's'}</span>
-                <span className="tabular-nums">${fmt(unitPrice * data.config.quantity)}</span>
+                <span className="tabular-nums">{sym}{fmt(unitPrice * data.config.quantity)}</span>
               </div>
               {data.config.isRush && (
                 <div className="flex justify-between text-sm text-orange-500 font-medium">
                   <span>Rush premium ({(settings.rushPremiumPercent * 100).toFixed(0)}%)</span>
-                  <span className="tabular-nums">+${fmt(costs.rushPremium)}</span>
+                  <span className="tabular-nums">+{sym}{fmt(costs.rushPremium)}</span>
                 </div>
               )}
               <div className="pt-2 flex justify-between items-center text-xl font-bold text-foreground border-t border-border">
                 <span>Total</span>
-                <span className="tabular-nums">${fmt(grandTotal)}</span>
+                <span className="tabular-nums">{sym}{fmt(grandTotal)}</span>
               </div>
             </div>
           </div>

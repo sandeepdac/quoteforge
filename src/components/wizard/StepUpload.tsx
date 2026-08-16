@@ -16,6 +16,7 @@ import { analyzeCadFile, ExtractedCadAnalysis, CadFileInput } from '../../utils/
 import { solidFormatFor } from '../../utils/occtLoader';
 import { useQuotes } from '../../context/QuoteContext';
 import { materialFamilyFor } from '../../utils/materials';
+import { useMoney } from '../../utils/useMoney';
 
 /** Reads a file blob as a base64 string (without the data: prefix) for AI extraction. */
 function fileToBase64(file: Blob): Promise<string> {
@@ -38,6 +39,7 @@ interface StepUploadProps {
 
 export default function StepUpload({ onContinue, onDataChange, data }: StepUploadProps) {
   const { materials } = useQuotes();
+  const { symbol } = useMoney();
   const [uploadedFile, setUploadedFile] = useState<{ name: string; size: number; type: string } | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<ExtractedCadAnalysis | null>(null);
@@ -137,7 +139,7 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
           {materials.map((m) => (
             <option key={m.id} value={m.id}>
               {m.name}
-              {typeof m.pricePerKg === 'number' ? ` — $${m.pricePerKg.toFixed(2)}/kg` : ''}
+              {typeof m.pricePerKg === 'number' ? ` — ${symbol}${m.pricePerKg.toFixed(2)}/kg` : ''}
             </option>
           ))}
         </select>

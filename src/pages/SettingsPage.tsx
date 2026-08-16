@@ -22,6 +22,7 @@ import { cn } from '../utils/cn';
 import { DEFAULT_CNC_SETTINGS, DEFAULT_SECONDARY_OPS, DEFAULT_TURNING_TOOLS } from '../constants';
 import { CncSettings, SecondaryCategory, SecondaryOperation, ShopSettings, ShopTool, TurningOp } from '../types';
 import { CURRENCIES, currencySymbol } from '../utils/currency';
+import { useMoney } from '../utils/useMoney';
 
 export default function SettingsPage() {
   const { settings, updateSettings } = useSettings();
@@ -95,9 +96,7 @@ export default function SettingsPage() {
           {activeTab === 'estimate' && (
             <EstimateTab
               cnc={settings.cnc ?? DEFAULT_CNC_SETTINGS}
-              currency={settings.currency ?? 'USD'}
               onSaveCnc={(patch) => updateSettings({ cnc: patch as CncSettings })}
-              onSaveCurrency={(currency) => updateSettings({ currency })}
             />
           )}
 
@@ -215,15 +214,12 @@ function normalise(tools: ShopTool[]): ShopTool[] {
  */
 function EstimateTab({
   cnc,
-  currency,
   onSaveCnc,
-  onSaveCurrency,
 }: {
   cnc: CncSettings;
-  currency: string;
   onSaveCnc: (patch: Partial<CncSettings>) => void;
-  onSaveCurrency: (code: string) => void;
 }) {
+  const { symbol } = useMoney();
   const [rateHr, setRateHr] = useState(String(Math.round((cnc.machineRatePerMin ?? 1.25) * 60)));
   const [feed, setFeed] = useState(String(cnc.feedrateRatioPercent ?? 100));
   const [toolChange, setToolChange] = useState(String(cnc.millToolChangeSec ?? 10));
@@ -257,8 +253,8 @@ function EstimateTab({
       <div className="border-b border-border pb-4">
         <h3 className="text-lg font-bold">Estimate Settings</h3>
         <p className="text-sm text-muted-foreground mt-1">
-          The cost inputs behind every machining quote. Enter your own shop rate, feed override and quoting currency — these drive the
-          machining time and cost on turned and milled parts.
+          The cost inputs behind every machining quote. Enter your own shop rate, feed override and tool-change time — these drive the
+          machining time and cost on turned and milled parts. (Quoting currency lives under Shop Info.)
         </p>
       </div>
 
@@ -266,7 +262,7 @@ function EstimateTab({
         <SettingField
           label="Machining Rate"
           hint="Spindle charge-out for cutting time"
-          unit="$ / hr"
+          unit={`${symbol} / hr`}
         >
           <input
             type="number"
@@ -311,23 +307,6 @@ function EstimateTab({
             className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right font-mono focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </SettingField>
-
-        <SettingField label="Currency" hint="Symbol shown on machining quotes" unit="">
-          <select
-            value={currency}
-            onChange={(e) => {
-              onSaveCurrency(e.target.value);
-              flash('Currency');
-            }}
-            className="w-56 bg-background border border-border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-          >
-            {CURRENCIES.map((c) => (
-              <option key={c.code} value={c.code}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </SettingField>
       </div>
 
       <div className="pt-6 border-t border-border flex items-center justify-between">
@@ -351,10 +330,11 @@ function ShopInfoTab({
   const [name, setName] = useState(settings.name);
   const [address, setAddress] = useState(settings.address);
   const [logo, setLogo] = useState(settings.logo);
+  const [currency, setCurrency] = useState(settings.currency ?? 'USD');
   const [saved, setSaved] = useState(false);
 
   const save = () => {
-    onSave({ name: name.trim(), address: address.trim(), logo: logo.trim() });
+    onSave({ name: name.trim(), address: address.trim(), logo: logo.trim(), currency });
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1600);
   };
@@ -375,6 +355,17 @@ function ShopInfoTab({
         <div className="col-span-1 md:col-span-2 space-y-2">
           <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Main Address</label>
           <input value={address} onChange={(e) => setAddress(e.target.value)} className={field} placeholder="Street, City, State ZIP" />
+        </div>
+        <div className="col-span-1 md:col-span-2 space-y-2">
+          <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Currency</label>
+          <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={field}>
+            {CURRENCIES.map((c) => (
+              <option key={c.code} value={c.code}>{c.label}</option>
+            ))}
+          </select>
+          <p className="text-[11px] text-muted-foreground">
+            The shop's quoting currency — applied everywhere prices show across the app (quotes, parts, materials, analytics). Rates are labelled, not converted.
+          </p>
         </div>
       </div>
       <div className="pt-6 border-t border-border flex items-center justify-end gap-3">
@@ -645,6 +636,7 @@ function ToolingTab({
   setupMode: 'time' | 'flat' | 'both';
   onSaveSetupMode: (m: 'time' | 'flat' | 'both') => void;
 }) {
+  const { symbol } = useMoney();
   const [rows, setRows] = useState<ShopTool[]>(() => normalise(tools));
   const [saved, setSaved] = useState(false);
   const [charge, setCharge] = useState(String(flatSetupCharge || 0));
@@ -685,7 +677,7 @@ function ToolingTab({
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">$</span>
+            <span className="text-sm text-muted-foreground">{symbol}</span>
             <input
               type="number"
               step="10"
@@ -787,6 +779,7 @@ function ToolingTab({
 }
 
 function RateRow({ label, value, unit, description }: { label: string; value: number; unit: string; description: string }) {
+  const { symbol } = useMoney();
   return (
     <div className="flex items-start justify-between gap-4 p-4 hover:bg-muted/30 rounded-lg border border-transparent hover:border-border transition-all">
       <div className="space-y-1">
@@ -795,7 +788,7 @@ function RateRow({ label, value, unit, description }: { label: string; value: nu
       </div>
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1">
-          <span className="text-sm font-medium">$</span>
+          <span className="text-sm font-medium">{symbol}</span>
           <input 
             type="number" 
             defaultValue={value.toFixed(2)} 

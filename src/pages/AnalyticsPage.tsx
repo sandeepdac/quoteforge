@@ -27,11 +27,13 @@ import {
   HelpCircle
 } from 'lucide-react';
 import { useQuotes } from '../context/QuoteContext';
+import { useMoney } from '../utils/useMoney';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
 
 export default function AnalyticsPage() {
   const { quotes, materials, customers, getPartById } = useQuotes();
+  const { symbol } = useMoney();
   const { theme } = useTheme();
 
   // Color Palette
@@ -153,8 +155,8 @@ export default function AnalyticsPage() {
 
       {/* Primary KPI Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard label="Total Won Revenue" value={`$${(totalRevenue / 1000).toFixed(1)}k`} />
-        <MetricCard label="Pipeline Value" value={`$${(pipelineValue / 1000).toFixed(1)}k`} />
+        <MetricCard label="Total Won Revenue" value={`${symbol}${(totalRevenue / 1000).toFixed(1)}k`} />
+        <MetricCard label="Pipeline Value" value={`${symbol}${(pipelineValue / 1000).toFixed(1)}k`} />
         <MetricCard label="Average Margin" value={`${avgMargin.toFixed(1)}%`} />
         <MetricCard label="Win Rate" value={`${winRate}%`} sub={`${quotes.filter(q => q.status === 'won').length} of ${decidedCount} decided`} />
       </div>
@@ -209,7 +211,7 @@ export default function AnalyticsPage() {
                 <BarChart data={revenueByMonth}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
                   <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} unit="$" tickFormatter={(v) => `${v/1000}k`} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} unit={symbol} tickFormatter={(v) => `${v/1000}k`} />
                   <RechartsTooltip contentStyle={tooltipStyle} />
                   <Bar dataKey="won" stackId="a" fill="#16a34a" name="Won" />
                   <Bar dataKey="lost" stackId="a" fill="#dc2626" name="Lost" radius={[4, 4, 0, 0]} />
@@ -265,7 +267,7 @@ export default function AnalyticsPage() {
                       <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: CHART_COLORS[idx] }}></div>
                       {item.name.split(' ')[0]}
                     </span>
-                    <span className="font-black text-foreground">${(item.value / 1000).toFixed(0)}k</span>
+                    <span className="font-black text-foreground">{symbol}{(item.value / 1000).toFixed(0)}k</span>
                   </div>
                 ))}
              </div>
@@ -324,8 +326,8 @@ export default function AnalyticsPage() {
               <ResponsiveContainer width="100%" height="100%">
                 <ScatterChart margin={{ top: 20, right: 30, bottom: 20, left: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-                  <XAxis type="number" dataKey="quoted" name="Quoted Cost" unit="$" axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} />
-                  <YAxis type="number" dataKey="actual" name="Actual Cost" unit="$" axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} />
+                  <XAxis type="number" dataKey="quoted" name="Quoted Cost" unit={symbol} axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} />
+                  <YAxis type="number" dataKey="actual" name="Actual Cost" unit={symbol} axisLine={false} tickLine={false} tick={{ fill: axisColor, fontSize: 10 }} />
                   <ZAxis type="category" dataKey="label" name="Project ID" />
                   <RechartsTooltip cursor={{ strokeDasharray: '3-3' }} contentStyle={tooltipStyle} />
                   <Scatter name="Projects" data={accuracyData} fill="#2563eb" />

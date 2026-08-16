@@ -2,6 +2,7 @@ import React from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Plus, Calendar, Hammer, Layers, Ruler, Weight, History, FileText, Zap } from 'lucide-react';
 import { useQuotes } from '../context/QuoteContext';
+import { useMoney } from '../utils/useMoney';
 import StatusPill from '../components/common/StatusPill';
 import { cn } from '../utils/cn';
 
@@ -9,6 +10,7 @@ export default function PartDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { getPartById, getMaterialById, quotes, customers } = useQuotes();
+  const { symbol } = useMoney();
 
   const part = getPartById(id || '');
   if (!part) {
@@ -105,7 +107,7 @@ export default function PartDetailPage() {
                           </td>
                           <td className="px-6 py-4 text-sm font-medium">{customer?.name}</td>
                           <td className="px-6 py-4 text-sm underline-offset-4">{q.quantity}</td>
-                          <td className="px-6 py-4 text-sm font-mono">${q.totalUnitPrice.toFixed(2)}</td>
+                          <td className="px-6 py-4 text-sm font-mono">{symbol}{q.totalUnitPrice.toFixed(2)}</td>
                           <td className="px-6 py-4"><StatusPill status={q.status} /></td>
                         </tr>
                       );
@@ -134,8 +136,8 @@ export default function PartDetailPage() {
                  <div>
                     <p className="text-xs text-muted-foreground mb-1 uppercase leading-none">Avg. Quote Value</p>
                     <p className="text-xl font-bold text-foreground">
-                      ${partQuotes.length > 0 
-                        ? (partQuotes.reduce((acc, q) => acc + q.grandTotal, 0) / partQuotes.length).toLocaleString(undefined, { maximumFractionDigits: 0 }) 
+                      {symbol}{partQuotes.length > 0
+                        ? (partQuotes.reduce((acc, q) => acc + q.grandTotal, 0) / partQuotes.length).toLocaleString(undefined, { maximumFractionDigits: 0 })
                         : 0}
                     </p>
                  </div>
