@@ -120,7 +120,20 @@ function sculptExcess(p: ContourInput): number {
   const sd = [p.stockMm.x, p.stockMm.y, p.stockMm.z].sort((a, b) => a - b);
   // plateness → 1 when the thinnest dim is far smaller than the next (a flat plate).
   const plateness = sd[1] > 0 ? 1 - Math.min(1, sd[0] / (0.3 * sd[1])) : 0;
-  return Math.max(0, ratio - SCULPT_START) * (1 - plateness);
+  // Sparseness damping. The surface/compact-cube ratio also blows up for a SPARSE
+  // part — an open frame or spread-out bracket that fills a tiny fraction of its
+  // envelope — which is prismatic (planar walls + holes), not a sculptured 3D
+  // freeform. Without this, such a part is mistaken for a mould and finished at up
+  // to 10× (a ~300 cm³ part filling 1% of a 320×534×163 envelope). Dense parts
+  // (which the sculpt/setup logic was calibrated on) fill their envelope, so their
+  // damping is 1 and their behaviour is unchanged.
+  // Only the extreme case is damped: a genuinely contoured part that is hollow
+  // (e.g. FTC-07 fills ~14% of its envelope) keeps its full sculpt, while a thin
+  // open frame filling ~1% is pulled back toward prismatic.
+  const envVolCm3 = (sd[0] * sd[1] * sd[2]) / 1000;
+  const fill = envVolCm3 > 0 ? partVol / envVolCm3 : 1;
+  const sparseDamp = Math.min(1, fill / 0.1);
+  return Math.max(0, ratio - SCULPT_START) * (1 - plateness) * sparseDamp;
 }
 
 /**
@@ -201,9 +214,23 @@ export function calculateMilledCosts(
   const p = input.profile;
 
   // --- Stock & material ----------------------------------------------------
-  const stockVol = Math.max(0, p.stockVolumeCm3);
+  const rawStockVol = Math.max(0, p.stockVolumeCm3);
   const partVol = Math.max(0, p.partVolumeCm3);
-  const removedVol = Math.max(0, p.removedVolumeCm3 || stockVol - partVol);
+
+  // Near-net cap. A SOLID billet is physically wrong for a very sparse part —
+  // an open frame / weldment / near-net casting that fills a tiny % of its
+  // bounding box. Milling it from a solid block would hog away nearly the whole
+  // envelope (e.g. 98% removed) and produce an absurd upper-bound price. Below a
+  // floor yield the solid-billet assumption is unrealistic, so we price on an
+  // assumed near-net stock at that floor instead. The measured envelope + the
+  // sparse-billet warning still tell the user to confirm the real stock.
+  const YIELD_FLOOR = 0.15;
+  const rawYield = rawStockVol > 0 ? partVol / rawStockVol : 1;
+  const nearNetStock = partVol > 0 && rawYield < YIELD_FLOOR;
+  const stockVol = nearNetStock ? partVol / YIELD_FLOOR : rawStockVol;
+  const removedVol = nearNetStock
+    ? Math.max(0, stockVol - partVol)
+    : Math.max(0, p.removedVolumeCm3 || rawStockVol - partVol);
   const stockWeightKg = (stockVol * m.densityGCm3) / 1000;
   const materialCost = stockWeightKg * input.materialPricePerKg * (1 - cnc.scrapRecovery);
   const buyToFlyRatio = stockVol > 0 ? partVol / stockVol : 0;
@@ -398,6 +425,7 @@ export function calculateMilledCosts(
     stockVolumeCm3: r1(stockVol),
     removedVolumeCm3: r1(removedVol),
     buyToFlyRatio: Math.round(buyToFlyRatio * 100) / 100,
+    nearNetStock,
     barDiameterMm: 0,
     cycleTimeSec: Math.round(cycleTimeSec),
     setupTimeMin: r1(setupTimeMin),

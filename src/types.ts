@@ -199,6 +199,9 @@ export interface MachiningCosts {
   removedVolumeCm3: number;
   /** part volume ÷ stock volume — "buy-to-fly" material yield (0–1). */
   buyToFlyRatio: number;
+  /** True when the part is too sparse for a solid billet, so material + roughing
+   * were priced on an assumed near-net stock (capped yield) rather than the block. */
+  nearNetStock?: boolean;
   /** Standard bar diameter selected (mm). */
   barDiameterMm: number;
   /** Per-part cycle time (spindle + air), after the efficiency factor (s). */
