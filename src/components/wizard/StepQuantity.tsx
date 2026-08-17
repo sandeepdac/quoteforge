@@ -19,6 +19,7 @@ import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
 import { currencySymbol } from '../../utils/currency';
+import { dimsDesc } from '../../utils/dims';
 
 interface StepQuantityProps {
   data: any;
@@ -306,7 +307,7 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                       {cadAnalysis.partClass === 'turned'
                         ? `Turned from ⌀${cadAnalysis.diameterMm} bar`
                         : mc.stockMm
-                          ? `Milled from ${mc.stockMm.x}×${mc.stockMm.y}×${mc.stockMm.z} billet`
+                          ? `Milled from ${dimsDesc(mc.stockMm)} billet`
                           : 'Milled from billet'}
                     </span>
                     <span className="font-semibold text-foreground">

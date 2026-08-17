@@ -278,6 +278,7 @@ export default function NewQuotePage() {
             onContinue={(extracted) => handleContinue(extracted)}
             onBack={handleBack}
             onSnapshot={setPartImage}
+            savedThumbnail={partImage ?? seedThumbnail}
           />
         )}
         {currentStep === 3 && (

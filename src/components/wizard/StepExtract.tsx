@@ -21,6 +21,7 @@ import CadPdfViewer from '../cad/CadPdfViewer';
 import DfmPanel from '../cad/DfmPanel';
 import { cn } from '../../utils/cn';
 import { useMoney } from '../../utils/useMoney';
+import { dimsDesc } from '../../utils/dims';
 
 interface StepExtractProps {
   cadAnalysis?: ExtractedCadAnalysis;
@@ -30,6 +31,9 @@ interface StepExtractProps {
   onBack: () => void;
   /** Receives a rendered still of the 3D model, to persist as the part thumbnail. */
   onSnapshot?: (dataUrl: string) => void;
+  /** Saved render of the part (from an edited/cloned quote) — used as a static
+   * preview when the live 3D mesh isn't reloaded (stepData is stripped on save). */
+  savedThumbnail?: string;
 }
 
 const loadingMessages = [
@@ -40,9 +44,12 @@ const loadingMessages = [
   "Calculating volume, surface area, and mass..."
 ];
 
-export default function StepExtract({ cadAnalysis, materialId, onContinue, onBack, onSnapshot }: StepExtractProps) {
+export default function StepExtract({ cadAnalysis, materialId, onContinue, onBack, onSnapshot, savedThumbnail }: StepExtractProps) {
   const { materials } = useQuotes();
   const { symbol } = useMoney();
+  // A 3D solid part: it either has live tessellated geometry (fresh upload) OR it
+  // was measured from a STEP but the heavy mesh was stripped on save (edit/clone).
+  const isStepModel = cadAnalysis?.fileType === 'STEP' || !!cadAnalysis?.stepData;
   // The material actually used for the quote (the user's pick) — shown everywhere so
   // the stock panel never disagrees with the cost table. Falls back to the analyzer's
   // reading only when no selection has flowed through yet.
@@ -161,7 +168,7 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                 {cadAnalysis?.partName || 'Extracted CAD Feature Geometry'}
               </h2>
               <span className="bg-primary/10 text-primary border border-primary/20 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider">
-                {cadAnalysis?.stepData ? '3D CAD Model' : cadAnalysis?.fileType === 'IMAGE' ? '2D Image' : '2D Drawing'}
+                {isStepModel ? '3D CAD Model' : cadAnalysis?.fileType === 'IMAGE' ? '2D Image' : '2D Drawing'}
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -210,14 +217,35 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
         <div className="lg:col-span-6 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-              {cadAnalysis?.stepData ? <Box size={14} /> : <FileText size={14} />}
+              {isStepModel ? <Box size={14} /> : <FileText size={14} />}
               Interactive CAD Visualizer
             </h3>
-            <span className="text-[10px] text-muted-foreground">WebGL Render</span>
+            <span className="text-[10px] text-muted-foreground">{cadAnalysis?.stepData ? 'WebGL Render' : isStepModel ? 'Saved render' : 'WebGL Render'}</span>
           </div>
 
           {cadAnalysis?.stepData ? (
             <CadViewer3D cadData={cadAnalysis.stepData} selectedMaterialName={selectedMatObj.name} stepMesh={cadAnalysis.stepMesh} onSnapshot={onSnapshot} />
+          ) : isStepModel ? (
+            // Edited/cloned STEP: the heavy mesh was stripped on save, so show the
+            // saved render (or a placeholder) instead of the 2D drawing viewer.
+            <div className="rounded-xl border border-border overflow-hidden bg-card">
+              <div className="bg-slate-900 px-4 py-2.5 flex items-center gap-2 border-b border-slate-800 text-slate-200 text-xs">
+                <Box size={16} className="text-primary" />
+                <span className="font-bold text-white">3D STEP Model</span>
+                <span className="bg-primary/20 text-primary border border-primary/30 px-2 py-0.5 rounded text-[10px] font-mono">{cadAnalysis?.fileName || 'model.step'}</span>
+              </div>
+              <div className="w-full h-[360px] bg-slate-950 flex items-center justify-center overflow-hidden">
+                {savedThumbnail ? (
+                  <img src={savedThumbnail} alt={cadAnalysis?.partName || 'Part'} className="max-w-full max-h-full object-contain" />
+                ) : (
+                  <div className="text-center px-6">
+                    <Box size={40} className="text-slate-600 mx-auto mb-3" />
+                    <p className="text-slate-300 text-sm font-medium">Measured 3D solid</p>
+                    <p className="text-slate-500 text-xs mt-1 max-w-xs">Interactive rotation isn't reloaded when editing. Re-upload the STEP to rotate it — the measured geometry &amp; quote are preserved.</p>
+                  </div>
+                )}
+              </div>
+            </div>
           ) : cadAnalysis?.fileType === 'IMAGE' && cadAnalysis?.pdfUrl ? (
             <div className="rounded-xl border border-border overflow-hidden bg-card">
               <div className="bg-slate-900 px-4 py-2.5 flex items-center gap-2 border-b border-slate-800 text-slate-200 text-xs">
@@ -539,7 +567,7 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                 <div className="bg-accent/40 border border-border p-3 rounded-lg">
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Billet stock</p>
                   <p className="text-sm font-bold text-foreground">
-                    {rMm(mp.stockMm.x)} × {rMm(mp.stockMm.y)} × {rMm(mp.stockMm.z)} mm
+                    {dimsDesc(mp.stockMm)} mm
                   </p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
                     {mp.stockVolumeCm3} cm³ raw · {shownMaterial}
@@ -581,7 +609,7 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                   <AlertCircle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                   <p className="text-[10px] text-muted-foreground leading-relaxed">
                     <strong className="text-amber-700 dark:text-amber-300">Sparse part — stock assumed.</strong> It fills only
-                    {' '}{Math.round(milledYield * 100)}% of its {mp.stockMm.x}×{mp.stockMm.y}×{mp.stockMm.z} mm envelope, so a solid billet is unrealistic
+                    {' '}{Math.round(milledYield * 100)}% of its {dimsDesc(mp.stockMm)} mm envelope, so a solid billet is unrealistic
                     (you'd hog away <strong className="text-foreground">{mp.removedVolumeCm3.toFixed(0)} cm³</strong>). Real stock is almost certainly
                     <strong className="text-foreground"> plate / a weldment / a near-net casting or forging</strong>, so this quote is priced on an
                     <strong className="text-foreground"> assumed near-net stock</strong> — confirm the real stock before sending.

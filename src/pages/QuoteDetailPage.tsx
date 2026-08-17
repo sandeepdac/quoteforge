@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useQuotes } from '../context/QuoteContext';
 import { useMoney } from '../utils/useMoney';
+import { dimsDesc } from '../utils/dims';
 import { useSettings } from '../context/SettingsContext';
 import StatusPill from '../components/common/StatusPill';
 import { cn } from '../utils/cn';
@@ -198,7 +199,7 @@ export default function QuoteDetailPage() {
                     <Feature
                       label="Stock"
                       value={mc?.stockMm
-                        ? `${mc.stockMm.x}×${mc.stockMm.y}×${mc.stockMm.z} mm`
+                        ? `${dimsDesc(mc.stockMm)} mm`
                         : mc?.barDiameterMm
                           ? `⌀${mc.barDiameterMm} bar`
                           : '—'}
