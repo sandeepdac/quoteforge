@@ -8,7 +8,8 @@ import {
   Layers,
   Users,
   BarChart3,
-  Settings
+  Settings,
+  ClipboardList
 } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import Logo from '../common/Logo';
@@ -16,6 +17,7 @@ import Logo from '../common/Logo';
 const navItems = [
   { name: 'Dashboard', path: '/', icon: LayoutDashboard },
   { name: 'All Quotes', path: '/quotes', icon: FileText },
+  { name: 'Jobs', path: '/jobs', icon: ClipboardList },
   { name: 'Parts Library', path: '/parts', icon: Package },
   { name: 'Materials', path: '/materials', icon: Layers },
   { name: 'Customers', path: '/customers', icon: Users },

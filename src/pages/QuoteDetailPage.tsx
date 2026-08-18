@@ -15,9 +15,11 @@ import {
   History,
   Info,
   Copy,
-  Pencil
+  Pencil,
+  ClipboardList
 } from 'lucide-react';
 import { useQuotes } from '../context/QuoteContext';
+import { useJobs } from '../context/JobContext';
 import { useMoney } from '../utils/useMoney';
 import { dimsDesc } from '../utils/dims';
 import { useSettings } from '../context/SettingsContext';
@@ -29,6 +31,7 @@ export default function QuoteDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { getQuoteById, getCustomerById, getPartById, getMaterialById, deleteQuote, updateQuote } = useQuotes();
+  const { createJobFromQuote, getJobByQuoteId } = useJobs();
   const { settings } = useSettings();
   const { symbol } = useMoney();
 
@@ -71,6 +74,20 @@ export default function QuoteDetailPage() {
 
   const handleDownload = () => {
     downloadQuotePDF(quote, customer, part, material, settings);
+  };
+
+  // Convert a won quote into a shop work order. One job per quote: if it has
+  // already been converted, jump to the existing job rather than creating a
+  // duplicate work order for the same order.
+  const existingJob = getJobByQuoteId(quote.id);
+  const handleConvertToJob = () => {
+    if (existingJob) {
+      navigate(`/jobs/${existingJob.id}`);
+      return;
+    }
+    const poNumber = prompt('Customer PO number (optional):') ?? undefined;
+    const job = createJobFromQuote(quote, { settings, poNumber: poNumber || undefined });
+    navigate(`/jobs/${job.id}`);
   };
 
   const estFactoryCost = (quote.costs.subtotal + quote.costs.overhead) * quote.quantity;
@@ -118,6 +135,19 @@ export default function QuoteDetailPage() {
               <XCircle size={16} /> Mark as Lost
             </button>
           </>
+        )}
+        {quote.status === 'won' && (
+          <button
+            onClick={handleConvertToJob}
+            className={cn(
+              'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all',
+              existingJob
+                ? 'border border-border hover:bg-accent'
+                : 'bg-primary text-primary-foreground hover:bg-primary/90'
+            )}
+          >
+            <ClipboardList size={16} /> {existingJob ? `View job ${existingJob.jobNumber}` : 'Convert to Job'}
+          </button>
         )}
         <button onClick={handleClone} className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
           <Copy size={16} /> Clone Quote

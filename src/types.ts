@@ -395,3 +395,107 @@ export interface ShopSettings {
   /** CNC machining rates/speeds. Optional so older persisted settings still load. */
   cnc?: CncSettings;
 }
+
+// ---------------------------------------------------------------------------
+// MRP — jobs (work orders) and invoices
+//
+// A won quote becomes a JOB: the shop's work order. The job carries a frozen
+// SNAPSHOT of what was quoted (so later quote edits can't mutate a released job)
+// plus a ROUTER — the ordered list of operations the part travels through, from
+// material issue to shipping. The router is assembled from the machining plan
+// the estimator already computes, so the shop floor sees the same operations the
+// price was built from. Logging actual minutes against those operations is what
+// feeds the self-calibrating estimator.
+// ---------------------------------------------------------------------------
+
+/** Where a job sits in the shop. */
+export type JobStatus =
+  | 'planned'      // created from a won quote, not yet on the floor
+  | 'released'     // issued to the shop, material called off
+  | 'in-progress'  // at least one operation started
+  | 'complete'     // all operations done
+  | 'shipped'
+  | 'invoiced'
+  | 'closed'
+  | 'on-hold'
+  | 'cancelled';
+
+/** The kind of work centre an operation runs at — drives grouping and mapping. */
+export type WorkCentreKind =
+  | 'material'    // issue / saw / bar load
+  | 'machining'   // a setup on a machine (turn / mill / mill-turn)
+  | 'secondary'   // subcontract finishing (plating, anodise, heat treat)
+  | 'inspection'
+  | 'shipping';
+
+/** One line on the job router (traveller). */
+export interface JobOperation {
+  id: string;
+  /** 10, 20, 30 … — the shop-standard operation numbering. */
+  opNumber: number;
+  name: string;
+  kind: WorkCentreKind;
+  /** Work centre / machine this runs at, e.g. 'Multi-Axis Turn-Mill Centre'. */
+  workCentre: string;
+  /** Setup (one-time per job) minutes planned for this op. */
+  setupMin: number;
+  /** Run minutes per part planned for this op. */
+  runMinPerPart: number;
+  /** Tools / notes for the operator — from the machining plan where available. */
+  notes?: string;
+  status: 'pending' | 'in-progress' | 'done';
+  /** Actual total minutes logged by the floor (setup + run for the batch). */
+  actualMin?: number;
+  /** ISO timestamp when the operation was marked done. */
+  completedAt?: string;
+}
+
+/** What was quoted, frozen at job creation so the job is stable. */
+export interface JobCostSnapshot {
+  unitPrice: number;
+  grandTotal: number;
+  /** Estimated factory cost for the batch (subtotal + overhead) × qty. */
+  estFactoryCost: number;
+  /** Planned machining cycle time per part (s), when this was a machining quote. */
+  cycleTimeSec?: number;
+  /** Planned setups. */
+  setups?: number;
+  /** Stock description, e.g. '⌀45 round bar' or '90 × 45 × 45 mm billet'. */
+  stockDescription?: string;
+  materialName?: string;
+}
+
+/** Actuals captured when the job runs — the input to estimator self-calibration. */
+export interface JobActuals {
+  /** Total minutes actually spent across all operations (sum of op actualMin). */
+  totalMin?: number;
+  /** Actual factory cost for the batch, if the shop tracks it. */
+  actualCost?: number;
+  /** Calendar days from release to completion. */
+  actualLeadTimeDays?: number;
+  /** Parts scrapped during the run. */
+  scrapQty?: number;
+}
+
+export interface Job {
+  id: string;
+  /** Shop-visible work-order number, e.g. 'JOB-1042'. */
+  jobNumber: string;
+  quoteId: string;
+  customerId: string;
+  partId: string;
+  /** The customer's purchase-order reference for this job. */
+  poNumber?: string;
+  status: JobStatus;
+  quantity: number;
+  createdDate: string;
+  /** When the job was released to the floor. */
+  releasedDate?: string;
+  dueDate?: string;
+  completedDate?: string;
+  /** The ordered operations the part travels through. */
+  router: JobOperation[];
+  costSnapshot: JobCostSnapshot;
+  actuals?: JobActuals;
+  notes?: string;
+}

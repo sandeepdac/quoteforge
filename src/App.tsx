@@ -5,6 +5,7 @@ import ErrorBoundary from './components/common/ErrorBoundary';
 import { ThemeProvider } from './context/ThemeContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { QuoteProvider } from './context/QuoteContext';
+import { JobProvider } from './context/JobContext';
 
 // Pages (to be created)
 import DashboardPage from './pages/DashboardPage';
@@ -18,12 +19,15 @@ import CustomersPage from './pages/CustomersPage';
 import CustomerDetailPage from './pages/CustomerDetailPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import SettingsPage from './pages/SettingsPage';
+import JobsListPage from './pages/JobsListPage';
+import JobDetailPage from './pages/JobDetailPage';
 
 export default function App() {
   return (
     <ThemeProvider>
       <SettingsProvider>
         <QuoteProvider>
+         <JobProvider>
           <ErrorBoundary>
             <BrowserRouter>
               <Routes>
@@ -32,6 +36,8 @@ export default function App() {
                   <Route path="/quotes" element={<QuotesListPage />} />
                   <Route path="/quotes/new" element={<NewQuotePage />} />
                   <Route path="/quotes/:id" element={<QuoteDetailPage />} />
+                  <Route path="/jobs" element={<JobsListPage />} />
+                  <Route path="/jobs/:id" element={<JobDetailPage />} />
                   <Route path="/parts" element={<PartsPage />} />
                   <Route path="/parts/:id" element={<PartDetailPage />} />
                   <Route path="/materials" element={<MaterialsPage />} />
@@ -46,6 +52,7 @@ export default function App() {
               </Routes>
             </BrowserRouter>
           </ErrorBoundary>
+         </JobProvider>
         </QuoteProvider>
       </SettingsProvider>
     </ThemeProvider>
