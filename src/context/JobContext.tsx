@@ -11,10 +11,11 @@
  * converted.
  */
 import React, { createContext, useContext, ReactNode } from 'react';
-import { Job, JobOperation, Quote, SecondaryOperation, ShopSettings } from '../types';
+import { Customer, Invoice, Job, JobOperation, Quote, SecondaryOperation, ShopSettings } from '../types';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { generateId, nextDocNumber } from '../utils/idGenerator';
 import { buildJobRouter, deriveJobStatus, secondaryOpsFromCosts } from '../utils/jobRouter';
+import { buildInvoiceFromJob, recalcInvoice } from '../utils/invoiceBuilder';
 import { dimsDesc } from '../utils/dims';
 
 interface JobContextType {
@@ -31,6 +32,24 @@ interface JobContextType {
   createJobFromQuote: (quote: Quote, ctx: BuildJobContext) => Job;
   /** Update one operation on a job, re-deriving the job's status. */
   updateJobOperation: (jobId: string, opId: string, patch: Partial<JobOperation>) => void;
+  // --- invoices ---
+  invoices: Invoice[];
+  updateInvoice: (invoice: Invoice) => void;
+  deleteInvoice: (id: string) => void;
+  getInvoiceById: (id: string) => Invoice | undefined;
+  /** The invoice raised for a job, if any. */
+  getInvoiceByJobId: (jobId: string) => Invoice | undefined;
+  /** Raise an invoice for a job and mark the job invoiced. */
+  createInvoiceFromJob: (job: Job, ctx: CreateInvoiceContext) => Invoice;
+}
+
+/** What raising an invoice needs beyond the job. */
+export interface CreateInvoiceContext {
+  quote?: Quote;
+  customer?: Customer;
+  /** VAT / sales-tax rate as a percentage. */
+  taxRatePercent: number;
+  currency?: string;
 }
 
 /** What the job builder needs beyond the quote itself. */
@@ -63,6 +82,7 @@ function addDays(iso: string, days: number): string {
 
 export const JobProvider = ({ children }: { children: ReactNode }) => {
   const [jobs, setJobs] = usePersistentState<Job[]>('jobs_v1', []);
+  const [invoices, setInvoices] = usePersistentState<Invoice[]>('invoices_v1', []);
 
   const addJob = (job: Job) => setJobs([job, ...jobs]);
   const updateJob = (updated: Job) => setJobs(jobs.map((j) => (j.id === updated.id ? updated : j)));
@@ -156,6 +176,28 @@ export const JobProvider = ({ children }: { children: ReactNode }) => {
     );
   };
 
+  // --- invoices ------------------------------------------------------------
+  const updateInvoice = (updated: Invoice) =>
+    setInvoices(invoices.map((i) => (i.id === updated.id ? recalcInvoice(updated) : i)));
+  const deleteInvoice = (id: string) => setInvoices(invoices.filter((i) => i.id !== id));
+  const getInvoiceById = (id: string) => invoices.find((i) => i.id === id);
+  const getInvoiceByJobId = (jobId: string) => invoices.find((i) => i.jobId === jobId);
+
+  const createInvoiceFromJob = (job: Job, ctx: CreateInvoiceContext): Invoice => {
+    const invoice = buildInvoiceFromJob({
+      job,
+      quote: ctx.quote,
+      customer: ctx.customer,
+      invoiceNumber: nextDocNumber(invoices.map((i) => i.invoiceNumber), 'INV'),
+      taxRatePercent: ctx.taxRatePercent,
+      currency: ctx.currency,
+    });
+    setInvoices([invoice, ...invoices]);
+    // Raising the invoice advances the job — it's no longer just "shipped".
+    setJobs(jobs.map((j) => (j.id === job.id ? { ...j, status: 'invoiced' } : j)));
+    return invoice;
+  };
+
   return (
     <JobContext.Provider
       value={{
@@ -168,6 +210,12 @@ export const JobProvider = ({ children }: { children: ReactNode }) => {
         buildJobFromQuote,
         createJobFromQuote,
         updateJobOperation,
+        invoices,
+        updateInvoice,
+        deleteInvoice,
+        getInvoiceById,
+        getInvoiceByJobId,
+        createInvoiceFromJob,
       }}
     >
       {children}

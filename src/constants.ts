@@ -95,6 +95,7 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   rushPremiumPercent: 0.20,
   scrapFactor: 0.15,
   currency: 'USD',
+  taxRatePercent: 20, // VAT / sales tax on invoices; editable in Settings
   secondaryOps: DEFAULT_SECONDARY_OPS,
   cnc: DEFAULT_CNC_SETTINGS,
 };

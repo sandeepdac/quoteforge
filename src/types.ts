@@ -390,6 +390,14 @@ export interface ShopSettings {
   scrapFactor: number;
   /** ISO 4217 currency code the shop quotes in (e.g. 'USD', 'EUR', 'GBP'). */
   currency?: string;
+  /** VAT / sales-tax rate applied to invoices, as a percentage (e.g. 20). */
+  taxRatePercent?: number;
+  /**
+   * Work-centre code mapping for the MRP job-packet export: our router's work
+   * centre name -> the code the shop's own MRP expects (e.g. 'TM01'). Unmapped
+   * centres export under our name.
+   */
+  workCentreMappings?: Array<{ from: string; to: string }>;
   /** Shop catalogue of secondary operations (finishing / inspection). */
   secondaryOps?: SecondaryOperation[];
   /** CNC machining rates/speeds. Optional so older persisted settings still load. */
@@ -497,5 +505,46 @@ export interface Job {
   router: JobOperation[];
   costSnapshot: JobCostSnapshot;
   actuals?: JobActuals;
+  notes?: string;
+}
+
+/** Where an invoice sits in the accounts cycle. */
+export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'void';
+
+/** One billable line on an invoice. */
+export interface InvoiceLine {
+  id: string;
+  description: string;
+  quantity: number;
+  /** Price per unit for this line. */
+  unitPrice: number;
+  /** quantity × unitPrice. */
+  amount: number;
+  /** Non-part lines (NRE, carriage) are billed once, not per part. */
+  kind: 'part' | 'nre' | 'secondary' | 'shipping' | 'other';
+}
+
+export interface Invoice {
+  id: string;
+  invoiceNumber: string;
+  jobId: string;
+  quoteId: string;
+  customerId: string;
+  poNumber?: string;
+  status: InvoiceStatus;
+  issueDate: string;
+  /** Derived from the customer's payment terms at creation. */
+  dueDate: string;
+  paidDate?: string;
+  lines: InvoiceLine[];
+  subtotal: number;
+  /** VAT / sales-tax rate applied, as a percentage (e.g. 20). */
+  taxRatePercent: number;
+  taxAmount: number;
+  total: number;
+  /** ISO 4217 code this invoice is denominated in (frozen from settings). */
+  currency?: string;
+  /** Payment terms text, copied from the customer at creation. */
+  terms?: string;
   notes?: string;
 }

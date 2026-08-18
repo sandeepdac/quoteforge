@@ -96,6 +96,8 @@ export default function SettingsPage() {
 
           {activeTab === 'estimate' && (
             <EstimateTab
+              settings={settings}
+              onSaveShop={(patch) => updateSettings(patch)}
               cnc={settings.cnc ?? DEFAULT_CNC_SETTINGS}
               onSaveCnc={(patch) => updateSettings({ cnc: patch as CncSettings })}
             />
@@ -216,9 +218,13 @@ function normalise(tools: ShopTool[]): ShopTool[] {
 function EstimateTab({
   cnc,
   onSaveCnc,
+  settings,
+  onSaveShop,
 }: {
   cnc: CncSettings;
   onSaveCnc: (patch: Partial<CncSettings>) => void;
+  settings: ShopSettings;
+  onSaveShop: (patch: Partial<ShopSettings>) => void;
 }) {
   const { symbol } = useMoney();
   const [rateHr, setRateHr] = useState(String(Math.round((cnc.machineRatePerMin ?? 1.25) * 60)));
@@ -248,6 +254,32 @@ function EstimateTab({
     onSaveCnc({ millToolChangeSec: s });
     flash('Tool change time');
   };
+
+  const [tax, setTax] = useState(String(settings.taxRatePercent ?? 20));
+  const saveTax = () => {
+    const v = Math.min(100, Math.max(0, Number(tax) || 0));
+    setTax(String(v));
+    onSaveShop({ taxRatePercent: v });
+    flash('Tax rate');
+  };
+
+  // Work-centre mapping: our router names -> the codes the shop's MRP expects.
+  const mappings = settings.workCentreMappings ?? [];
+  const saveMappings = (next: Array<{ from: string; to: string }>) => {
+    onSaveShop({ workCentreMappings: next });
+  };
+  // Offer every work centre the app can emit, so a shop maps them without having
+  // to remember the exact spelling our router uses.
+  const knownCentres = Array.from(
+    new Set([
+      ...ALL_MACHINE_IDS.map((id) => MACHINE_CATALOG[id].name),
+      'Stores / saw',
+      'Subcontract',
+      'Inspection',
+      'Despatch',
+      ...mappings.map((m) => m.from),
+    ])
+  );
 
   const owned = new Set<MachineId>(cnc.machines ?? ALL_MACHINE_IDS);
   const toggleMachine = (id: MachineId) => {
@@ -305,6 +337,23 @@ function EstimateTab({
         </SettingField>
 
         <SettingField
+          label="VAT / Sales Tax"
+          hint="Applied to invoices; editable per invoice"
+          unit="%"
+        >
+          <input
+            type="number"
+            step="0.5"
+            min="0"
+            max="100"
+            value={tax}
+            onChange={(e) => setTax(e.target.value)}
+            onBlur={saveTax}
+            className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        </SettingField>
+
+        <SettingField
           label="Tool Change Time"
           hint="ATC swap time added per distinct tool"
           unit="s"
@@ -357,6 +406,38 @@ function EstimateTab({
                   <span className="block text-[11px] text-muted-foreground leading-snug mt-0.5">{spec.note}</span>
                 </span>
               </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="pt-6 border-t border-border space-y-3">
+        <div>
+          <h4 className="text-sm font-bold">MRP work-centre codes</h4>
+          <p className="text-xs text-muted-foreground mt-1">
+            Optional. If you already run an MRP, map our work-centre names to the codes it expects — the exported
+            job packet (JSON / CSV / traveller) then speaks your MRP's language. Anything left blank exports under our name.
+          </p>
+        </div>
+        <div className="space-y-2">
+          {knownCentres.map((centre) => {
+            const current = mappings.find((m) => m.from === centre)?.to ?? '';
+            return (
+              <div key={centre} className="flex items-center gap-3">
+                <span className="text-xs text-muted-foreground flex-1 min-w-0 truncate">{centre}</span>
+                <span className="text-muted-foreground/60 text-xs">→</span>
+                <input
+                  defaultValue={current}
+                  placeholder="e.g. TM01"
+                  aria-label={`MRP code for ${centre}`}
+                  onBlur={(e) => {
+                    const to = e.target.value.trim();
+                    const rest = mappings.filter((m) => m.from !== centre);
+                    saveMappings(to ? [...rest, { from: centre, to }] : rest);
+                  }}
+                  className="w-32 bg-background border border-border rounded px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
             );
           })}
         </div>

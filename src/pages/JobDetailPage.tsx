@@ -20,14 +20,21 @@ import {
   Truck,
   Trash2,
   Clock,
+  Receipt,
+  FileJson,
+  Sheet,
+  Printer,
 } from 'lucide-react';
 import { useJobs } from '../context/JobContext';
 import { useQuotes } from '../context/QuoteContext';
+import { useSettings } from '../context/SettingsContext';
 import { useMoney } from '../utils/useMoney';
 import StatusPill from '../components/common/StatusPill';
 import { cn } from '../utils/cn';
 import { JobOperation, JobStatus, WorkCentreKind } from '../types';
 import { actualJobMinutes, jobProgress, plannedJobMinutes } from '../utils/jobRouter';
+import { buildJobPacket, jobPacketToCsv, downloadText } from '../utils/jobPacket';
+import { downloadJobTravellerPdf } from '../utils/jobTravellerPdf';
 
 const KIND_ICON: Record<WorkCentreKind, React.ElementType> = {
   material: Package,
@@ -40,8 +47,9 @@ const KIND_ICON: Record<WorkCentreKind, React.ElementType> = {
 export default function JobDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { getJobById, updateJob, updateJobOperation, deleteJob } = useJobs();
+  const { getJobById, updateJob, updateJobOperation, deleteJob, createInvoiceFromJob, getInvoiceByJobId } = useJobs();
   const { getCustomerById, getPartById, getQuoteById } = useQuotes();
+  const { settings } = useSettings();
   const { money } = useMoney();
 
   const job = getJobById(id || '');
@@ -84,6 +92,41 @@ export default function JobDetailPage() {
     }
   };
 
+  // One invoice per job: if it has already been raised, go to it rather than
+  // billing the customer for the same work twice.
+  const existingInvoice = getInvoiceByJobId(job.id);
+  const handleInvoice = () => {
+    if (existingInvoice) {
+      navigate(`/invoices/${existingInvoice.id}`);
+      return;
+    }
+    const invoice = createInvoiceFromJob(job, {
+      quote,
+      customer,
+      taxRatePercent: settings.taxRatePercent ?? 20,
+      currency: settings.currency,
+    });
+    navigate(`/invoices/${invoice.id}`);
+  };
+  const canInvoice = ['complete', 'shipped', 'invoiced', 'closed'].includes(job.status);
+
+  // --- Job packet: the handoff to the shop's own MRP, and to the floor ------
+  const packet = () =>
+    buildJobPacket({
+      job,
+      customer,
+      part,
+      quote,
+      mappings: settings.workCentreMappings,
+      shopName: settings.name,
+      currency: settings.currency,
+    });
+  const exportJson = () =>
+    downloadText(`${job.jobNumber}_packet.json`, JSON.stringify(packet(), null, 2), 'application/json');
+  const exportCsv = () =>
+    downloadText(`${job.jobNumber}_router.csv`, jobPacketToCsv(packet()), 'text/csv');
+  const exportTraveller = () => downloadJobTravellerPdf(packet());
+
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="flex items-center gap-4">
@@ -120,6 +163,17 @@ export default function JobDetailPage() {
             <Truck size={16} /> Mark shipped
           </button>
         )}
+        {canInvoice && (
+          <button
+            onClick={handleInvoice}
+            className={cn(
+              'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all',
+              existingInvoice ? 'border border-border hover:bg-accent' : 'bg-primary text-primary-foreground hover:bg-primary/90'
+            )}
+          >
+            <Receipt size={16} /> {existingInvoice ? `View invoice ${existingInvoice.invoiceNumber}` : 'Create invoice'}
+          </button>
+        )}
         {(job.status === 'released' || job.status === 'in-progress') && (
           <button onClick={() => setStatus('on-hold')} className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
             Put on hold
@@ -130,6 +184,15 @@ export default function JobDetailPage() {
             <Play size={16} /> Resume
           </button>
         )}
+        <button onClick={exportTraveller} className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
+          <Printer size={16} /> Traveller PDF
+        </button>
+        <button onClick={exportCsv} className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
+          <Sheet size={16} /> Router CSV
+        </button>
+        <button onClick={exportJson} className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
+          <FileJson size={16} /> MRP packet
+        </button>
         <div className="flex-1" />
         <button onClick={handleDelete} className="flex items-center gap-2 px-4 py-2 bg-destructive/10 text-destructive border border-destructive/20 rounded-md text-sm font-medium hover:bg-destructive/20 transition-all">
           <Trash2 size={16} /> Delete

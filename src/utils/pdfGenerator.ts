@@ -10,15 +10,15 @@
  */
 import type { Quote, Customer, Part, Material, ShopSettings } from '../types';
 
-const PAGE_W = 612; // US Letter, points
-const PAGE_H = 792;
-const MARGIN = 54;
+export const PAGE_W = 612; // US Letter, points
+export const PAGE_H = 792;
+export const MARGIN = 54;
 
 // Approx Helvetica advance widths (fraction of em) for right-aligning columns.
 const W_DIGIT = 0.556;
 const W_NARROW = 0.278; // . , : space ( ) i l
 const W_WIDE = 0.722; // W M — treated generously
-function textWidth(s: string, size: number): number {
+export function textWidth(s: string, size: number): number {
   let w = 0;
   for (const ch of s) {
     if (/[0-9$]/.test(ch)) w += W_DIGIT;
@@ -30,7 +30,7 @@ function textWidth(s: string, size: number): number {
 }
 
 /** Escape ( ) and \ and drop characters Latin-1 can't encode. */
-function esc(s: string): string {
+export function esc(s: string): string {
   return String(s ?? '')
     .replace(/⌀/g, 'dia ')
     .replace(/[–—]/g, '-')
@@ -45,7 +45,7 @@ function esc(s: string): string {
 const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
 
 /** Minimal content-stream builder in top-left coordinates (y grows downward). */
-class Page {
+export class Page {
   private ops: string[] = [];
 
   text(x: number, yTop: number, s: string, font: 'F1' | 'F2' = 'F1', size = 10) {
@@ -221,7 +221,7 @@ export function buildQuotePdf(input: QuotePdfInput): Blob {
 }
 
 /** Simple greedy word-wrap to a character budget. */
-function wrap(s: string, width: number): string[] {
+export function wrap(s: string, width: number, maxLines = 6): string[] {
   const words = String(s).split(/\s+/);
   const lines: string[] = [];
   let cur = '';
@@ -234,11 +234,11 @@ function wrap(s: string, width: number): string[] {
     }
   }
   if (cur) lines.push(cur);
-  return lines.slice(0, 6);
+  return lines.slice(0, maxLines);
 }
 
 /** Wrap a content stream into a complete, valid single-page PDF with an xref table. */
-function assemblePdf(content: string): Blob {
+export function assemblePdf(content: string): Blob {
   const objects: string[] = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
