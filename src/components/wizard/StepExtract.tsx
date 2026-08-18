@@ -553,21 +553,34 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
             </div>
           )}
 
-          {/* Machining drivers (milling / prismatic) */}
+          {/* Machining drivers (milling / prismatic / mill-turn from bar) */}
           {isMilled && cadAnalysis && mp && (
             <div className="bg-card border border-border p-5 rounded-xl space-y-4">
               <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5 flex items-center justify-between">
-                <span>Milling Plan &amp; Stock</span>
+                <span>{mp.fromBarStock ? 'Mill-Turn Plan & Stock' : 'Milling Plan & Stock'}</span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                  MILLED
+                  {mp.fromBarStock ? 'MILL-TURN' : 'MILLED'}
                 </span>
               </h3>
 
+              {mp.fromBarStock && (
+                <div className="flex gap-2 bg-primary/5 border border-primary/20 rounded-md p-2.5">
+                  <Cpu size={14} className="text-primary shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    <strong className="text-foreground">Made from round bar on a turn-mill.</strong> The part is turned to profile and
+                    milled with driven tools in {mp.setupCount === 1 ? 'a single clamp' : `${mp.setupCount} clamps`} — all faces in one operation.
+                    Priced from <strong className="text-foreground">⌀{mp.barDiameterMm} bar</strong>, not a solid block, so material and roughing both drop.
+                  </p>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-accent/40 border border-border p-3 rounded-lg">
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Billet stock</p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{mp.fromBarStock ? 'Round bar stock' : 'Billet stock'}</p>
                   <p className="text-sm font-bold text-foreground">
-                    {dimsDesc(mp.stockMm)} mm
+                    {mp.fromBarStock
+                      ? `⌀${mp.barDiameterMm} × ${Math.round(Math.max(mp.stockMm.x, mp.stockMm.y, mp.stockMm.z))} mm`
+                      : `${dimsDesc(mp.stockMm)} mm`}
                   </p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
                     {mp.stockVolumeCm3} cm³ raw · {shownMaterial}
@@ -584,7 +597,7 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                 <div className="bg-accent/40 border border-border p-3.5 rounded-lg flex items-center justify-between">
                   <div>
                     <p className="text-xs font-bold text-foreground">Setups</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">re-clamps</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{mp.fromBarStock ? 'one-op turn-mill' : 're-clamps'}</p>
                   </div>
                   <span className="text-lg font-bold text-foreground">{mp.setupCount}</span>
                 </div>

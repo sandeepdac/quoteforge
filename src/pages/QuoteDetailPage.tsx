@@ -198,11 +198,13 @@ export default function QuoteDetailPage() {
                     <Feature label="Holes" value={mc?.holeCount ?? part?.features.holeCount ?? 0} />
                     <Feature
                       label="Stock"
-                      value={mc?.stockMm
-                        ? `${dimsDesc(mc.stockMm)} mm`
-                        : mc?.barDiameterMm
-                          ? `⌀${mc.barDiameterMm} bar`
-                          : '—'}
+                      value={mc?.fromBarStock && mc?.barDiameterMm
+                        ? `⌀${mc.barDiameterMm} round bar`
+                        : mc?.stockMm
+                          ? `${dimsDesc(mc.stockMm)} mm`
+                          : mc?.barDiameterMm
+                            ? `⌀${mc.barDiameterMm} bar`
+                            : '—'}
                     />
                     <Feature label="Cycle time" value={mc?.cycleTimeSec != null ? `${mc.cycleTimeSec} s` : '—'} />
                     <Feature label="Material yield" value={mc?.buyToFlyRatio != null ? `${Math.round(mc.buyToFlyRatio * 100)}%` : '—'} />

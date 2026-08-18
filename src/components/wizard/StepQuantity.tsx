@@ -306,9 +306,11 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                     <span className="text-muted-foreground">
                       {cadAnalysis.partClass === 'turned'
                         ? `Turned from ⌀${cadAnalysis.diameterMm} bar`
-                        : mc.stockMm
-                          ? `Milled from ${dimsDesc(mc.stockMm)} billet`
-                          : 'Milled from billet'}
+                        : mc.fromBarStock
+                          ? `Mill-turn from ⌀${mc.barDiameterMm} round bar`
+                          : mc.stockMm
+                            ? `Milled from ${dimsDesc(mc.stockMm)} billet`
+                            : 'Milled from billet'}
                     </span>
                     <span className="font-semibold text-foreground">
                       {Math.round(mc.buyToFlyRatio * 100)}% material yield
@@ -324,7 +326,7 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                   </div>
                   <p className="text-[10px] text-muted-foreground/80 leading-tight">
                     {mc.machineClass === 'mill'
-                      ? `~${mc.cycleTimeSec}s cycle · ${mc.removedVolumeCm3} cm³ removed from ${mc.stockVolumeCm3} cm³ billet · ${mc.setups} setup${mc.setups > 1 ? 's' : ''} · ${mc.pocketCount ?? 0} pocket${(mc.pocketCount ?? 0) === 1 ? '' : 's'}${(mc.deepPocketCount ?? 0) > 0 ? ` (${mc.deepPocketCount} deep)` : ''} · ${mc.holeCount ?? 0} hole${(mc.holeCount ?? 0) === 1 ? '' : 's'}`
+                      ? `~${mc.cycleTimeSec}s cycle · ${mc.removedVolumeCm3} cm³ removed from ${mc.stockVolumeCm3} cm³ ${mc.fromBarStock ? 'bar' : 'billet'} · ${mc.setups} setup${mc.setups > 1 ? 's' : ''} · ${mc.pocketCount ?? 0} pocket${(mc.pocketCount ?? 0) === 1 ? '' : 's'}${(mc.deepPocketCount ?? 0) > 0 ? ` (${mc.deepPocketCount} deep)` : ''} · ${mc.holeCount ?? 0} hole${(mc.holeCount ?? 0) === 1 ? '' : 's'}`
                       : `~${mc.cycleTimeSec}s cycle · ${mc.removedVolumeCm3} cm³ removed from ${mc.stockVolumeCm3} cm³ bar · ${mc.setups} setup${mc.setups > 1 ? 's' : ''} · buy-to-fly`}
                   </p>
                 </div>

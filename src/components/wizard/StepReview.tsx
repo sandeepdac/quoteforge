@@ -239,7 +239,9 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
               )}
               {mc && mc.machineClass === 'mill' && (
                 <p className="text-[11px] text-muted-foreground">
-                  Milled from {mc.stockMm ? dimsDesc(mc.stockMm) : '—'} billet · ~{mc.cycleTimeSec}s cycle @ {Math.round(mc.efficiencyFactor * 100)}% efficiency
+                  {mc.fromBarStock
+                    ? `Mill-turn from ⌀${mc.barDiameterMm} round bar`
+                    : `Milled from ${mc.stockMm ? dimsDesc(mc.stockMm) : '—'} billet`} · ~{mc.cycleTimeSec}s cycle @ {Math.round(mc.efficiencyFactor * 100)}% efficiency
                   · <strong className="text-foreground">{Math.round(mc.buyToFlyRatio * 100)}% material yield</strong> · {mc.setups} setup{mc.setups > 1 ? 's' : ''}
                   · {mc.pocketCount ?? 0} pocket{(mc.pocketCount ?? 0) === 1 ? '' : 's'}{(mc.deepPocketCount ?? 0) > 0 ? ` (${mc.deepPocketCount} deep)` : ''} · {mc.holeCount ?? 0} hole{(mc.holeCount ?? 0) === 1 ? '' : 's'}.
                 </p>

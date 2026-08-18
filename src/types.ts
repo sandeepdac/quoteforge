@@ -1,4 +1,5 @@
 import type { ExtractedCadAnalysis } from './utils/cadAnalyzer';
+import type { MachineId } from './utils/machineSelection';
 
 export type QuoteStatus = 'draft' | 'sent' | 'won' | 'lost' | 'expired';
 
@@ -223,6 +224,9 @@ export interface MachiningCosts {
   machineClass?: 'turn' | 'mill';
   /** Billet stock dimensions (mm) for a milled part. */
   stockMm?: { x: number; y: number; z: number };
+  /** True when a milled part is cut from ROUND BAR on a turn-mill (one op) rather
+   *  than a rectangular billet — `barDiameterMm` then holds the bar size. */
+  fromBarStock?: boolean;
   pocketCount?: number;
   bossCount?: number;
   deepPocketCount?: number;
@@ -328,6 +332,12 @@ export interface CncSettings {
   scrapRecovery: number;
   /** Shop turning tool library — drives the reference toolpath's stations/tools. */
   toolLibrary?: ShopTool[];
+  /**
+   * Machines the shop actually owns. Machine selection compares only these when
+   * choosing the best route for a part (e.g. a 5-axis mill vs a 5-axis turn-mill).
+   * Omitted / empty → the whole catalog is considered (back-compat default).
+   */
+  machines?: MachineId[];
 }
 
 export type SecondaryCategory =

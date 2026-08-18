@@ -23,6 +23,7 @@ import { DEFAULT_CNC_SETTINGS, DEFAULT_SECONDARY_OPS, DEFAULT_TURNING_TOOLS } fr
 import { CncSettings, SecondaryCategory, SecondaryOperation, ShopSettings, ShopTool, TurningOp } from '../types';
 import { CURRENCIES, currencySymbol } from '../utils/currency';
 import { useMoney } from '../utils/useMoney';
+import { ALL_MACHINE_IDS, MACHINE_CATALOG, MachineId } from '../utils/machineSelection';
 
 export default function SettingsPage() {
   const { settings, updateSettings } = useSettings();
@@ -248,6 +249,17 @@ function EstimateTab({
     flash('Tool change time');
   };
 
+  const owned = new Set<MachineId>(cnc.machines ?? ALL_MACHINE_IDS);
+  const toggleMachine = (id: MachineId) => {
+    const next = new Set(owned);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    // Never let the shop own zero machines — a quote must have somewhere to run.
+    const list = ALL_MACHINE_IDS.filter((m) => next.has(m));
+    onSaveCnc({ machines: list.length ? list : [id] });
+    flash('Machine inventory');
+  };
+
   return (
     <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
       <div className="border-b border-border pb-4">
@@ -307,6 +319,47 @@ function EstimateTab({
             className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right font-mono focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </SettingField>
+      </div>
+
+      <div className="pt-6 border-t border-border space-y-3">
+        <div>
+          <h4 className="text-sm font-bold flex items-center gap-2"><Wrench size={15} className="text-primary" /> Machines on the floor</h4>
+          <p className="text-xs text-muted-foreground mt-1">
+            Tick the machines your shop actually runs. Each quote picks the best route <strong className="text-foreground">among these</strong> —
+            e.g. a round-bar part goes to a turn-mill (one op) rather than being hogged from a billet on a machining centre.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {ALL_MACHINE_IDS.map((id) => {
+            const spec = MACHINE_CATALOG[id];
+            const on = owned.has(id);
+            return (
+              <label
+                key={id}
+                className={cn(
+                  'flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors',
+                  on ? 'bg-primary/5 border-primary/30' : 'bg-background border-border hover:border-muted-foreground/40'
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => toggleMachine(id)}
+                  className="mt-0.5 accent-primary h-4 w-4 shrink-0"
+                />
+                <span className="min-w-0">
+                  <span className="text-sm font-semibold text-foreground flex items-center gap-2">
+                    {spec.name}
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
+                      {Math.round(spec.rateMultiplier * 100)}% rate
+                    </span>
+                  </span>
+                  <span className="block text-[11px] text-muted-foreground leading-snug mt-0.5">{spec.note}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
       </div>
 
       <div className="pt-6 border-t border-border flex items-center justify-between">

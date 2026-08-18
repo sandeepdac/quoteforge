@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateMilledCosts, contouredSetupCount, MilledMachiningInput, MilledProfile } from './milledEstimator';
+import { calculateMilledCosts, contouredSetupCount, toBarStockProfile, MilledMachiningInput, MilledProfile } from './milledEstimator';
 import { DEFAULT_SHOP_SETTINGS } from '../constants';
 
 // A 60×40×20 mm aluminium block with one open pocket (~12.5% removed), 1 setup.
@@ -333,5 +333,50 @@ describe('feature complexity (small-tool detail)', () => {
     // complexity charge rises only modestly, never unbounded.
     expect(cxOf(capped)).toBeGreaterThan(cxOf(moderate));
     expect(cxOf(capped)).toBeLessThan(cxOf(moderate) * 1.6);
+  });
+});
+
+describe('toBarStockProfile — mill-turn from round bar (points 1 & 2)', () => {
+  // A round-ish part that a mill-turn shop runs from bar, but which the prismatic
+  // path would otherwise price as a rectangular billet with several setups.
+  const billet: MilledProfile = {
+    stockMm: { x: 90, y: 45, z: 45 },
+    stockVolumeCm3: 182.25,
+    partVolumeCm3: 90,
+    removedVolumeCm3: 92.25,
+    surfaceAreaCm2: 220,
+    setupCount: 4,
+    pocketCount: 0,
+    bossCount: 2,
+    deepPocketCount: 0,
+    holeCount: 6,
+    sparseBillet: false,
+  };
+  const bar = toBarStockProfile(billet, 45, 2);
+
+  it('re-expresses the stock as round bar with collapsed setups', () => {
+    expect(bar.fromBarStock).toBe(true);
+    expect(bar.barDiameterMm).toBe(45);
+    expect(bar.setupCount).toBe(2);
+    expect(bar.setupCount).toBeLessThan(billet.setupCount);
+    // Round bar sized to the part holds less than the smallest block that contains it.
+    expect(bar.stockVolumeCm3).toBeLessThan(billet.stockVolumeCm3);
+    expect(bar.removedVolumeCm3).toBeLessThan(billet.removedVolumeCm3);
+    expect(bar.sparseBillet).toBe(false);
+  });
+
+  it('the mill-turn route costs less material and fewer setups than the billet route', () => {
+    const billetCost = calculateMilledCosts(input(billet), 1, false, 0.25, DEFAULT_SHOP_SETTINGS, 1.1);
+    const barCost = calculateMilledCosts(input(bar), 1, false, 0.25, DEFAULT_SHOP_SETTINGS, 1.35);
+    expect(barCost.fromBarStock).toBe(true);
+    expect(barCost.barDiameterMm).toBe(45);
+    expect(barCost.materialCost).toBeLessThan(billetCost.materialCost);
+    expect(barCost.setups).toBeLessThan(billetCost.setups);
+  });
+
+  it('at the same machine rate, the bar route is cheaper overall (isolates the route benefit)', () => {
+    const billetCost = calculateMilledCosts(input(billet), 1, false, 0.25, DEFAULT_SHOP_SETTINGS, 1.1);
+    const barSameRate = calculateMilledCosts(input(bar), 1, false, 0.25, DEFAULT_SHOP_SETTINGS, 1.1);
+    expect(barSameRate.subtotal).toBeLessThan(billetCost.subtotal);
   });
 });

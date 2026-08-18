@@ -1,4 +1,5 @@
 import { CncSettings, SecondaryOperation, ShopSettings, ShopTool } from './types';
+import { ALL_MACHINE_IDS } from './utils/machineSelection';
 
 /**
  * A shop's default finishing / inspection catalogue. These are the non-machining
@@ -66,6 +67,9 @@ export const DEFAULT_CNC_SETTINGS: CncSettings = {
   millSetupPerExtraOpMin: 45,
   programmingMinPerSetup: 25, // one-time CAM programming per setup (NRE; not on reorder)
   toolLibrary: DEFAULT_TURNING_TOOLS,
+  // Machines on the floor — defaults to the full catalog; a shop unchecks the
+  // machines it doesn't own so selection only compares what it actually runs.
+  machines: [...ALL_MACHINE_IDS],
 };
 
 export const DEFAULT_SHOP_SETTINGS: ShopSettings = {

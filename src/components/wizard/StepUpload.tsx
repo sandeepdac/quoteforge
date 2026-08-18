@@ -15,6 +15,7 @@ import {
 import { analyzeCadFile, ExtractedCadAnalysis, CadFileInput } from '../../utils/cadAnalyzer';
 import { solidFormatFor } from '../../utils/occtLoader';
 import { useQuotes } from '../../context/QuoteContext';
+import { useSettings } from '../../context/SettingsContext';
 import { materialFamilyFor } from '../../utils/materials';
 import { useMoney } from '../../utils/useMoney';
 
@@ -39,6 +40,7 @@ interface StepUploadProps {
 
 export default function StepUpload({ onContinue, onDataChange, data }: StepUploadProps) {
   const { materials } = useQuotes();
+  const { settings } = useSettings();
   const { symbol } = useMoney();
   const [uploadedFile, setUploadedFile] = useState<{ name: string; size: number; type: string } | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -50,7 +52,7 @@ export default function StepUpload({ onContinue, onDataChange, data }: StepUploa
   const processFile = async (input: CadFileInput) => {
     setAnalyzing(true);
     try {
-      const analysis = await analyzeCadFile(input);
+      const analysis = await analyzeCadFile(input, { machines: settings.cnc?.machines });
       setAnalysisResult(analysis);
       // Suggest the material the drawing/model named, matched by cutting-data FAMILY
       // (so "Aluminium 6082" finds the library's aluminium regardless of 6082/6061

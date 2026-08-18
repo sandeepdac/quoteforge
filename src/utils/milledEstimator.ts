@@ -17,6 +17,7 @@
  */
 import {
   BatchPricePoint,
+  CncSettings,
   CostLineItem,
   MachiningCosts,
   ShopSettings,
@@ -47,6 +48,15 @@ export interface MilledProfile {
   holeDiametersMm?: number[];
   /** Part fills a small fraction of its bbox → solid-billet cost is an upper bound. */
   sparseBillet?: boolean;
+  /**
+   * True when the stock is ROUND BAR (a mill-turn part) rather than a rectangular
+   * billet: `stockMm` then holds the bar as {⌀, ⌀, length} and `barDiameterMm` is
+   * the bar size. The part is turned to profile and milled with driven tools in
+   * one clamp, so far less material is removed and setups collapse.
+   */
+  fromBarStock?: boolean;
+  /** Round bar ⌀ (mm) when `fromBarStock` — the stock is bar, not a block. */
+  barDiameterMm?: number;
 }
 
 export interface MilledMachiningInput {
@@ -58,6 +68,57 @@ export interface MilledMachiningInput {
 }
 
 const STANDARD_BATCH_QTYS = [1, 5, 25, 100, 500];
+
+/**
+ * Re-express a prismatic (billet) profile as a MILL-TURN part cut from ROUND BAR.
+ *
+ * This is the client's actual workflow (points 1 & 2): a round-ish part isn't
+ * hogged out of a rectangular block on a machining centre — it's fed as round bar
+ * into a turn-mill, turned to its profile, and milled with driven tools in ONE
+ * clamp ("all faces in one operation"). Two things change versus the billet route:
+ *   • STOCK becomes round bar sized to the part (⌀ = `barDiameterMm`, length =
+ *     the part's longest dimension + facing/part-off). A bar removes far less
+ *     material than the smallest block that contains the part, so material and
+ *     roughing both drop.
+ *   • SETUPS collapse to what a mill-turn really needs (main collet, plus at most a
+ *     sub-spindle pick-off for back-face work) instead of one per tool-access
+ *     direction a 3-axis machining centre would re-fixture for.
+ *
+ * The pocket / boss / hole / surface-area drivers are unchanged — the driven-tool
+ * milling still has to cut them. (Roughing the bar→profile stock is still priced
+ * at the milling MRR here, which slightly overstates it: on a real turn-mill the
+ * OD is hogged by TURNING, which is faster. It stays conservative and is far
+ * closer than block-milling.)
+ */
+export function toBarStockProfile(
+  billet: MilledProfile,
+  barDiameterMm: number,
+  effectiveSetups: number,
+  cnc: CncSettings = DEFAULT_CNC_SETTINGS
+): MilledProfile {
+  const dia = Math.max(1, barDiameterMm);
+  // Bar axis length = the part's longest extent + facing both ends + part-off.
+  const longestMm = Math.max(billet.stockMm.x, billet.stockMm.y, billet.stockMm.z);
+  const barLenMm = longestMm + (cnc.facingAllowanceMm ?? 2) + (cnc.partingWidthMm ?? 3);
+  const barVolCm3 = ((Math.PI / 4) * dia * dia * barLenMm) / 1000;
+  const partVol = Math.max(0, billet.partVolumeCm3);
+  const setups = Math.max(1, Math.round(effectiveSetups || 1));
+  return {
+    ...billet,
+    // Represent the bar as a {⌀, ⌀, length} box so the cost model's footprint
+    // (⌀²) and min-dimension (⌀, the roughing-tool sizer) read correctly.
+    stockMm: { x: dia, y: dia, z: barLenMm },
+    stockVolumeCm3: Math.round(barVolCm3 * 10) / 10,
+    partVolumeCm3: partVol,
+    removedVolumeCm3: Math.round(Math.max(0, barVolCm3 - partVol) * 10) / 10,
+    setupCount: setups,
+    fromBarStock: true,
+    barDiameterMm: dia,
+    // Round bar IS the right stock now, so the solid-billet "sparse" warning
+    // no longer applies — the near-net over-hog it warned about is gone.
+    sparseBillet: false,
+  };
+}
 
 const COLORS: Record<string, string> = {
   material: '#0891b2',
@@ -426,7 +487,8 @@ export function calculateMilledCosts(
     removedVolumeCm3: r1(removedVol),
     buyToFlyRatio: Math.round(buyToFlyRatio * 100) / 100,
     nearNetStock,
-    barDiameterMm: 0,
+    fromBarStock: p.fromBarStock,
+    barDiameterMm: p.fromBarStock ? (p.barDiameterMm ?? 0) : 0,
     cycleTimeSec: Math.round(cycleTimeSec),
     setupTimeMin: r1(setupTimeMin),
     setups,

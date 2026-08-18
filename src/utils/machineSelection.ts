@@ -18,11 +18,21 @@
  *        • cross/milling features on a turned part want a TURN-MILL (one setup)
  *        • a prismatic part needing many tool-access directions is cheaper on a
  *          5-AXIS mill (fewer re-fixtures) than a 3-axis run in many setups
+ *        • a prismatic part with a ROUND-ish cross-section that fits the bar
+ *          capacity is made from ROUND BAR on a TURN-MILL — turned to profile
+ *          and milled with driven tools in ONE clamp ("all faces in one op"),
+ *          which is how a mill-turn shop actually cuts these parts.
  *
  * The recommendation carries a `rateMultiplier` so the choice actually moves the
  * quote — a turn-mill minute costs more than a sliding-head minute. Advisory
  * defaults; a shop tunes the catalog to its own machines and rates.
+ *
+ * A shop can also declare WHICH machines it owns (`ownedMachines`); the selector
+ * then only compares the machines actually on the floor — so "I have a 5-axis
+ * mill and a 5-axis turning centre, which is best for this part?" is answered
+ * against that real inventory, not a generic catalog.
  */
+import { nextStandardBar } from './materials';
 
 export type MachineId =
   | 'sliding-head'
@@ -30,6 +40,11 @@ export type MachineId =
   | 'turn-mill'
   | 'mill-3axis'
   | 'mill-5axis';
+
+/** Which machining route a part is costed on — bar (turn / mill-turn) or billet (mill). */
+export type MachiningRoute = 'turn' | 'mill' | 'mill-turn';
+/** The raw stock the chosen route buys. */
+export type StockForm = 'bar' | 'billet' | 'plate';
 
 export interface MachineSpec {
   id: MachineId;
@@ -62,7 +77,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
   'turn-mill': {
     id: 'turn-mill', name: 'Multi-Axis Turn-Mill Centre', kind: 'turn',
     liveTooling: true, maxTurnDiaMm: 65, barFed: true, axes: 5, rateMultiplier: 1.35,
-    note: 'Turning + milling in one setup (Y-axis, sub-spindle). Premium rate; earns it by eliminating a second op.',
+    note: 'Turning + milling in one setup (Y-axis, sub-spindle). Round bar, driven tools — hits every face in one op. Premium rate; earns it by eliminating setups and a second machine.',
   },
   'mill-3axis': {
     id: 'mill-3axis', name: '3-Axis Machining Centre', kind: 'mill',
@@ -76,6 +91,11 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
   },
 };
 
+/** All machine ids in catalog order — the default "owns everything" set. */
+export const ALL_MACHINE_IDS: MachineId[] = [
+  'sliding-head', 'cnc-lathe-2axis', 'turn-mill', 'mill-3axis', 'mill-5axis',
+];
+
 export interface MachineSelectionInput {
   isTurned: boolean;
   // Turned drivers
@@ -87,6 +107,16 @@ export interface MachineSelectionInput {
   setupCount?: number;
   pocketCount?: number;
   bossCount?: number;
+  /** Measured bounding box (mm) — lets a milled part be tested for round-bar fit. */
+  partDimsMm?: { x: number; y: number; z: number };
+  /** Finished part volume (cm³) — decides whether the cross-section is round (fits
+   *  a bar of its width) or square-cornered (needs a bar of its diagonal). */
+  partVolumeCm3?: number;
+  /**
+   * Machines the shop actually owns. When set, only these compete and the
+   * recommendation is the best AMONG THEM. Omit to consider the whole catalog.
+   */
+  ownedMachines?: MachineId[];
 }
 
 export interface MachineCandidate {
@@ -108,9 +138,81 @@ export interface MachineRecommendation {
   candidates: MachineCandidate[];
   /** Set when a chosen route implies a separate milling second-op. */
   secondOpNote?: string;
+  /** How the part is costed: turn / mill / mill-turn (round bar + driven tools). */
+  route: MachiningRoute;
+  /** Raw stock the route buys — bar (turn / mill-turn) or billet/plate (mill). */
+  stockForm: StockForm;
+  /** Round bar ⌀ (mm) when the route runs from bar — else undefined. */
+  barDiameterMm?: number;
+  /** Setups the chosen route actually needs (a mill-turn collapses many → 1–2). */
+  effectiveSetups?: number;
 }
 
 const SLENDER_WARN = 10; // L/D above which a guide bush (sliding-head) really helps
+const BAR_RADIAL_ALLOWANCE_MM = 2; // clean-up stock over the finished OD before the next bar size
+const BAR_CROSS_BALANCE_MIN = 0.55; // cross-section must be roughly round/square (not a flat plate) for bar work
+const BAR_CORNER_FILL = 1.05;       // cross fills ≤ this fraction of a ⌀=width cylinder → round enough to fit that bar
+
+/** Is a machine on the shop floor? (No inventory declared → the whole catalog.) */
+function ownsFn(owned?: MachineId[]) {
+  const set = owned && owned.length ? new Set(owned) : null;
+  return (id: MachineId) => (set ? set.has(id) : true);
+}
+
+/**
+ * Reduce a bounding box to a turning cross-section: the pair of dimensions most
+ * nearly equal is the diameter (round bar spans them); the remaining dimension is
+ * the length along the bar axis. Mirrors the turned/milled classifier so bar
+ * eligibility is consistent with how a part was classed.
+ */
+function crossSection(dims: { x: number; y: number; z: number }) {
+  const [a, b, c] = [dims.x, dims.y, dims.z].map((d) => Math.max(0, d)).sort((p, q) => q - p);
+  const pairs = [
+    { hi: a, lo: b, axis: c }, // longest two are the cross-section
+    { hi: a, lo: c, axis: b },
+    { hi: b, lo: c, axis: a }, // shortest two are the cross-section (a disc/puck)
+  ];
+  // The roundest cross-section is the pair whose two members are closest in size.
+  const best = pairs.reduce((m, p) => (p.hi > 0 && p.lo / p.hi > m.lo / m.hi ? p : m), pairs[0]);
+  const widthMm = best.hi;               // largest cross dimension
+  const balance = best.hi > 0 ? best.lo / best.hi : 0; // 1 = square/round cross-section
+  const diagonalMm = Math.sqrt(best.hi * best.hi + best.lo * best.lo);
+  return { widthMm, balance, diagonalMm, lengthMm: best.axis };
+}
+
+/** Can this milled part be made from round bar on a turn-mill? Full working. */
+function barFit(input: MachineSelectionInput) {
+  const dims = input.partDimsMm;
+  const tm = MACHINE_CATALOG['turn-mill'];
+  const cap = tm.maxTurnDiaMm ?? 0;
+  if (!dims) return null;
+  const cs = crossSection(dims);
+  if (cs.widthMm <= 0) return null;
+
+  // Is the cross-section round enough to sit inside a bar of its WIDTH, or does it
+  // have square corners that would need a bar of its DIAGONAL? Judge from how full
+  // the solid is relative to a cylinder of ⌀=width: a turned/round cross-section
+  // fills ≲ π/4 of the width-box, a square-cornered block fills more.
+  const cylOfWidthCm3 = (Math.PI / 4) * cs.widthMm * cs.widthMm * cs.lengthMm / 1000;
+  const cylFill = cylOfWidthCm3 > 0 && (input.partVolumeCm3 ?? 0) > 0
+    ? (input.partVolumeCm3 as number) / cylOfWidthCm3
+    : 0.7; // unknown volume → assume round-ish (fits the width bar)
+  const roundEnough = cylFill <= BAR_CORNER_FILL;
+  const containDiaMm = roundEnough ? cs.widthMm : cs.diagonalMm;
+
+  const barDiameterMm = nextStandardBar(containDiaMm + 2 * BAR_RADIAL_ALLOWANCE_MM);
+  const fitsCapacity = barDiameterMm <= cap;
+  const barLike = cs.balance >= BAR_CROSS_BALANCE_MIN;
+  return {
+    ...cs,
+    barDiameterMm,
+    containDiaMm,
+    fitsCapacity,
+    barLike,
+    cap,
+    eligible: fitsCapacity && barLike,
+  };
+}
 
 /** Pick the most efficient capable machine for a part, with reasoning. */
 export function selectMachine(input: MachineSelectionInput): MachineRecommendation {
@@ -118,6 +220,7 @@ export function selectMachine(input: MachineSelectionInput): MachineRecommendati
 }
 
 function selectTurningMachine(input: MachineSelectionInput): MachineRecommendation {
+  const owns = ownsFn(input.ownedMachines);
   const od = Math.max(0, input.odMm ?? input.barDiameterMm ?? 0);
   const bar = Math.max(od, input.barDiameterMm ?? od);
   const len = Math.max(0, input.lengthMm ?? 0);
@@ -159,7 +262,7 @@ function selectTurningMachine(input: MachineSelectionInput): MachineRecommendati
   let recommended: MachineId;
   let secondOpNote: string | undefined;
 
-  if (fitsSliding) {
+  if (fitsSliding && owns('sliding-head')) {
     // Small bar-fed work — the sliding-head is the cheapest route and has driven
     // tools, so it also covers cross-features in-cycle.
     recommended = 'sliding-head';
@@ -168,9 +271,9 @@ function selectTurningMachine(input: MachineSelectionInput): MachineRecommendati
     if (cross) reasons.push(`Cross-features are cut in-cycle with the machine's driven tools — no separate operation.`);
   } else if (cross) {
     // Larger part with off-axis features → wants live tooling on a bigger machine.
-    if (fitsTurnMill) {
+    if (fitsTurnMill && owns('turn-mill')) {
       recommended = 'turn-mill';
-      reasons.push(`Too large for a sliding-head (⌀${bar.toFixed(0)} > ${sh.maxTurnDiaMm} mm) and has cross/milling features → a turn-mill does turning + milling in one setup, avoiding a second op.`);
+      reasons.push(`${owns('sliding-head') ? `Too large for a sliding-head (⌀${bar.toFixed(0)} > ${sh.maxTurnDiaMm} mm) and has` : 'Has'} cross/milling features → a turn-mill does turning + milling in one setup, avoiding a second op.`);
     } else {
       recommended = 'cnc-lathe-2axis';
       reasons.push(`⌀${od.toFixed(0)} exceeds turn-mill capacity — turn on a 2-axis lathe, then a separate milling op for the cross-features.`);
@@ -178,8 +281,8 @@ function selectTurningMachine(input: MachineSelectionInput): MachineRecommendati
     }
   } else {
     // Larger plain-turned part → the simplest, cheapest lathe that fits.
-    recommended = fits2Axis ? 'cnc-lathe-2axis' : 'turn-mill';
-    reasons.push(fits2Axis
+    recommended = fits2Axis && owns('cnc-lathe-2axis') ? 'cnc-lathe-2axis' : 'turn-mill';
+    reasons.push(fits2Axis && owns('cnc-lathe-2axis')
       ? `Larger plain-turned part (⌀${od.toFixed(0)}) with no off-axis features → a 2-axis lathe is the simplest, lowest-rate machine that fits.`
       : `⌀${od.toFixed(0)} exceeds standard swing — route to the larger-capacity turn-mill.`);
   }
@@ -187,16 +290,36 @@ function selectTurningMachine(input: MachineSelectionInput): MachineRecommendati
   const spec = MACHINE_CATALOG[recommended];
   return {
     recommended, recommendedName: spec.name, rateMultiplier: spec.rateMultiplier,
-    reasons, candidates, secondOpNote,
+    reasons, candidates: filterOwned(candidates, input.ownedMachines, recommended),
+    secondOpNote,
+    route: 'turn', stockForm: 'bar', barDiameterMm: input.barDiameterMm,
+    effectiveSetups: cross ? 2 : 1,
   };
 }
 
 function selectMillingMachine(input: MachineSelectionInput): MachineRecommendation {
+  const owns = ownsFn(input.ownedMachines);
   const setups = Math.max(1, input.setupCount ?? 1);
   const m3 = MACHINE_CATALOG['mill-3axis'];
   const m5 = MACHINE_CATALOG['mill-5axis'];
+  const tm = MACHINE_CATALOG['turn-mill'];
 
-  const candidates: MachineCandidate[] = [
+  const fit = barFit(input);
+  const millTurnOwned = owns('turn-mill');
+
+  const candidates: MachineCandidate[] = [];
+  // Turn-mill from bar is only a candidate when we could measure the part.
+  if (fit) {
+    candidates.push({
+      id: tm.id, name: tm.name, capable: fit.eligible,
+      reason: fit.eligible
+        ? `Round cross-section ⌀${fit.widthMm.toFixed(0)} → ⌀${fit.barDiameterMm} bar (≤ ${fit.cap} mm capacity); turned to profile and milled with driven tools in one clamp.`
+        : !fit.barLike
+          ? `Flat/slab cross-section (${Math.round(fit.balance * 100)}% square) — not round-bar work; belongs on a machining centre.`
+          : `Needs ⌀${fit.barDiameterMm} bar > ${fit.cap} mm turn-mill capacity — too large for bar work.`,
+    });
+  }
+  candidates.push(
     {
       id: m3.id, name: m3.name, capable: true,
       reason: setups <= 3
@@ -209,22 +332,71 @@ function selectMillingMachine(input: MachineSelectionInput): MachineRecommendati
         ? `Reaches the ${setups} feature directions in one or two clamps — far fewer setups.`
         : `Overkill for ${setups} setup${setups === 1 ? '' : 's'} — the premium rate isn't repaid here.`,
     },
-  ];
+  );
 
   const reasons: string[] = [];
   let recommended: MachineId;
-  if (setups >= 4) {
+  let route: MachiningRoute = 'mill';
+  let stockForm: StockForm = 'billet';
+  let barDiameterMm: number | undefined;
+  let effectiveSetups = setups;
+
+  if (fit && fit.eligible && millTurnOwned) {
+    // The client's real workflow: round bar on a mill-turn, all faces in one op.
+    recommended = 'turn-mill';
+    route = 'mill-turn';
+    stockForm = 'bar';
+    barDiameterMm = fit.barDiameterMm;
+    effectiveSetups = setups >= 3 ? 2 : 1; // main collet + (a sub-spindle pick-off for back-face work)
+    reasons.push(`Round-ish cross-section (⌀${fit.widthMm.toFixed(0)}, ${Math.round(fit.balance * 100)}% square) fits ⌀${fit.barDiameterMm} bar within the turn-mill's ${fit.cap} mm capacity → made from ROUND BAR, not a solid billet.`);
+    reasons.push(`Turned to profile then milled with driven tools in ${effectiveSetups === 1 ? 'a single clamp' : 'one clamp plus a sub-spindle pick-off'} — all faces in one operation, replacing the ${setups} re-clamp${setups === 1 ? '' : 's'} a machining centre would need.`);
+    reasons.push(`Round bar sized to the part (⌀${fit.barDiameterMm}) removes far less material than hogging the part out of a rectangular block.`);
+  } else if (setups >= 4 && owns('mill-5axis')) {
     recommended = 'mill-5axis';
     reasons.push(`Features are approached from ${setups} directions — on a 3-axis that's ${setups} re-fixtures. A 5-axis reaches them in one or two clamps, so the higher rate is repaid by far fewer setups.`);
-  } else {
+    effectiveSetups = 2;
+    if (fit && !fit.eligible && fit.barLike) reasons.push(`Too large for the turn-mill's ${fit.cap} mm bar capacity (needs ⌀${fit.barDiameterMm}), so it stays on a machining centre.`);
+  } else if (owns('mill-3axis')) {
     recommended = 'mill-3axis';
     reasons.push(`Features are reachable in ${setups} setup${setups === 1 ? '' : 's'} — a 3-axis machining centre is the lowest-cost route.`);
+    if (fit && !fit.eligible && !fit.barLike) reasons.push(`Its flat/slab cross-section isn't round-bar work, so a turn-mill doesn't apply.`);
+  } else if (owns('mill-5axis')) {
+    recommended = 'mill-5axis';
+    reasons.push(`Routed to the 5-axis machining centre (no 3-axis on the floor).`);
+    effectiveSetups = 2;
+  } else if (fit && fit.eligible && millTurnOwned) {
+    recommended = 'turn-mill';
+  } else {
+    // Nothing suitable owned — fall back to the generic best so the quote still prices.
+    recommended = setups >= 4 ? 'mill-5axis' : 'mill-3axis';
+    reasons.push(`Features are reachable in ${setups} setup${setups === 1 ? '' : 's'}.`);
   }
-  if ((input.pocketCount ?? 0) > 0) reasons.push(`${input.pocketCount} pocket(s) roughed and finished on the machining centre.`);
+
+  if ((input.pocketCount ?? 0) > 0 && route === 'mill') {
+    reasons.push(`${input.pocketCount} pocket(s) roughed and finished on the machining centre.`);
+  }
 
   const spec = MACHINE_CATALOG[recommended];
   return {
     recommended, recommendedName: spec.name, rateMultiplier: spec.rateMultiplier,
-    reasons, candidates,
+    reasons, candidates: filterOwned(candidates, input.ownedMachines, recommended),
+    route, stockForm, barDiameterMm, effectiveSetups,
   };
+}
+
+/**
+ * Show the bake-off among the machines the shop actually owns. When an inventory
+ * is declared we hide machines that aren't on the floor (they can't win), but we
+ * always keep the recommended machine visible even if the caller passed an
+ * inconsistent inventory.
+ */
+function filterOwned(
+  candidates: MachineCandidate[],
+  owned: MachineId[] | undefined,
+  recommended: MachineId
+): MachineCandidate[] {
+  if (!owned || !owned.length) return candidates;
+  const set = new Set(owned);
+  const kept = candidates.filter((c) => set.has(c.id) || c.id === recommended);
+  return kept.length ? kept : candidates;
 }

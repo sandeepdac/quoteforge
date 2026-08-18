@@ -13,8 +13,8 @@ import { analyzeCncDfm } from './dfmCnc';
 import { classifyPart, PartClass } from './partClass';
 import { computeStock } from './cncEstimator';
 import { TurningProfile } from './turning';
-import { MilledProfile, contouredSetupCount } from './milledEstimator';
-import { selectMachine, MachineRecommendation } from './machineSelection';
+import { MilledProfile, contouredSetupCount, toBarStockProfile } from './milledEstimator';
+import { selectMachine, MachineRecommendation, MachineId } from './machineSelection';
 import { materialPropsFor, milledBilletMm, nextStandardBar } from './materials';
 import { extractTurnedProfile, arrayBufferToBase64, GeometryResult } from './geometryService';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
@@ -139,14 +139,21 @@ export function stripCadForStorage(a: ExtractedCadAnalysis): ExtractedCadAnalysi
  *   • 2D drawings (PDF/PNG/JPG)  → read dimensions with AI vision
  *   • anything else / failures   → honest manual-entry state (never fabricated data)
  */
-export async function analyzeCadFile(file: CadFileInput): Promise<ExtractedCadAnalysis> {
+/** Extra context for analysis — e.g. the machines the shop owns, so a part can be
+ *  routed to a turn-mill (round bar) only when the shop actually has one. */
+export interface AnalyzeOptions {
+  /** Machines on the shop floor; omitted → the whole catalog is considered. */
+  machines?: MachineId[];
+}
+
+export async function analyzeCadFile(file: CadFileInput, opts: AnalyzeOptions = {}): Promise<ExtractedCadAnalysis> {
   const fileName = file.name || 'part.step';
   const solidFormat = solidFormatFor(fileName) ?? (file.fileType === 'STEP' ? 'step' : null);
   const isPdf = /\.pdf$/i.test(fileName) || file.fileType === 'PDF';
   const isImage = /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(fileName) || file.fileType === 'IMAGE';
 
   if (solidFormat) {
-    return analyzeSolid(file, fileName, solidFormat);
+    return analyzeSolid(file, fileName, solidFormat, opts);
   }
 
   if (isPdf || isImage) {
@@ -164,7 +171,8 @@ export async function analyzeCadFile(file: CadFileInput): Promise<ExtractedCadAn
 async function analyzeSolid(
   file: CadFileInput,
   fileName: string,
-  format: 'step' | 'iges' | 'brep'
+  format: 'step' | 'iges' | 'brep',
+  opts: AnalyzeOptions = {}
 ): Promise<ExtractedCadAnalysis> {
   // STEP is ASCII, so we can also mine topology (holes/bends/material) from the text.
   let stepResult: StepParseResult | null = null;
@@ -357,12 +365,14 @@ async function analyzeSolid(
     }
     // A part that fills only a small fraction of its bounding box is not made
     // from a solid billet — the solid-billet cost is an upper bound, not a quote.
-    const sparseBillet = !!milledProfile?.sparseBillet;
+    // (Refreshed after the mill-turn transform below, which clears it for bar stock.)
+    let sparseBillet = !!milledProfile?.sparseBillet;
 
     // Setups: single op for a plain turned part; a second op (back-face /
     // turn-around) when off-axis features exist. Milled parts use the access-
-    // direction count from the geometry analysis.
-    const setups = milledProfile ? Math.max(1, milledProfile.setupCount) : (crossFeatures ? 2 : 1);
+    // direction count from the geometry analysis. (Refreshed after a mill-turn
+    // transform collapses them to what a turn-mill actually needs.)
+    let setups = milledProfile ? Math.max(1, milledProfile.setupCount) : (crossFeatures ? 2 : 1);
 
     // Stock (next standard bar) and material yield (buy-to-fly).
     const { barDiameterMm, stockVolumeCm3: stockVol } = computeStock(turningProfile, DEFAULT_CNC_SETTINGS);
@@ -370,7 +380,9 @@ async function analyzeSolid(
     const buyToFlyRatio = stockVol > 0 ? Math.round((volumeCm3 / stockVol) * 100) / 100 : 0;
 
     // Machine selection — the most efficient machine (sliding-head / 2-axis /
-    // turn-mill / mill) that can make this part, and why.
+    // turn-mill / mill) that can make this part, and why. For a milled part we
+    // also pass the measured box + volume so it can test round-bar fit and route
+    // suitable parts to a turn-mill (round bar, one op) among the shop's machines.
     const machineRecommendation = selectMachine({
       isTurned,
       odMm: diameterMm,
@@ -380,7 +392,31 @@ async function analyzeSolid(
       setupCount: milledProfile?.setupCount,
       pocketCount: milledProfile?.pocketCount,
       bossCount: milledProfile?.bossCount,
+      partDimsMm: { x: meas.lengthMm, y: meas.widthMm, z: meas.heightMm },
+      partVolumeCm3: volumeCm3,
+      ownedMachines: opts.machines,
     });
+
+    // MILL-TURN: when the chosen route runs from round bar, re-express the milled
+    // profile as bar stock (⌀ + length) with collapsed setups. This is what makes
+    // a round-ish part priced as "round bar, all faces in one op" rather than
+    // hogged out of a rectangular billet on a machining centre.
+    if (
+      milledProfile &&
+      machineRecommendation.route === 'mill-turn' &&
+      machineRecommendation.barDiameterMm
+    ) {
+      milledProfile = toBarStockProfile(
+        milledProfile,
+        machineRecommendation.barDiameterMm,
+        machineRecommendation.effectiveSetups ?? 1,
+        DEFAULT_CNC_SETTINGS
+      );
+      // Bar is the right stock now: setups collapse and the sparse-billet warning
+      // (which only applied to hogging a solid block) no longer holds.
+      setups = Math.max(1, milledProfile.setupCount);
+      sparseBillet = false;
+    }
 
     // Sheet-metal concepts don't apply to machined parts.
     const formedPart = false;
@@ -454,7 +490,9 @@ async function analyzeSolid(
               ? `Prismatic / MILLED part (${Math.round(milledConfidence * 100)}% confidence). ${pcReason}`
               : `Prismatic / MILLED part (bbox approximation). ${pcReason}`,
             milledProfile
-              ? `Billet ${milledProfile.stockMm.x}×${milledProfile.stockMm.y}×${milledProfile.stockMm.z} mm — ${milledProfile.removedVolumeCm3.toFixed(1)} cm³ removed (yield ${Math.round((milledProfile.partVolumeCm3 / Math.max(0.01, milledProfile.stockVolumeCm3)) * 100)}%).`
+              ? milledProfile.fromBarStock
+                ? `Round bar ⌀${milledProfile.barDiameterMm} × ${Math.round(Math.max(milledProfile.stockMm.x, milledProfile.stockMm.y, milledProfile.stockMm.z))} mm on a turn-mill — ${milledProfile.removedVolumeCm3.toFixed(1)} cm³ removed (yield ${Math.round((milledProfile.partVolumeCm3 / Math.max(0.01, milledProfile.stockVolumeCm3)) * 100)}%). Turned to profile + driven-tool milling in ${setups === 1 ? 'one clamp' : `${setups} clamps`}.`
+                : `Billet ${milledProfile.stockMm.x}×${milledProfile.stockMm.y}×${milledProfile.stockMm.z} mm — ${milledProfile.removedVolumeCm3.toFixed(1)} cm³ removed (yield ${Math.round((milledProfile.partVolumeCm3 / Math.max(0.01, milledProfile.stockVolumeCm3)) * 100)}%).`
               : '',
             milledProfile
               ? `${setups} setup${setups === 1 ? '' : 's'} (distinct tool-access directions), ${milledProfile.pocketCount} pocket${milledProfile.pocketCount === 1 ? '' : 's'}${milledProfile.deepPocketCount > 0 ? ` (${milledProfile.deepPocketCount} deep)` : ''}, ${milledProfile.holeCount} hole${milledProfile.holeCount === 1 ? '' : 's'}. Setups are the biggest cost lever.`
