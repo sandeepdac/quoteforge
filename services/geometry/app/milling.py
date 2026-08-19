@@ -151,6 +151,42 @@ def analyze_milling(shape) -> dict:
     # is often several coaxial faces (counterbore + through + tap ⌀), so these are
     # grouped into distinct hole FEATURES below rather than counted face-by-face.
     hole_cyls: List[tuple] = []
+    # External cylinders as (axis, point-on-axis, radius, wrap): round bosses.
+    boss_cyls: List[tuple] = []
+
+    # External cylindrical features — round bosses / spigots / pads standing
+    # proud of the stock. These are NOT holes (material lies inside them, not
+    # outside), so hole detection rightly ignores them — but nothing else looked
+    # at them either, because the boss test only ever examined PLANAR faces. A
+    # ⌀21 x 9 mm spigot therefore cost nothing at all on part 031167-A, even
+    # though the cutter has to profile all the way around it.
+    #
+    # Decided geometrically rather than from the face's orientation flag: step a
+    # little way RADIALLY OUTWARD from the surface and ask the solid whether that
+    # point is inside it. Material outside → hole; material inside → boss.
+    boss_test_classifier = BRepClass3d_SolidClassifier(shape)
+
+    def _cylinder_has_material_outside(face, ad, axis: np.ndarray, radius: float) -> bool:
+        try:
+            u0, u1, v0, v1 = BRepTools.UVBounds_s(face)
+            surf_pt = _np(ad.Value(0.5 * (u0 + u1), 0.5 * (v0 + v1)))
+            loc = _np(ad.Cylinder().Axis().Location())
+            radial = surf_pt - loc
+            radial = radial - float(np.dot(radial, axis)) * axis  # drop the axial part
+            n = float(np.linalg.norm(radial))
+            if n < 1e-9:
+                return False
+            radial = radial / n
+            # Far enough out to clear surface tolerance, small enough to stay in
+            # the wall rather than punching through a thin one.
+            eps = max(0.05, min(0.25, 0.05 * radius))
+            probe = surf_pt + radial * eps
+            boss_test_classifier.Perform(gp_Pnt(float(probe[0]), float(probe[1]), float(probe[2])), 1e-7)
+            return boss_test_classifier.State() == TopAbs_IN
+        except Exception:
+            # Fall back to the old convention rather than losing the face entirely.
+            return face.Orientation() == TopAbs_REVERSED
+
     fexp = TopExp_Explorer(shape, TopAbs_FACE)
     while fexp.More():
         face = TopoDS.Face_s(fexp.Current())
@@ -168,6 +204,8 @@ def analyze_milling(shape) -> dict:
             # A hole/bore is an INTERNAL cylinder (material outside → the face is
             # REVERSED) of modest radius. Convex external rounds/fillets — which
             # inflate a naive cylinder count — are FORWARD and are excluded.
+            # (Verified against a geometric inside/outside probe: the orientation
+            # flag and the probe agree, so the cheap flag is kept.)
             r = ad.Cylinder().Radius()
             if face.Orientation() == TopAbs_REVERSED and r <= 0.4 * max(diag, 1.0):
                 loc = ad.Cylinder().Axis().Location()
@@ -178,7 +216,18 @@ def analyze_milling(shape) -> dict:
                 # hole — the NIST CTC-01 benchmark reported 36 holes instead of 10.
                 u0, u1, _v0, _v1 = BRepTools.UVBounds_s(face)
                 hole_axes.append(ax)
-                hole_cyls.append((ax, np.array([loc.X(), loc.Y(), loc.Z()]), r, abs(u1 - u0)))
+                # For a cylinder the V parameter runs ALONG the axis, so this is
+                # the face's axial extent — which tells us whether the feature
+                # breaks out of the part (through) or stops inside it (blind).
+                base_ax = float(np.dot(np.array([loc.X(), loc.Y(), loc.Z()]), ax))
+                hole_cyls.append((ax, np.array([loc.X(), loc.Y(), loc.Z()]), r, abs(u1 - u0),
+                                  base_ax + min(_v0, _v1), base_ax + max(_v0, _v1)))
+            elif r <= 0.5 * max(diag, 1.0) and not _cylinder_has_material_outside(face, ad, ax, r):
+                # Material INSIDE the cylinder → a round boss / spigot standing
+                # proud, which the cutter still has to profile around.
+                loc2 = ad.Cylinder().Axis().Location()
+                u0, u1, _v0, _v1 = BRepTools.UVBounds_s(face)
+                boss_cyls.append((ax, np.array([loc2.X(), loc2.Y(), loc2.Z()]), r, abs(u1 - u0)))
         fexp.Next()
 
     def _fid(f) -> int:
@@ -339,23 +388,45 @@ def analyze_milling(shape) -> dict:
     # faces would triple-count it and massively over-state drilling time. Two
     # cylinders belong to the same hole when their axes are parallel AND lie on the
     # same line (perpendicular offset ≈ 0).
+    # Coaxial faces are grouped twice over, and the distinction matters:
+    #
+    #   • Same axis line AND same ⌀  → the same cylindrical surface split into
+    #     halves by the modeller. One operation.
+    #   • Same axis line, DIFFERENT ⌀ → a STEPPED hole: a drill with a
+    #     counterbore/spotface over it, or a bore opening out a pilot. That is
+    #     TWO operations with two tools, not one.
+    #
+    # Collapsing the second case to the largest ⌀ (what this used to do) threw
+    # away the smaller drill entirely: part 031167-A's four ⌀8 counterbores each
+    # sat over a ⌀4.5 through-hole, and only the ⌀8 was ever costed.
     hole_groups: List[dict] = []
-    for ax, pt, r, span in hole_cyls:
+    for ax, pt, r, span, a_lo, a_hi in hole_cyls:
         placed = False
         for g in hole_groups:
             if abs(float(np.dot(ax, g["axis"]))) > 0.98:
                 d = pt - g["point"]
                 perp = d - float(np.dot(d, g["axis"])) * g["axis"]
                 if float(np.linalg.norm(perp)) < 0.25:  # mm — same axis line
+                    # Same ⌀ (within a hair) → the same surface; otherwise a step.
+                    step = next((st for st in g["steps"] if abs(st["radius"] - r) < 0.05), None)
+                    if step is None:
+                        g["steps"].append({"radius": r, "span": span, "faces": 1})
+                    else:
+                        step["span"] += span
+                        step["faces"] += 1
                     g["maxRadius"] = max(g["maxRadius"], r)
                     g["minRadius"] = min(g["minRadius"], r)
                     g["span"] += span
                     g["faces"] += 1
+                    g["axLo"] = min(g["axLo"], a_lo)
+                    g["axHi"] = max(g["axHi"], a_hi)
                     placed = True
                     break
         if not placed:
             hole_groups.append({"axis": ax, "point": pt, "maxRadius": r,
-                                "minRadius": r, "span": span, "faces": 1})
+                                "minRadius": r, "span": span, "faces": 1,
+                                "axLo": a_lo, "axHi": a_hi,
+                                "steps": [{"radius": r, "span": span, "faces": 1}]})
 
     # Which circular features are real machining operations?
     #
@@ -387,22 +458,89 @@ def analyze_milling(shape) -> dict:
                      if _is_real_circular_feature(g) and g["span"] < 0.85 * FULL_TURN]
     hole_groups = [g for g in hole_groups if _is_real_circular_feature(g)]
 
-    n_holes = len(hole_groups)
-    # Largest ⌀ per hole — lets the estimator tell a drilled hole from a milled bore.
-    hole_diameters = sorted((round(2.0 * g["maxRadius"], 3) for g in hole_groups), reverse=True)
+    # One machining operation per distinct coaxial ⌀ — a stepped hole is a drill
+    # PLUS a counterbore, each with its own tool and its own cycle time. A step
+    # only counts if it is a real surface in its own right (same wrap test), so a
+    # chamfer ring or a blend does not become a phantom operation.
+    def _real_steps(g: dict) -> List[dict]:
+        return [st for st in g.get("steps", [])
+                if st["span"] >= 0.85 * FULL_TURN
+                or (st["span"] >= PARTIAL_MIN_WRAP and 2.0 * st["radius"] > corner_dia_max)]
+
+    hole_diameters: List[float] = []
+    stepped_holes = 0
+    for g in hole_groups:
+        steps = _real_steps(g) or [{"radius": g["maxRadius"]}]
+        if len(steps) > 1:
+            stepped_holes += 1
+        for st in steps:
+            hole_diameters.append(round(2.0 * st["radius"], 3))
+    hole_diameters.sort(reverse=True)
+    # Distinct circular operations, counterbores included.
+    n_holes = len(hole_diameters)
     # Open / partial circular features: milled by interpolation, never drilled.
     partial_bore_diameters = sorted((round(2.0 * g["maxRadius"], 3) for g in partial_bores),
                                     reverse=True)
-    # Only genuine holes should drive re-fixturing decisions.
+    # Only genuine holes should drive re-fixturing decisions (one axis per hole,
+    # not one per step — a counterbore shares its drill's axis).
     hole_axes = [g["axis"] for g in hole_groups]
 
-    # Hole access directions (both senses are the same fixturing). These are TOOL
-    # AXES: a hole is only producible along its own axis, so an angled one is a
-    # genuine extra setup rather than something an existing axis can reach.
-    for ax in hole_axes:
-        if (_cluster_direction(tool_access_dirs, ax) < 0
-                and _cluster_direction(tool_access_dirs, -ax) < 0):
-            tool_access_dirs.append(ax)
+    # --- Round bosses / spigots (external cylinders) ------------------------
+    # Grouped the same way, so a spigot split into halves counts once.
+    boss_groups: List[dict] = []
+    for ax, pt, r, span in boss_cyls:
+        placed = False
+        for g in boss_groups:
+            if abs(float(np.dot(ax, g["axis"]))) > 0.98:
+                d = pt - g["point"]
+                perp = d - float(np.dot(d, g["axis"])) * g["axis"]
+                if float(np.linalg.norm(perp)) < 0.25 and abs(g["radius"] - r) < 0.05:
+                    g["span"] += span
+                    placed = True
+                    break
+        if not placed:
+            boss_groups.append({"axis": ax, "point": pt, "radius": r, "span": span})
+    # A real spigot wraps most of the way round and is big enough to profile
+    # around; small external radii are just corner rounds on the outside profile.
+    round_bosses = [g for g in boss_groups
+                    if g["span"] >= 0.85 * FULL_TURN and 2.0 * g["radius"] > corner_dia_max]
+    round_boss_diameters = sorted((round(2.0 * g["radius"], 3) for g in round_bosses), reverse=True)
+    # A round spigot is an island to profile around exactly like a planar boss,
+    # so it joins the boss count that drives the small-tool complexity derate.
+    boss_count += len(round_bosses)
+
+    # Hole access directions. These are TOOL AXES: a hole is only producible
+    # along its own axis, so an angled one is a genuine extra setup rather than
+    # something an existing axis can reach.
+    #
+    # Which SENSE matters depends on whether the hole breaks through:
+    #   • A THROUGH hole can be drilled from either end, so it does not by itself
+    #     force a particular orientation — one direction, either sense.
+    #   • A BLIND hole or counterbore only opens on ONE face. Two blind features
+    #     opening on OPPOSITE faces mean the part must be turned over: two
+    #     setups. Treating both senses as one direction (what this used to do)
+    #     hid that flip — part 031167-A has a blind ⌀10.7 bore on top and four
+    #     ⌀8 counterbores underneath, and reported a single setup.
+    corners = [np.array([x, y, z]) for x in (xmin, xmax) for y in (ymin, ymax) for z in (zmin, zmax)]
+
+    def _opening_senses(g: dict) -> List[np.ndarray]:
+        ax = g["axis"]
+        proj = [float(np.dot(c, ax)) for c in corners]
+        part_lo, part_hi = min(proj), max(proj)
+        breaks_hi = (part_hi - g["axHi"]) <= tol_len   # reaches the +axis face
+        breaks_lo = (g["axLo"] - part_lo) <= tol_len   # reaches the -axis face
+        if breaks_hi and breaks_lo:
+            return [ax]              # through — either end will do
+        if breaks_hi:
+            return [ax]              # opens on the +axis face
+        if breaks_lo:
+            return [-ax]             # opens on the -axis face
+        return [ax]                  # fully internal (rare) — don't force a flip
+
+    for g in hole_groups:
+        for d in _opening_senses(g):
+            if _cluster_direction(tool_access_dirs, d) < 0:
+                tool_access_dirs.append(d)
 
     # Rule 1: setups = distinct access directions, at least 1 (top facing).
     #
@@ -546,6 +684,11 @@ def analyze_milling(shape) -> dict:
         "holeDiametersMm": hole_diameters,
         # Open/partial circular features (milled by interpolation, not drilled).
         "partialBoreDiametersMm": partial_bore_diameters,
+        # Holes that carry a counterbore/step (drill + counterbore = 2 tools).
+        "steppedHoleCount": stepped_holes,
+        # Round bosses / spigots the cutter must profile around.
+        "roundBossCount": len(round_bosses),
+        "roundBossDiametersMm": round_boss_diameters,
         "roundFaceCount": n_cyl,
         "sparseBillet": sparse_billet,
         "concaveEdges": concave_edges,

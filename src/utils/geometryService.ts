@@ -34,6 +34,11 @@ export interface GeometryMilled {
   absorbedFaceDirections?: Array<{ dir: number[]; offAxisDeg: number }>;
   /** Open/partial circular features — milled by interpolation, never drilled. */
   partialBoreDiametersMm?: number[];
+  /** Holes carrying a counterbore/step — drill PLUS counterbore, two tools. */
+  steppedHoleCount?: number;
+  /** Round bosses / spigots (external cylinders) the cutter profiles around. */
+  roundBossCount?: number;
+  roundBossDiametersMm?: number[];
   pocketCount: number;
   bossCount: number;
   deepPocketCount: number;

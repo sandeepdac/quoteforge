@@ -634,6 +634,29 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                 </div>
               )}
 
+              {((mp.steppedHoleCount ?? 0) > 0 || (mp.roundBossDiametersMm?.length ?? 0) > 0) && (
+                <div className="flex gap-2 bg-accent/40 border border-border rounded-md p-2.5">
+                  <Info size={14} className="text-muted-foreground shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    {(mp.steppedHoleCount ?? 0) > 0 && (
+                      <>
+                        <strong className="text-foreground">{mp.steppedHoleCount} counterbored / stepped hole{mp.steppedHoleCount === 1 ? '' : 's'}</strong>
+                        {' '}— each is a drill <em>and</em> a counterbore, costed as two operations.{' '}
+                      </>
+                    )}
+                    {(mp.roundBossDiametersMm?.length ?? 0) > 0 && (
+                      <>
+                        <strong className="text-foreground">
+                          {mp.roundBossDiametersMm!.length} round spigot{mp.roundBossDiametersMm!.length === 1 ? '' : 's'}
+                          {' '}(⌀{mp.roundBossDiametersMm!.map((d) => d.toFixed(1)).join(', ⌀')} mm)
+                        </strong>
+                        {' '}— external bosses the cutter profiles around, not bores.
+                      </>
+                    )}
+                  </p>
+                </div>
+              )}
+
               {(mp.partialBoreDiametersMm?.length ?? 0) > 0 && (
                 <div className="flex gap-2 bg-accent/40 border border-border rounded-md p-2.5">
                   <Info size={14} className="text-muted-foreground shrink-0 mt-0.5" />

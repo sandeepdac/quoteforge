@@ -343,6 +343,8 @@ async function analyzeSolid(
           angledSetups: mm.angledSetups,
           angledToolAxisDegs: (mm.angledToolAxes ?? []).map((a) => a.offAxisDeg),
           partialBoreDiametersMm: mm.partialBoreDiametersMm,
+          steppedHoleCount: mm.steppedHoleCount,
+          roundBossDiametersMm: mm.roundBossDiametersMm,
         };
         // A contoured part is re-clamped to finish curved faces from more angles
         // than its geometric access-direction count — floor the setups upward.

@@ -87,6 +87,33 @@ def build(outdir):
     strt = BRepAlgoAPI_Cut(strt, BRepPrimAPI_MakeBox(gp_Pnt(15, 15, 22), 30, 30, 20).Shape()).Shape()
     strt = BRepAlgoAPI_Cut(strt, cyl(3, 120, x=8, y=30, z=-5, dx=0, dy=0, dz=1)).Shape()
     paths["straight"] = write(strt, os.path.join(outdir, "straight.step"))
+
+    # Block 60x60x20 with a COUNTERBORED hole: ⌀5 through, opened to ⌀10 for 6 mm
+    # from the top. Two coaxial diameters = two operations (drill + counterbore).
+    cb = BRepPrimAPI_MakeBox(60, 60, 20).Shape()
+    cb = BRepAlgoAPI_Cut(cb, cyl(2.5, 60, x=30, y=30, z=-5)).Shape()
+    cb = BRepAlgoAPI_Cut(cb, cyl(5.0, 6, x=30, y=30, z=14)).Shape()
+    paths["counterbore"] = write(cb, os.path.join(outdir, "counterbore.step"))
+
+    # Block 60x60x20 with a ⌀30 x 8 mm round SPIGOT standing proud of the top.
+    # External cylinder: material inside it, so not a hole — but still machined
+    # around.
+    sp = BRepAlgoAPI_Fuse(BRepPrimAPI_MakeBox(60, 60, 20).Shape(),
+                          cyl(15, 8, x=30, y=30, z=20)).Shape()
+    paths["spigot"] = write(sp, os.path.join(outdir, "spigot.step"))
+
+    # Block 60x60x30 with a blind pocket on TOP and a blind pocket on the BOTTOM.
+    # Opposite faces → the part must be flipped → 2 setups.
+    ts = BRepPrimAPI_MakeBox(60, 60, 30).Shape()
+    ts = BRepAlgoAPI_Cut(ts, BRepPrimAPI_MakeBox(gp_Pnt(10, 10, 22), 25, 25, 20).Shape()).Shape()
+    ts = BRepAlgoAPI_Cut(ts, BRepPrimAPI_MakeBox(gp_Pnt(30, 30, -12), 20, 20, 20).Shape()).Shape()
+    paths["twosided"] = write(ts, os.path.join(outdir, "twosided.step"))
+
+    # Block 60x60x20 with a single ⌀6 THROUGH hole — drillable from either end,
+    # so it must not invent a second setup.
+    th = BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(60, 60, 20).Shape(),
+                         cyl(3, 60, x=30, y=30, z=-10)).Shape()
+    paths["throughonly"] = write(th, os.path.join(outdir, "throughonly.step"))
     return paths
 
 

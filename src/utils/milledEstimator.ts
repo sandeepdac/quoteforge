@@ -60,6 +60,10 @@ export interface MilledProfile {
   angledToolAxisDegs?: number[];
   /** Open/partial circular features (⌀ mm) — interpolated bores, not drilled. */
   partialBoreDiametersMm?: number[];
+  /** Holes carrying a counterbore/step — each is a drill AND a counterbore. */
+  steppedHoleCount?: number;
+  /** Round spigots the cutter has to profile around (⌀ mm). */
+  roundBossDiametersMm?: number[];
   /**
    * True when the stock is ROUND BAR (a mill-turn part) rather than a rectangular
    * billet: `stockMm` then holds the bar as {⌀, ⌀, length} and `barDiameterMm` is

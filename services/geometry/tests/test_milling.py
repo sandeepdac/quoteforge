@@ -128,3 +128,50 @@ def test_slanted_faces_are_still_absorbed_not_counted_as_setups():
     m = _milled("box")
     assert m["angledSetups"] == 0
     assert m["setupCount"] == 1
+
+
+# --- Stepped holes, round spigots, and which face a blind feature opens on ---
+#
+# Reported against part 031167-A: a counterbored flange quoted as if the
+# counterbores were the only holes, with the ⌀21 spigot and the flip to the back
+# face both invisible.
+
+
+def test_counterbored_hole_reports_both_diameters():
+    # The "multi" sample has plain through-holes; build the stepped case here so
+    # the assertion is about the step, not about that sample's other features.
+    m = _milled("counterbore")
+    # A ⌀10 counterbore over a ⌀5 through-hole is TWO operations, two tools.
+    assert 2 in [len(g) for g in [m["holeDiametersMm"]]] or m["holeCount"] >= 2
+    assert m["steppedHoleCount"] >= 1
+    dias = m["holeDiametersMm"]
+    assert any(abs(d - 10.0) < 0.6 for d in dias), dias
+    assert any(abs(d - 5.0) < 0.6 for d in dias), dias
+
+
+def test_plain_through_hole_is_not_reported_as_stepped():
+    m = _milled("multi")
+    assert m["steppedHoleCount"] == 0
+
+
+def test_round_spigot_is_detected_as_a_boss():
+    # An external cylinder has material INSIDE it, so it is not a hole — but the
+    # cutter still has to profile around it. It used to be invisible entirely.
+    m = _milled("spigot")
+    assert m["roundBossCount"] >= 1
+    assert any(abs(d - 30.0) < 1.0 for d in m["roundBossDiametersMm"]), m["roundBossDiametersMm"]
+    assert m["holeCount"] == 0  # and it must NOT be mistaken for a bore
+
+
+def test_blind_features_on_opposite_faces_force_a_flip():
+    # Blind pockets/holes opening on opposite faces cannot share a setup: the
+    # part has to be turned over. Merging both senses of one axis hid that.
+    m = _milled("twosided")
+    assert m["setupCount"] >= 2
+
+
+def test_a_through_hole_alone_does_not_force_a_flip():
+    # A through hole can be drilled from either end, so it must not manufacture
+    # a second setup on an otherwise one-sided part.
+    m = _milled("throughonly")
+    assert m["setupCount"] == 1

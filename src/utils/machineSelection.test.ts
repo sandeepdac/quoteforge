@@ -179,3 +179,39 @@ describe('bar eligibility must not swallow prismatic blocks', () => {
     expect(angled.effectiveSetups!).toBe(plain.effectiveSetups! + 2);
   });
 });
+
+describe('bar stock is for parts longer than they are wide', () => {
+  // Regression: part 031167-A, a 40x40x22 flange, was routed to ⌀45 bar. Volume
+  // fill could not catch it — a bored, counterbored flange fills its cylinder
+  // about as well as a real shaft — but the proportions give it away: you do not
+  // bar-feed a disc, you chuck it from plate or a sawn billet. The wrong route
+  // then collapsed its two measured setups to one.
+  it('a disc / flange is not bar work', () => {
+    const r = selectMachine({
+      isTurned: false, setupCount: 2,
+      partDimsMm: { x: 40, y: 40, z: 22 }, partVolumeCm3: 25,
+    });
+    expect(r.route).toBe('mill');
+    expect(r.stockForm).toBe('billet');
+    const tm = r.candidates.find((c) => c.id === 'turn-mill')!;
+    expect(tm.capable).toBe(false);
+    expect(tm.reason).toMatch(/disc|flange|along its length/i);
+  });
+
+  it('and the disc keeps the setup count the geometry measured', () => {
+    const r = selectMachine({
+      isTurned: false, setupCount: 2,
+      partDimsMm: { x: 40, y: 40, z: 22 }, partVolumeCm3: 25,
+    });
+    // The bar route would have flattened this to 1.
+    expect(r.effectiveSetups).toBeGreaterThanOrEqual(2);
+  });
+
+  it('an elongated shaft-like part is still bar work', () => {
+    const r = selectMachine({
+      isTurned: false, setupCount: 4,
+      partDimsMm: { x: 90, y: 30, z: 30 }, partVolumeCm3: 63.6,
+    });
+    expect(r.route).toBe('mill-turn');
+  });
+});

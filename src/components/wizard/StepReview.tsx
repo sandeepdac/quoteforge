@@ -267,6 +267,17 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
                 <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
                   Secondary operations <span className="font-normal normal-case tracking-normal">— finishing &amp; inspection, added to the quote</span>
                 </p>
+                {/* A STEP file carries geometry only — plating, anodising and
+                    inspection live on the DRAWING, so they can never be measured
+                    from the solid. Nothing used to say so, and a plated part
+                    quoted as bare metal looks entirely plausible. */}
+                {cadAnalysis?.measurementSource === 'solid' && secondaryIds.length === 0 && (
+                  <p className="text-[10px] text-amber-700 dark:text-amber-300 mb-2 leading-relaxed">
+                    <strong>No surface finish selected.</strong> A STEP file carries geometry only — plating,
+                    anodising and inspection are called out on the drawing, so they cannot be detected here.
+                    If the drawing specifies one, add it now or the quote will price bare metal.
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-2">
                   {secondaryCatalog.map((op) => {
                     const on = secondaryIds.includes(op.id);

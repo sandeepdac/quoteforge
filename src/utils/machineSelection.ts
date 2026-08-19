@@ -159,6 +159,7 @@ const BAR_RADIAL_ALLOWANCE_MM = 2; // clean-up stock over the finished OD before
 const BAR_CROSS_BALANCE_MIN = 0.55; // cross-section must be roughly round/square (not a flat plate) for bar work
 const BAR_CORNER_FILL = 1.05;       // cross fills ≤ this fraction of a ⌀=width cylinder → round enough to fit that bar
 const BAR_MIN_FILL = 0.5;           // ...and ≥ this, or the solid is a block inside a notional cylinder, not bar work
+const BAR_MIN_ASPECT = 1.2;         // bar work runs along its length: a disc/flange is chucked, not bar-fed
 
 /** Is a machine on the shop floor? (No inventory declared → the whole catalog.) */
 function ownsFn(owned?: MachineId[]) {
@@ -226,6 +227,15 @@ function barFit(input: MachineSelectionInput) {
   const barVolumeCm3 = ((Math.PI / 4) * barDiameterMm * barDiameterMm * barLengthMm) / 1000;
   const billetVolumeCm3 = (dims.x * dims.y * dims.z) / 1000;
 
+  // Bar stock is for parts that are LONGER than they are wide — that is what
+  // "bar" means. A disc or a flange (40 across, 22 thick) is chucked from plate
+  // or a sawn billet, never bar-fed: you would buy a huge slug and part off a
+  // thin slice. Volume-fill tests cannot see this, because a flange with a bore
+  // and counterbores fills its cylinder about as well as a real shaft does —
+  // which is how part 031167-A, a 40x40x22 disc, ended up quoted from ⌀45 bar
+  // with its two setups collapsed to one.
+  const elongated = cs.lengthMm >= BAR_MIN_ASPECT * cs.widthMm;
+
   return {
     ...cs,
     barDiameterMm,
@@ -233,11 +243,12 @@ function barFit(input: MachineSelectionInput) {
     fitsCapacity,
     barLike,
     roundEnough,
+    elongated,
     cylFill,
     barVolumeCm3,
     billetVolumeCm3,
     cap,
-    eligible: fitsCapacity && barLike && roundEnough,
+    eligible: fitsCapacity && barLike && roundEnough && elongated,
   };
 }
 
@@ -347,7 +358,9 @@ function selectMillingMachine(input: MachineSelectionInput): MachineRecommendati
           ? `Flat/slab cross-section (${Math.round(fit.balance * 100)}% square) — not round-bar work; belongs on a machining centre.`
           : !fit.roundEnough
             ? `Prismatic solid — fills only ${Math.round(fit.cylFill * 100)}% of the ⌀${fit.widthMm.toFixed(0)} cylinder around it, so it is a block, not bar work (⌀${fit.barDiameterMm} bar would hold ${fit.barVolumeCm3.toFixed(0)} cm³ against a ${fit.billetVolumeCm3.toFixed(0)} cm³ block).`
-            : `Needs ⌀${fit.barDiameterMm} bar > ${fit.cap} mm turn-mill capacity — too large for bar work.`,
+            : !fit.elongated
+              ? `Disc / flange proportions (${fit.lengthMm.toFixed(0)} long vs ${fit.widthMm.toFixed(0)} across) — bar work runs along its length; a disc is chucked from plate or a sawn billet.`
+              : `Needs ⌀${fit.barDiameterMm} bar > ${fit.cap} mm turn-mill capacity — too large for bar work.`,
     });
   }
   candidates.push(
