@@ -130,3 +130,52 @@ describe('selectMachine — shop machine inventory (point 4)', () => {
     expect(r.recommended).toBe('turn-mill');
   });
 });
+
+describe('bar eligibility must not swallow prismatic blocks', () => {
+  // Regression: a 61x52x47 block (TCL0893 spoiler) was routed to round bar
+  // because "fits inside a cylinder" was treated as evidence of roundness. It
+  // fills only ~34% of that cylinder, and the bar would have held MORE material
+  // than the billet — while the mill-turn route then flattened its 8 measured
+  // setups (including 2 compound-angle ones) to a fixed 2.
+  const spoiler = {
+    isTurned: false as const, setupCount: 8, angledSetups: 2, bossCount: 10,
+    partDimsMm: { x: 61.487, y: 51.95, z: 47.4 }, partVolumeCm3: 45.088,
+  };
+
+  it('a sparse prismatic block stays on the mill, not round bar', () => {
+    const r = selectMachine(spoiler);
+    expect(r.route).toBe('mill');
+    expect(r.stockForm).toBe('billet');
+    expect(r.recommended).not.toBe('turn-mill');
+  });
+
+  it('explains the rejection in material terms', () => {
+    const r = selectMachine(spoiler);
+    const tm = r.candidates.find((c) => c.id === 'turn-mill')!;
+    expect(tm.capable).toBe(false);
+    expect(tm.reason).toMatch(/block|prismatic|fills only/i);
+  });
+
+  it('a genuine cylinder still routes to round bar', () => {
+    const r = selectMachine({
+      isTurned: false, setupCount: 4,
+      partDimsMm: { x: 90, y: 30, z: 30 }, partVolumeCm3: 63.6, // ~a full cylinder
+    });
+    expect(r.route).toBe('mill-turn');
+    expect(r.stockForm).toBe('bar');
+  });
+
+  it('the mill-turn route never collapses compound-angle setups away', () => {
+    const plain = selectMachine({
+      isTurned: false, setupCount: 4,
+      partDimsMm: { x: 60, y: 30, z: 30 }, partVolumeCm3: 30,
+    });
+    const angled = selectMachine({
+      isTurned: false, setupCount: 4, angledSetups: 2,
+      partDimsMm: { x: 60, y: 30, z: 30 }, partVolumeCm3: 30,
+    });
+    expect(angled.route).toBe('mill-turn');
+    // Angled axes still need indexing/tilting even in a one-clamp bar job.
+    expect(angled.effectiveSetups!).toBe(plain.effectiveSetups! + 2);
+  });
+});

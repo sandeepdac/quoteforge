@@ -393,6 +393,7 @@ async function analyzeSolid(
       lengthMm: axisLengthMm,
       crossFeatures,
       setupCount: milledProfile?.setupCount,
+      angledSetups: milledProfile?.angledSetups,
       pocketCount: milledProfile?.pocketCount,
       bossCount: milledProfile?.bossCount,
       partDimsMm: { x: meas.lengthMm, y: meas.widthMm, z: meas.heightMm },

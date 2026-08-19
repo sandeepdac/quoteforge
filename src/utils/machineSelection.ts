@@ -105,6 +105,12 @@ export interface MachineSelectionInput {
   crossFeatures?: boolean;
   // Milled drivers
   setupCount?: number;
+  /**
+   * Setups forced by hole/bore axes on a COMPOUND ANGLE. These survive every
+   * route: even a turn-mill that does the rest in one clamp must still index or
+   * tilt to reach them, so they must never be collapsed away.
+   */
+  angledSetups?: number;
   pocketCount?: number;
   bossCount?: number;
   /** Measured bounding box (mm) — lets a milled part be tested for round-bar fit. */
@@ -152,6 +158,7 @@ const SLENDER_WARN = 10; // L/D above which a guide bush (sliding-head) really h
 const BAR_RADIAL_ALLOWANCE_MM = 2; // clean-up stock over the finished OD before the next bar size
 const BAR_CROSS_BALANCE_MIN = 0.55; // cross-section must be roughly round/square (not a flat plate) for bar work
 const BAR_CORNER_FILL = 1.05;       // cross fills ≤ this fraction of a ⌀=width cylinder → round enough to fit that bar
+const BAR_MIN_FILL = 0.5;           // ...and ≥ this, or the solid is a block inside a notional cylinder, not bar work
 
 /** Is a machine on the shop floor? (No inventory declared → the whole catalog.) */
 function ownsFn(owned?: MachineId[]) {
@@ -197,20 +204,40 @@ function barFit(input: MachineSelectionInput) {
   const cylFill = cylOfWidthCm3 > 0 && (input.partVolumeCm3 ?? 0) > 0
     ? (input.partVolumeCm3 as number) / cylOfWidthCm3
     : 0.7; // unknown volume → assume round-ish (fits the width bar)
-  const roundEnough = cylFill <= BAR_CORNER_FILL;
+  // Roundness is a TWO-SIDED test, and getting that wrong is what routed a
+  // prismatic block to round bar:
+  //   • too FULL (> ~1.05) → square corners stick out past the width-cylinder,
+  //     so the bar must span the diagonal, not the width;
+  //   • too EMPTY (< ~0.5) → the solid occupies only a fraction of the bar that
+  //     contains it. That is not a body of revolution, it is a block sitting
+  //     inside a notional cylinder. Everything fits inside SOME cylinder, so
+  //     "fits" alone is no evidence at all — a 61×52×47 block read as 34% full
+  //     and was sent to ⌀60 bar holding more material than the billet.
+  const roundEnough = cylFill <= BAR_CORNER_FILL && cylFill >= BAR_MIN_FILL;
   const containDiaMm = roundEnough ? cs.widthMm : cs.diagonalMm;
 
   const barDiameterMm = nextStandardBar(containDiaMm + 2 * BAR_RADIAL_ALLOWANCE_MM);
   const fitsCapacity = barDiameterMm <= cap;
   const barLike = cs.balance >= BAR_CROSS_BALANCE_MIN;
+
+  // Reported so the candidate reason can show the material consequence of a
+  // wrong call (bar bigger than the block) in plain numbers.
+  const barLengthMm = cs.lengthMm + 5; // facing + part-off allowance
+  const barVolumeCm3 = ((Math.PI / 4) * barDiameterMm * barDiameterMm * barLengthMm) / 1000;
+  const billetVolumeCm3 = (dims.x * dims.y * dims.z) / 1000;
+
   return {
     ...cs,
     barDiameterMm,
     containDiaMm,
     fitsCapacity,
     barLike,
+    roundEnough,
+    cylFill,
+    barVolumeCm3,
+    billetVolumeCm3,
     cap,
-    eligible: fitsCapacity && barLike,
+    eligible: fitsCapacity && barLike && roundEnough,
   };
 }
 
@@ -314,9 +341,13 @@ function selectMillingMachine(input: MachineSelectionInput): MachineRecommendati
       id: tm.id, name: tm.name, capable: fit.eligible,
       reason: fit.eligible
         ? `Round cross-section ⌀${fit.widthMm.toFixed(0)} → ⌀${fit.barDiameterMm} bar (≤ ${fit.cap} mm capacity); turned to profile and milled with driven tools in one clamp.`
+        // Root cause first: shape disqualifies before size does, because a block
+        // that "needs a bar too big" is really just a block.
         : !fit.barLike
           ? `Flat/slab cross-section (${Math.round(fit.balance * 100)}% square) — not round-bar work; belongs on a machining centre.`
-          : `Needs ⌀${fit.barDiameterMm} bar > ${fit.cap} mm turn-mill capacity — too large for bar work.`,
+          : !fit.roundEnough
+            ? `Prismatic solid — fills only ${Math.round(fit.cylFill * 100)}% of the ⌀${fit.widthMm.toFixed(0)} cylinder around it, so it is a block, not bar work (⌀${fit.barDiameterMm} bar would hold ${fit.barVolumeCm3.toFixed(0)} cm³ against a ${fit.billetVolumeCm3.toFixed(0)} cm³ block).`
+            : `Needs ⌀${fit.barDiameterMm} bar > ${fit.cap} mm turn-mill capacity — too large for bar work.`,
     });
   }
   candidates.push(
@@ -347,7 +378,11 @@ function selectMillingMachine(input: MachineSelectionInput): MachineRecommendati
     route = 'mill-turn';
     stockForm = 'bar';
     barDiameterMm = fit.barDiameterMm;
-    effectiveSetups = setups >= 3 ? 2 : 1; // main collet + (a sub-spindle pick-off for back-face work)
+    // Main collet + (a sub-spindle pick-off for back-face work) — PLUS any
+    // compound-angle axes, which a turn-mill still has to index or tilt for.
+    // Collapsing those to a flat 1-or-2 is what let an angled part price as if
+    // its angled holes were free.
+    effectiveSetups = (setups >= 3 ? 2 : 1) + Math.max(0, input.angledSetups ?? 0);
     reasons.push(`Round-ish cross-section (⌀${fit.widthMm.toFixed(0)}, ${Math.round(fit.balance * 100)}% square) fits ⌀${fit.barDiameterMm} bar within the turn-mill's ${fit.cap} mm capacity → made from ROUND BAR, not a solid billet.`);
     reasons.push(`Turned to profile then milled with driven tools in ${effectiveSetups === 1 ? 'a single clamp' : 'one clamp plus a sub-spindle pick-off'} — all faces in one operation, replacing the ${setups} re-clamp${setups === 1 ? '' : 's'} a machining centre would need.`);
     reasons.push(`Round bar sized to the part (⌀${fit.barDiameterMm}) removes far less material than hogging the part out of a rectangular block.`);
