@@ -39,6 +39,16 @@ export interface GeometryMilled {
   /** Round bosses / spigots (external cylinders) the cutter profiles around. */
   roundBossCount?: number;
   roundBossDiametersMm?: number[];
+  // --- turned vs milled: the first question on a mill-turn ------------------
+  /** The axis the part's circular features share, if any — the turning axis. */
+  turningAxis?: number[] | null;
+  /** Circular features coaxial with it: the spindle can TURN these. */
+  turnedFeatures?: Array<{ kind: 'bore' | 'spigot'; diameterMm: number; offAxisMm: number }>;
+  turnedFeatureCount?: number;
+  /** Circular features off that axis — driven tools / milling. */
+  milledFeatures?: Array<{ kind: 'bore' | 'spigot'; diameterMm: number; offAxisMm: number }>;
+  /** Planar faces square to the turning axis — facing cuts on a lathe. */
+  facingCandidates?: number;
   pocketCount: number;
   bossCount: number;
   deepPocketCount: number;

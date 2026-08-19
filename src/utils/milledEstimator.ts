@@ -65,6 +65,15 @@ export interface MilledProfile {
   /** Round spigots the cutter has to profile around (⌀ mm). */
   roundBossDiametersMm?: number[];
   /**
+   * Features the SPINDLE can cut, because they are coaxial with the part's
+   * turning axis — bores, spigots, faces. On a lathe or mill-turn these are
+   * TURNED (roughly 4x faster than interpolating them with an end mill); only
+   * the off-axis features are milled with driven tools.
+   */
+  turnedFeatureDiametersMm?: number[];
+  /** Planar faces square to the turning axis — facing cuts. */
+  facingCandidates?: number;
+  /**
    * True when the stock is ROUND BAR (a mill-turn part) rather than a rectangular
    * billet: `stockMm` then holds the bar as {⌀, ⌀, length} and `barDiameterMm` is
    * the bar size. The part is turned to profile and milled with driven tools in

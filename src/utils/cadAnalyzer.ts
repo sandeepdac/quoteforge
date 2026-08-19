@@ -345,6 +345,8 @@ async function analyzeSolid(
           partialBoreDiametersMm: mm.partialBoreDiametersMm,
           steppedHoleCount: mm.steppedHoleCount,
           roundBossDiametersMm: mm.roundBossDiametersMm,
+          turnedFeatureDiametersMm: (mm.turnedFeatures ?? []).map((f) => f.diameterMm),
+          facingCandidates: mm.facingCandidates,
         };
         // A contoured part is re-clamped to finish curved faces from more angles
         // than its geometric access-direction count — floor the setups upward.
@@ -400,6 +402,9 @@ async function analyzeSolid(
       bossCount: milledProfile?.bossCount,
       partDimsMm: { x: meas.lengthMm, y: meas.widthMm, z: meas.heightMm },
       partVolumeCm3: volumeCm3,
+      // Coaxial round features are the evidence that a prismatic-looking part is
+      // really chucking work — without them a hollowed block reads as "round".
+      onAxisTurnedFeatures: milledProfile?.turnedFeatureDiametersMm?.length,
       ownedMachines: opts.machines,
     });
 
@@ -422,6 +427,16 @@ async function analyzeSolid(
       // (which only applied to hogging a solid block) no longer holds.
       setups = Math.max(1, milledProfile.setupCount);
       sparseBillet = false;
+    } else if (milledProfile && machineRecommendation.route === 'mill-turn') {
+      // CHUCKED turn-mill work: too short or too large to bar-feed, but held in
+      // the chuck and turned — the flange case. The stock stays a sawn billet,
+      // but the part is presented to a spindle rather than re-clamped once per
+      // face, so the setup count is the machine's, not the access-direction count.
+      milledProfile = {
+        ...milledProfile,
+        setupCount: Math.max(1, Math.round(machineRecommendation.effectiveSetups ?? milledProfile.setupCount)),
+      };
+      setups = milledProfile.setupCount;
     }
 
     // Sheet-metal concepts don't apply to machined parts.

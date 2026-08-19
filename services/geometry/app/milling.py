@@ -505,6 +505,83 @@ def analyze_milling(shape) -> dict:
     round_bosses = [g for g in boss_groups
                     if g["span"] >= 0.85 * FULL_TURN and 2.0 * g["radius"] > corner_dia_max]
     round_boss_diameters = sorted((round(2.0 * g["radius"], 3) for g in round_bosses), reverse=True)
+
+    # --- TURNED vs MILLED features ------------------------------------------
+    #
+    # On a mill-turn this is the first question about every feature, and nothing
+    # here used to ask it: every cut was costed as a milling toolpath, so a bore
+    # that a spindle could open in seconds was priced as helical interpolation
+    # with an end mill (~4x slower) at the turn-mill's premium rate.
+    #
+    # The test is coaxiality. A lathe spins the part about ONE axis, so:
+    #   • features whose axis is the part's main axis are TURNED — bores,
+    #     spigots, faces, grooves. The tool is stationary, the part spins.
+    #   • everything off that axis is MILLED with driven tools.
+    #
+    # The main axis is the one the most circular features share, weighted by
+    # size (a ⌀46 bore says more about how the part is held than a ⌀3 hole), and
+    # it must pass through the part's centre — an off-centre bolt circle is not
+    # a turning axis no matter how many holes share its direction.
+    ON_AXIS_TOL_MM = 0.5  # how close two features must run to share an axis
+
+    circular_features = (
+        [{"axis": g["axis"], "point": g["point"], "radius": g["maxRadius"], "kind": "bore"}
+         for g in hole_groups]
+        + [{"axis": g["axis"], "point": g["point"], "radius": g["radius"], "kind": "spigot"}
+           for g in round_bosses]
+    )
+
+    def _line_gap(a: dict, b: dict) -> float:
+        """Perpendicular distance between two parallel feature axes."""
+        v = b["point"] - a["point"]
+        return float(np.linalg.norm(v - float(np.dot(v, a["axis"])) * a["axis"]))
+
+    def _coaxial(a: dict, b: dict) -> bool:
+        return abs(float(np.dot(a["axis"], b["axis"]))) > 0.98 and _line_gap(a, b) <= ON_AXIS_TOL_MM
+
+    # Cluster features onto shared axis LINES. Anchoring to the bounding-box
+    # centre instead was wrong: on an asymmetric part the box centre is not on
+    # the turning axis at all, and it pushed the P5 flag's two coaxial spigots
+    # (1.25 mm off that centre) into the milled bucket. The turning axis is
+    # wherever the round features actually line up.
+    axis_groups: List[List[dict]] = []
+    for f in circular_features:
+        for g in axis_groups:
+            if _coaxial(g[0], f):
+                g.append(f)
+                break
+        else:
+            axis_groups.append([f])
+
+    # The turning axis is the line carrying the most circular content (weighted
+    # by radius — a ⌀46 bore says more about how the part is held than a ⌀3 hole).
+    # It needs at least TWO coaxial features: one lone bore in a block is a
+    # drilled hole, not evidence that the part belongs on a lathe.
+    best_group = max(
+        (g for g in axis_groups if len(g) >= 2),
+        key=lambda g: sum(f["radius"] for f in g),
+        default=None,
+    )
+    best_axis = best_group[0]["axis"] if best_group else None
+    turned_ids = {id(f) for f in (best_group or [])}
+
+    turned_features: List[dict] = []
+    milled_features: List[dict] = []
+    for f in circular_features:
+        entry = {"kind": f["kind"], "diameterMm": round(2.0 * f["radius"], 3),
+                 "offAxisMm": round(_line_gap(best_group[0], f) if best_group else 0.0, 3)}
+        (turned_features if id(f) in turned_ids else milled_features).append(entry)
+
+    # Planar faces square to the turning axis are FACING cuts on a lathe.
+    facing_candidates = 0
+    if best_axis is not None:
+        for face in planar_faces:
+            n = _planar_normal(face)
+            if n is not None and abs(float(np.dot(n, best_axis))) > 0.98:
+                facing_candidates += 1
+
+    turned_features.sort(key=lambda f: -f["diameterMm"])
+    milled_features.sort(key=lambda f: -f["diameterMm"])
     # A round spigot is an island to profile around exactly like a planar boss,
     # so it joins the boss count that drives the small-tool complexity derate.
     boss_count += len(round_bosses)
@@ -689,6 +766,15 @@ def analyze_milling(shape) -> dict:
         # Round bosses / spigots the cutter must profile around.
         "roundBossCount": len(round_bosses),
         "roundBossDiametersMm": round_boss_diameters,
+        # --- turned vs milled (the first question on a mill-turn) -----------
+        "turningAxis": [round(float(x), 4) for x in best_axis.tolist()] if best_axis is not None else None,
+        # Circular features the SPINDLE can cut (coaxial with the turning axis).
+        "turnedFeatures": turned_features,
+        "turnedFeatureCount": len(turned_features),
+        # Circular features off that axis — driven tools / milling.
+        "milledFeatures": milled_features,
+        # Planar faces square to the axis: facing cuts on a lathe.
+        "facingCandidates": facing_candidates,
         "roundFaceCount": n_cyl,
         "sparseBillet": sparse_billet,
         "concaveEdges": concave_edges,
