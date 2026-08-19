@@ -617,6 +617,36 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                 </div>
               </div>
 
+              {(mp.angledSetups ?? 0) > 0 && (
+                <div className="flex gap-2 bg-amber-500/10 border border-amber-500/40 rounded-md p-2.5">
+                  <AlertCircle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    <strong className="text-amber-700 dark:text-amber-300">Compound-angle work — confirm workholding.</strong>{' '}
+                    {mp.angledSetups} hole/bore axis/axes sit{' '}
+                    <strong className="text-foreground">
+                      {(mp.angledToolAxisDegs ?? []).map((d) => `${Math.round(d)}°`).join(', ')}
+                    </strong>{' '}
+                    off a stock face. A hole can only be cut along its own axis, so each needs a tilted fixture or a
+                    4th/5th-axis rotation — counted here as{' '}
+                    <strong className="text-foreground">{mp.angledSetups} extra setup{mp.angledSetups === 1 ? '' : 's'}</strong>.
+                    Setups dominate the price at low quantity, so check this against how you'd really hold it.
+                  </p>
+                </div>
+              )}
+
+              {(mp.partialBoreDiametersMm?.length ?? 0) > 0 && (
+                <div className="flex gap-2 bg-accent/40 border border-border rounded-md p-2.5">
+                  <Info size={14} className="text-muted-foreground shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    <strong className="text-foreground">
+                      {mp.partialBoreDiametersMm!.length} open/partial circular feature{mp.partialBoreDiametersMm!.length === 1 ? '' : 's'}
+                    </strong>{' '}
+                    (⌀{mp.partialBoreDiametersMm!.map((d) => d.toFixed(1)).join(', ⌀')} mm) — too large to drill, so these are
+                    milled by circular interpolation rather than counted as drilled holes.
+                  </p>
+                </div>
+              )}
+
               {mp.sparseBillet && (
                 <div className="flex gap-2 bg-amber-500/10 border border-amber-500/40 rounded-md p-2.5">
                   <AlertCircle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />

@@ -3,6 +3,7 @@
 Writes a stepped shaft (turned, bored), a box (not turned), and a shaft with a
 cross hole (turned + cross feature) into the given output directory.
 """
+import math
 import os
 import sys
 
@@ -68,6 +69,24 @@ def build(outdir):
     multi = BRepAlgoAPI_Cut(multi, cyl(3, 60, x=-1, y=20, z=10, dx=1, dy=0, dz=0)).Shape()
     multi = BRepAlgoAPI_Cut(multi, cyl(3, 60, x=-1, y=40, z=10, dx=1, dy=0, dz=0)).Shape()
     paths["multi"] = write(multi, os.path.join(outdir, "multi.step"))
+
+    # Block 60×60×30 with ONE pocket cut from the top and ONE ⌀6 hole drilled on a
+    # 30° COMPOUND ANGLE. The angled hole can only be produced along its own axis,
+    # so it needs its own fixturing/rotation — a setup the axis-aligned count
+    # cannot see. Regression guard for the bug where every non-axis direction was
+    # silently discarded (a real part's two 30° holes contributed nothing).
+    ang = BRepPrimAPI_MakeBox(60, 60, 30).Shape()
+    ang = BRepAlgoAPI_Cut(ang, BRepPrimAPI_MakeBox(gp_Pnt(15, 15, 22), 30, 30, 20).Shape()).Shape()
+    s30, c30 = math.sin(math.radians(30.0)), math.cos(math.radians(30.0))
+    ang = BRepAlgoAPI_Cut(ang, cyl(3, 120, x=5, y=30, z=-5, dx=s30, dy=0.0, dz=c30)).Shape()
+    paths["angled"] = write(ang, os.path.join(outdir, "angled.step"))
+
+    # Same block, same pocket, but the hole is drilled straight down Z. Pairs with
+    # "angled" to prove the extra setup comes from the ANGLE, not the hole.
+    strt = BRepPrimAPI_MakeBox(60, 60, 30).Shape()
+    strt = BRepAlgoAPI_Cut(strt, BRepPrimAPI_MakeBox(gp_Pnt(15, 15, 22), 30, 30, 20).Shape()).Shape()
+    strt = BRepAlgoAPI_Cut(strt, cyl(3, 120, x=8, y=30, z=-5, dx=0, dy=0, dz=1)).Shape()
+    paths["straight"] = write(strt, os.path.join(outdir, "straight.step"))
     return paths
 
 

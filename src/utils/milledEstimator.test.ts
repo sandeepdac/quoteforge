@@ -380,3 +380,59 @@ describe('toBarStockProfile — mill-turn from round bar (points 1 & 2)', () => 
     expect(barSameRate.subtotal).toBeLessThan(billetCost.subtotal);
   });
 });
+
+describe('compound-angle setups reach the price', () => {
+  // Setups are the dominant cost at low quantity, so an angled hole/bore axis
+  // that the geometry engine used to discard has to show up as money.
+  const axisAligned: MilledProfile = {
+    ...baseProfile,
+    setupCount: 4,
+    angledSetups: 0,
+  };
+  const withAngled: MilledProfile = {
+    ...baseProfile,
+    setupCount: 6, // the same 4, plus 2 angled tool axes
+    angledSetups: 2,
+    angledToolAxisDegs: [30, 30],
+  };
+
+  it('an angled part costs more per part at qty 1, driven by setup', () => {
+    const a = calculateMilledCosts(input(axisAligned), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const b = calculateMilledCosts(input(withAngled), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    expect(b.setupCost).toBeGreaterThan(a.setupCost);
+    expect(b.subtotal).toBeGreaterThan(a.subtotal);
+    expect(b.setups).toBeGreaterThan(a.setups);
+  });
+
+  it('an angled setup survives the phantom-setup merge (workholding, not volume)', () => {
+    // A part with almost no work to spread but two compound-angle holes still has
+    // to be re-fixtured for them. The merge that removes facing-only phantom
+    // setups must not remove these, or the under-costing comes straight back.
+    const sparseButAngled: MilledProfile = {
+      ...baseProfile,
+      removedVolumeCm3: 1,
+      surfaceAreaCm2: 20,
+      pocketCount: 0,
+      setupCount: 3,
+      angledSetups: 2,
+      angledToolAxisDegs: [30, 45],
+    };
+    const c = calculateMilledCosts(input(sparseButAngled), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    expect(c.setups).toBeGreaterThanOrEqual(3); // 1 main + 2 angled
+  });
+
+  it('the gap narrows with quantity — setup amortises, it is not per-part', () => {
+    const a1 = calculateMilledCosts(input(axisAligned), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const b1 = calculateMilledCosts(input(withAngled), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const a100 = calculateMilledCosts(input(axisAligned), 100, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const b100 = calculateMilledCosts(input(withAngled), 100, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const gap1 = (b1.subtotal - a1.subtotal) / a1.subtotal;
+    const gap100 = (b100.subtotal - a100.subtotal) / a100.subtotal;
+    expect(gap100).toBeLessThan(gap1);
+  });
+
+  it('carries the angled metadata through for the UI warning', () => {
+    expect(withAngled.angledSetups).toBe(2);
+    expect(withAngled.angledToolAxisDegs).toEqual([30, 30]);
+  });
+});

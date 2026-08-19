@@ -49,6 +49,18 @@ export interface MilledProfile {
   /** Part fills a small fraction of its bbox → solid-billet cost is an upper bound. */
   sparseBillet?: boolean;
   /**
+   * COMPOUND-ANGLE work. A hole or bore whose axis is not along a stock face can
+   * only be produced along that axis, so it needs its own tilted fixture or an
+   * indexed 4th/5th-axis rotation — a real setup the axis-aligned count misses.
+   * These are the setups included in `setupCount` on top of the axis-aligned ones,
+   * and they are the reason a quote for an angled part must be reviewed.
+   */
+  angledSetups?: number;
+  /** How far off a stock axis each angled hole/bore axis sits (degrees). */
+  angledToolAxisDegs?: number[];
+  /** Open/partial circular features (⌀ mm) — interpolated bores, not drilled. */
+  partialBoreDiametersMm?: number[];
+  /**
    * True when the stock is ROUND BAR (a mill-turn part) rather than a rectangular
    * billet: `stockMm` then holds the bar as {⌀, ⌀, length} and `barDiameterMm` is
    * the bar size. The part is turned to profile and milled with driven tools in
@@ -374,6 +386,7 @@ export function calculateMilledCosts(
     maxDrillMm: cnc.maxDrillDiaMm ?? 20,
     bossCount: p.bossCount,
     setups: Math.max(1, Math.round(p.setupCount || 1)),
+    angledSetups: p.angledSetups,
     eff,
     opCost,
     toolChangeSec,

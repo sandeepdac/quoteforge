@@ -340,6 +340,9 @@ async function analyzeSolid(
           holeCount: mm.holeCount,
           holeDiametersMm: mm.holeDiametersMm,
           sparseBillet: mm.sparseBillet,
+          angledSetups: mm.angledSetups,
+          angledToolAxisDegs: (mm.angledToolAxes ?? []).map((a) => a.offAxisDeg),
+          partialBoreDiametersMm: mm.partialBoreDiametersMm,
         };
         // A contoured part is re-clamped to finish curved faces from more angles
         // than its geometric access-direction count — floor the setups upward.
@@ -496,6 +499,12 @@ async function analyzeSolid(
               : '',
             milledProfile
               ? `${setups} setup${setups === 1 ? '' : 's'} (distinct tool-access directions), ${milledProfile.pocketCount} pocket${milledProfile.pocketCount === 1 ? '' : 's'}${milledProfile.deepPocketCount > 0 ? ` (${milledProfile.deepPocketCount} deep)` : ''}, ${milledProfile.holeCount} hole${milledProfile.holeCount === 1 ? '' : 's'}. Setups are the biggest cost lever.`
+              : '',
+            (milledProfile?.angledSetups ?? 0) > 0
+              ? `⚠️ COMPOUND-ANGLE WORK: ${milledProfile!.angledSetups} hole/bore axis/axes sit ${(milledProfile!.angledToolAxisDegs ?? []).map((d) => `${Math.round(d)}°`).join(', ')} off a stock face. A hole can only be cut along its own axis, so each needs a tilted fixture or a 4th/5th-axis rotation — counted as extra setups. Setups dominate the price at low quantity, so CONFIRM how these are held before sending.`
+              : '',
+            (milledProfile?.partialBoreDiametersMm?.length ?? 0) > 0
+              ? `${milledProfile!.partialBoreDiametersMm!.length} open/partial circular feature(s) (⌀${milledProfile!.partialBoreDiametersMm!.map((d) => d.toFixed(1)).join(', ⌀')} mm) are milled by interpolation rather than drilled.`
               : '',
             sparseBillet
               ? `⚠️ The part fills only ${Math.round((milledProfile!.partVolumeCm3 / Math.max(0.01, milledProfile!.stockVolumeCm3)) * 100)}% of its bounding box — machining it from a solid billet would hog away ${milledProfile!.removedVolumeCm3.toFixed(0)} cm³. Real stock is almost certainly plate / a weldment / a near-net casting or forging; this price is an UPPER BOUND and needs review.`

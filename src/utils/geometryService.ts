@@ -24,6 +24,16 @@ export interface GeometryProfile {
 export interface GeometryMilled {
   setupCount: number;
   accessDirections: number[][];
+  /** Setups reachable from a stock face (the 3-axis, axis-aligned ones). */
+  axisAlignedSetups?: number;
+  /** Extra setups forced by holes/bores drilled on a COMPOUND ANGLE. */
+  angledSetups?: number;
+  /** Each angled hole/bore axis, with how far off a stock axis it sits. */
+  angledToolAxes?: Array<{ dir: number[]; offAxisDeg: number }>;
+  /** Slanted FACES assumed reachable from an existing axis (advisory). */
+  absorbedFaceDirections?: Array<{ dir: number[]; offAxisDeg: number }>;
+  /** Open/partial circular features — milled by interpolation, never drilled. */
+  partialBoreDiametersMm?: number[];
   pocketCount: number;
   bossCount: number;
   deepPocketCount: number;

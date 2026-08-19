@@ -256,7 +256,11 @@ def analyze_milling(shape) -> dict:
 
     pockets: List[dict] = []
     boss_faces: List = []
-    access_dirs: List[np.ndarray] = []
+    # Access directions are kept in two buckets because they mean different
+    # things for workholding (see Rule 1 below): a slanted FACE can be cut from
+    # an existing axis, a slanted TOOL AXIS cannot.
+    face_access_dirs: List[np.ndarray] = []   # pocket floors / boss tops
+    tool_access_dirs: List[np.ndarray] = []   # drilled / bored hole axes
     deep_pockets = 0
     max_depth_ratio = 0.0
 
@@ -297,8 +301,8 @@ def analyze_milling(shape) -> dict:
                 "depthRatio": round(ratio, 2),
                 "accessDir": [round(x, 4) for x in normal.tolist()],
             })
-            if _cluster_direction(access_dirs, normal) < 0:
-                access_dirs.append(normal)
+            if _cluster_direction(face_access_dirs, normal) < 0:
+                face_access_dirs.append(normal)
         # The boss test keys off the ABSENCE of concave edges, which is only
         # meaningful if concavity was measurable at all. On a heavily filleted
         # part every wall meets its floor through a cylindrical blend, so the
@@ -309,8 +313,8 @@ def analyze_milling(shape) -> dict:
               and not _is_stock_face(centroid, normal)):
             # A convex-ringed sub-surface face still implies a re-fixture
             # direction, so it contributes to the setup count exactly as before.
-            if _cluster_direction(access_dirs, normal) < 0:
-                access_dirs.append(normal)
+            if _cluster_direction(face_access_dirs, normal) < 0:
+                face_access_dirs.append(normal)
             # But it is only a machinable ISLAND (which drives the small-tool
             # complexity derate) if it is a real chunk — not a sliver or a thin
             # profile wall. The final islands-need-a-recess check is applied once
@@ -353,41 +357,110 @@ def analyze_milling(shape) -> dict:
             hole_groups.append({"axis": ax, "point": pt, "maxRadius": r,
                                 "minRadius": r, "span": span, "faces": 1})
 
-    # Keep only groups that wrap (nearly) all the way round — a real hole. Corner
-    # fillets sum to ~90–120° and are excluded; two 180° halves sum to 360° and count.
+    # Which circular features are real machining operations?
+    #
+    # A CLOSED bore wraps (nearly) all the way round — corner fillets sum to
+    # ~90–120° and are excluded, two 180° halves sum to 360° and count.
+    #
+    # But a PARTIAL arc can be a real feature too: an open-sided bore, a circular
+    # relief, a radiused slot end. Wrap angle alone cannot separate those from a
+    # corner fillet — both can be 90° — because the true difference is SIZE. A
+    # corner fillet is left by the roughing cutter (a few mm radius); a 46 mm
+    # circular pocket wall is deliberately interpolated. Judging on wrap alone
+    # dropped this part's ⌀46.35, ⌀22.2 and two 45.9 mm-deep ⌀19.05 features
+    # while keeping ⌀3.5 fillet-sized holes.
+    #
+    # So: keep a partial arc when it is far too big to be a cutter-corner radius.
     FULL_TURN = 2.0 * math.pi
-    hole_groups = [g for g in hole_groups if g["span"] >= 0.85 * FULL_TURN]
+    PARTIAL_MIN_WRAP = math.radians(60.0)  # below this it is a chamfer/blend sliver
+    # Biggest plausible corner radius: a cutter bigger than this is not roughing
+    # internal corners on a part of this size. Scaled to the part, floored at a
+    # size no sane corner fillet exceeds.
+    corner_dia_max = max(12.0, 0.12 * max(diag, 1.0))
+
+    def _is_real_circular_feature(g: dict) -> bool:
+        if g["span"] >= 0.85 * FULL_TURN:
+            return True
+        return g["span"] >= PARTIAL_MIN_WRAP and 2.0 * g["maxRadius"] > corner_dia_max
+
+    partial_bores = [g for g in hole_groups
+                     if _is_real_circular_feature(g) and g["span"] < 0.85 * FULL_TURN]
+    hole_groups = [g for g in hole_groups if _is_real_circular_feature(g)]
 
     n_holes = len(hole_groups)
     # Largest ⌀ per hole — lets the estimator tell a drilled hole from a milled bore.
     hole_diameters = sorted((round(2.0 * g["maxRadius"], 3) for g in hole_groups), reverse=True)
+    # Open / partial circular features: milled by interpolation, never drilled.
+    partial_bore_diameters = sorted((round(2.0 * g["maxRadius"], 3) for g in partial_bores),
+                                    reverse=True)
     # Only genuine holes should drive re-fixturing decisions.
     hole_axes = [g["axis"] for g in hole_groups]
 
-    # Hole access directions (both senses count toward re-fixturing).
+    # Hole access directions (both senses are the same fixturing). These are TOOL
+    # AXES: a hole is only producible along its own axis, so an angled one is a
+    # genuine extra setup rather than something an existing axis can reach.
     for ax in hole_axes:
-        if _cluster_direction(access_dirs, ax) < 0 and _cluster_direction(access_dirs, -ax) < 0:
-            access_dirs.append(ax)
+        if (_cluster_direction(tool_access_dirs, ax) < 0
+                and _cluster_direction(tool_access_dirs, -ax) < 0):
+            tool_access_dirs.append(ax)
 
     # Rule 1: setups = distinct access directions, at least 1 (top facing).
     #
-    # On a 3-axis machine you can only present the part to the spindle along one
-    # of the stock's six faces, so a raw face normal is not itself a setup: the
-    # slanted walls and chamfers of a hexagonal boss are all cut from ABOVE, with
-    # the side of the cutter. Snapping each candidate direction to the nearest
-    # stock axis collapses those into the one setup they are really machined in.
-    # (Un-snapped, the NIST CTC-01 hex boss alone claimed 10 extra setups.)
-    # A direction only earns a setup if it is roughly a stock axis (within ~25°).
-    # A steeply angled face — a hex boss wall at 60°, a 45° chamfer — is not
-    # fixtured on its own; it is cut from whichever axis can already reach it.
-    AXIS_ALIGNED = 0.90  # cos(~26°)
+    # Two KINDS of direction reach this point, and they must not be treated alike:
+    #
+    #   FACE NORMALS (pocket floors, boss tops) — a slanted FACE is still cut from
+    #     above with the side or the nose of the cutter. The hex boss on NIST
+    #     CTC-01 has ten slanted walls and needs one setup, not eleven. So a face
+    #     normal only earns a setup when it is roughly a stock axis; otherwise it
+    #     is absorbed into the axis that can already reach it.
+    #
+    #   TOOL AXES (drilled / bored holes) — a hole can ONLY be produced along its
+    #     own axis. You cannot drill a 30° hole from Z. An angled hole therefore
+    #     demands its own workholding: a tilted fixture or an indexed rotation on
+    #     a 4th/5th axis. Snapping these to the nearest stock axis (which is what
+    #     the code used to do to every direction indiscriminately) silently
+    #     deleted real setups: this part's two ⌀12.7 holes are drilled at 30° and
+    #     contributed nothing at all to the setup count.
+    #
+    # Absorbing a slanted wall is sound engineering; absorbing a slanted hole axis
+    # is a costing error, and setups are the dominant cost at low quantity.
+    AXIS_ALIGNED = 0.90  # cos(~26°) — "roughly a stock axis"
+
+    def _axis_key(d: np.ndarray):
+        """(axis index, sense) when the direction is near a stock axis, else None."""
+        i = int(np.argmax(np.abs(d)))
+        return (i, 1 if d[i] >= 0 else -1) if abs(float(d[i])) >= AXIS_ALIGNED else None
+
+    def _off_axis_deg(d: np.ndarray) -> float:
+        i = int(np.argmax(np.abs(d)))
+        return math.degrees(math.acos(min(1.0, abs(float(d[i])))))
+
     axis_dirs = set()
-    for d in access_dirs:
-        i = int(np.argmax(np.abs(d)))          # dominant axis
-        if abs(float(d[i])) >= AXIS_ALIGNED:
-            axis_dirs.add((i, 1 if d[i] >= 0 else -1))
-    setup_count = max(1, len(axis_dirs))
-    setup_count = min(setup_count, 6)  # a 3-axis part cannot need more than 6
+    absorbed_face_dirs: List[np.ndarray] = []  # slanted walls, legitimately cut from an existing axis
+    for d in face_access_dirs:
+        key = _axis_key(d)
+        if key is not None:
+            axis_dirs.add(key)
+        else:
+            absorbed_face_dirs.append(d)
+
+    # Angled tool axes: cluster so two holes on the same slanted axis share one
+    # setup, and a direction and its reverse are the same fixturing.
+    angled_tool_axes: List[np.ndarray] = []
+    for d in tool_access_dirs:
+        key = _axis_key(d)
+        if key is not None:
+            axis_dirs.add(key)
+            continue
+        if (_cluster_direction(angled_tool_axes, d) < 0
+                and _cluster_direction(angled_tool_axes, -d) < 0):
+            angled_tool_axes.append(d)
+
+    axis_aligned_setups = len(axis_dirs)
+    angled_setups = len(angled_tool_axes)
+    # A 3-axis part cannot need more than 6 stock-face setups, but each angled
+    # tool axis is an ADDITIONAL fixturing/rotation on top of those.
+    setup_count = max(1, min(axis_aligned_setups, 6) + angled_setups)
 
     pocket_count = len(pockets)
 
@@ -406,16 +479,43 @@ def analyze_milling(shape) -> dict:
     if concave_edges == 0 and n_faces > 12:
         confidence = min(confidence, 0.55)
 
+    # Compound-angle work is where this analysis is weakest, and it used to be
+    # invisible: the old code discarded every non-axis direction and still
+    # reported ~0.97 confidence. Whenever the part has angled features, say so in
+    # the number as well as the text — an angled setup may be a tilted fixture, an
+    # indexed rotation, or (on a 5-axis) nearly free, and we cannot tell which.
+    if angled_setups:
+        confidence = min(confidence, 0.6)
+    # Slanted faces were folded into an existing axis. That is usually right (a
+    # chamfer, a boss wall) but a deep angled floor may really want its own
+    # setup, so it caps certainty rather than moving the estimate.
+    if absorbed_face_dirs:
+        confidence = min(confidence, 0.75)
+
     # A part that fills only a small fraction of its bounding box is almost
     # certainly NOT machined from a solid billet — it comes from plate, a
     # weldment, an extrusion, or a near-net casting/forging. Flag it so the
     # solid-billet cost (which would be enormous) is treated as an upper bound.
     sparse_billet = removal_ratio > 0.85
 
+    angled_note = ""
+    if angled_setups:
+        degs = ", ".join(f"{_off_axis_deg(d):.0f}°" for d in angled_tool_axes)
+        angled_note = (f". {angled_setups} angled hole/bore axis/axes ({degs} off a stock axis) "
+                       f"need their own fixturing or a 4th/5th-axis rotation — counted as "
+                       f"{angled_setups} extra setup(s) on top of {min(axis_aligned_setups, 6)} "
+                       f"axis-aligned one(s); CONFIRM how these are held")
+    absorbed_note = ""
+    if absorbed_face_dirs:
+        absorbed_note = (f". {len(absorbed_face_dirs)} slanted face direction(s) were assumed "
+                         f"reachable from an existing axis (cut with the side/nose of the cutter)")
+
     reason = (f"Prismatic estimate: {setup_count} setup(s), "
               f"{pocket_count} pocket(s), {boss_count} boss(es), {n_holes} hole(s); "
               f"stock {bx:.0f}×{by:.0f}×{bz:.0f} mm, {int(removal_ratio*100)}% removed"
               + (f", {deep_pockets} deep pocket(s)" if deep_pockets else "")
+              + angled_note
+              + absorbed_note
               + (". NOTE: part fills only "
                  f"{int((1 - removal_ratio) * 100)}% of its bounding box — a solid billet is "
                  "likely the wrong stock (plate / weldment / near-net); estimate is an upper bound"
@@ -424,13 +524,28 @@ def analyze_milling(shape) -> dict:
 
     return {
         "setupCount": setup_count,
-        "accessDirections": [[round(x, 4) for x in d.tolist()] for d in access_dirs],
+        "accessDirections": [[round(x, 4) for x in d.tolist()]
+                             for d in (face_access_dirs + tool_access_dirs)],
+        # Setups split by origin, so the estimator and the UI can explain the number.
+        "axisAlignedSetups": axis_aligned_setups,
+        "angledSetups": angled_setups,
+        # Angled hole/bore axes that each need their own fixturing or rotation.
+        "angledToolAxes": [{"dir": [round(x, 4) for x in d.tolist()],
+                            "offAxisDeg": round(_off_axis_deg(d), 1)}
+                           for d in angled_tool_axes],
+        # Slanted FACES folded into an existing axis (normal, but worth surfacing:
+        # a deep angled floor may really want its own setup).
+        "absorbedFaceDirections": [{"dir": [round(x, 4) for x in d.tolist()],
+                                    "offAxisDeg": round(_off_axis_deg(d), 1)}
+                                   for d in absorbed_face_dirs],
         "pocketCount": pocket_count,
         "bossCount": boss_count,
         "deepPocketCount": deep_pockets,
         "maxDepthRatio": round(max_depth_ratio, 2),
         "holeCount": n_holes,
         "holeDiametersMm": hole_diameters,
+        # Open/partial circular features (milled by interpolation, not drilled).
+        "partialBoreDiametersMm": partial_bore_diameters,
         "roundFaceCount": n_cyl,
         "sparseBillet": sparse_billet,
         "concaveEdges": concave_edges,

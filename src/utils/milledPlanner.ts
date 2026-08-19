@@ -44,6 +44,12 @@ export interface MilledPlanInput {
   maxDrillMm: number;
   bossCount: number;
   setups: number;
+  /**
+   * Setups that exist for WORKHOLDING, not for work volume — a hole drilled on a
+   * compound angle needs its own tilted fixture or rotation even if that is the
+   * only thing done in it. These must survive the phantom-setup merge below.
+   */
+  angledSetups?: number;
   eff: number;
   /** theoretical sec → machine cost. */
   opCost: (sec: number) => number;
@@ -178,7 +184,13 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   // facing-only). Cap the requested count at the number of substantive ops.
   const requested = Math.max(1, Math.round(inp.setups));
   const fillable = Math.max(1, subs.length + (chamfer ? 1 : 0));
-  const setups = Math.min(requested, fillable);
+  // ...but an ANGLED setup is not a phantom. It is forced by workholding — you
+  // must re-fixture (or index a 4th/5th axis) to reach a compound-angle hole,
+  // even if that setup carries a single short operation. Merging those away
+  // would quietly re-create the very under-costing this exists to fix, so they
+  // set a floor: one main setup plus one per angled tool axis.
+  const angled = Math.max(0, Math.round(inp.angledSetups ?? 0));
+  const setups = Math.max(Math.min(requested, fillable), Math.min(requested, 1 + angled));
 
   // --- Distribute the work across the real setups --------------------------
   // Round-robin in cut order: roughing lands in setup 1, later setups pick up
