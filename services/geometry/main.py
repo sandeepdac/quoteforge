@@ -24,6 +24,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.extractor import extract
+from app.labelled_mesh import labelled_mesh
+from app.milling import analyze_milling
 
 app = FastAPI(title="QuoteForge Geometry Service", version="1.0.0")
 
@@ -68,3 +70,42 @@ def extract_profile_b64(payload: Base64Payload):
     except Exception:  # noqa: BLE001
         return JSONResponse(status_code=400, content={"ok": False, "error": "invalid base64"})
     return _run(data)
+
+
+@app.post("/labelled-mesh-b64")
+def labelled_mesh_b64(payload: Base64Payload):
+    """
+    A tessellation of the solid in which every triangle knows which B-Rep face it
+    came from, and every face carries the analyser's classification of it.
+
+    Served separately from the analysis on purpose. It is an order of magnitude
+    larger (a 637-face part meshes to ~48k triangles), it is diagnostic rather
+    than load-bearing, and the analysis it accompanies is persisted with the
+    quote — a mesh this size has no business in that record.
+    """
+    try:
+        data = base64.b64decode(payload.fileBase64)
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid base64"})
+    if not data:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "empty file"})
+    tmp = tempfile.NamedTemporaryFile(suffix=".step", delete=False)
+    try:
+        tmp.write(data)
+        tmp.close()
+        from app.extractor import read_step
+        shape = read_step(tmp.name)
+        milled = analyze_milling(shape)
+        mesh = labelled_mesh(shape, milled.get("faceLabels"))
+        mesh["ok"] = True
+        mesh["faceLedger"] = milled.get("faceLedger")
+        mesh["unaccountedFaces"] = milled.get("unaccountedFaces")
+        mesh["unaccountedAreaShare"] = milled.get("unaccountedAreaShare")
+        return JSONResponse(content=mesh)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=422, content={"ok": False, "error": str(exc)})
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass

@@ -45,6 +45,9 @@ export interface ExtractedCadAnalysis {
   aiNotes: string[];
   confidenceScore: number;
   stepData?: StepParseResult;
+  /** Raw STEP bytes (base64), in memory only — stripped before persistence.
+   *  Lets the face-coverage audit re-request its mesh without a re-upload. */
+  fileBase64?: string;
   stepMesh?: TessellatedMesh; // Tessellated B-Rep for the 3D viewer (reused, not re-computed)
   /** How dimensions/volume/weight were obtained. */
   measurementSource: MeasurementSource;
@@ -127,9 +130,13 @@ function densityFor(materialName: string): number {
  * not survive JSON and would blow the storage quota).
  */
 export function stripCadForStorage(a: ExtractedCadAnalysis): ExtractedCadAnalysis {
-  const { stepMesh, stepData, ...rest } = a;
+  const { stepMesh, stepData, fileBase64, ...rest } = a;
   void stepMesh;
   void stepData;
+  // The raw file is kept in memory only, to re-request the face-coverage mesh
+  // without a re-upload. It must never reach localStorage — it is the largest
+  // thing in the object and none of it is needed to re-price a saved quote.
+  void fileBase64;
   return rest as ExtractedCadAnalysis;
 }
 
@@ -576,6 +583,9 @@ async function analyzeSolid(
         ? (crossFeatures ? 70 : Math.round(70 + pcConfidence * 28))
         : sparseBillet ? 25 : Math.round(45 + milledConfidence * 40),
       stepData,
+      // In memory only (stripped by stripCadForStorage) — lets the face-coverage
+      // audit re-request its mesh without asking for the file again.
+      fileBase64: file.base64 ?? (file.buffer ? arrayBufferToBase64(file.buffer) : undefined),
       stepMesh: mesh,
       measurementSource: 'solid',
       featuresNeedReview: isTurned

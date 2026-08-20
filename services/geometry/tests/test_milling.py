@@ -194,3 +194,50 @@ def test_every_cylindrical_face_is_classified_as_bore_or_boss():
     for name in ("bigbore", "counterbore", "spigot", "multi"):
         m = _milled(name)
         assert m["holeCount"] + m["roundBossCount"] > 0, name
+
+
+# --- The face ledger: the check that can see what we MISSED ----------------
+# Every geometry defect in this project has been a silent omission, and none
+# were caught by tests, because a test written from the analyser's output can
+# only assert about features the analyser already reports. These tests assert
+# the opposite property: that nothing in the solid goes unaccounted for without
+# being counted and named.
+
+def test_every_face_is_labelled():
+    m = _milled("multi")
+    assert len(m["faceLabels"]) == m["counts"]["faces"]
+
+
+def test_the_ledger_accounts_for_every_face():
+    m = _milled("counterbore")
+    assert sum(row["faces"] for row in m["faceLedger"]) == m["counts"]["faces"]
+    assert 0.99 <= sum(row["areaShare"] for row in m["faceLedger"]) <= 1.01
+
+
+def test_surface_types_we_never_inspect_are_reported_not_dropped():
+    # This analyser only reads planes and cylinders. Cones, tori, spheres and
+    # NURBS are up to a third of the faces on a real part — every countersink and
+    # chamfer lives there — and used to vanish without trace. They must surface as
+    # `unexamined`, so the gap is a number on the quote rather than a silence.
+    m = _milled("bigbore")
+    labels = set(m["faceLabels"].values())
+    assert all(":" not in l or l.split(":")[0] in
+               ("unexamined", "ignored") for l in labels), labels
+    # And the headline figure exists and is consistent with the ledger.
+    unexamined = sum(r["faces"] for r in m["faceLedger"]
+                     if r["label"] in ("unexamined", "unexplained"))
+    assert m["unaccountedFaces"] == unexamined
+
+
+def test_labelled_mesh_pairs_every_triangle_with_a_classified_face():
+    from app.labelled_mesh import labelled_mesh
+    shape = read_step(SAMPLES["counterbore"])
+    m = _milled("counterbore")
+    mesh = labelled_mesh(shape, m["faceLabels"])
+    assert mesh["triangleCount"] > 0
+    assert len(mesh["triangleFace"]) == mesh["triangleCount"]
+    assert len(mesh["indices"]) == mesh["triangleCount"] * 3
+    # Every triangle resolves to a face that carries a label — an unlabelled
+    # triangle would paint as "unexplained", which must mean something real.
+    for fidx in set(mesh["triangleFace"]):
+        assert str(fidx) in mesh["faceLabel"]

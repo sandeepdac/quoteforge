@@ -48,7 +48,9 @@ from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape, TopTools_Ind
 from OCP.BRep import BRep_Tool
 from OCP.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve
 from OCP.BRepTools import BRepTools
-from OCP.GeomAbs import GeomAbs_Plane, GeomAbs_Cylinder
+from OCP.GeomAbs import (GeomAbs_Plane, GeomAbs_Cylinder, GeomAbs_Cone,
+                         GeomAbs_Sphere, GeomAbs_Torus, GeomAbs_BSplineSurface,
+                         GeomAbs_BezierSurface)
 from OCP.GProp import GProp_GProps
 from OCP.BRepGProp import BRepGProp
 from OCP.Bnd import Bnd_Box
@@ -194,16 +196,55 @@ def analyze_milling(shape) -> dict:
             # Fall back to the old convention rather than losing the face entirely.
             return face.Orientation() == TopAbs_REVERSED
 
+    # --- FACE LEDGER: every face must be accounted for ----------------------
+    #
+    # The recurring failure in this module has never been a wrong number — it has
+    # been a SILENT OMISSION: a real feature that produced no output at all, so
+    # nothing in the quote was visibly wrong and nothing in the tests could fail.
+    # A ⌀24 bore fell between two size gates and vanished; a ⌀21 spigot had no
+    # detector at all; counterbores were collapsed into their parent.
+    #
+    # Those are invisible to any test written from the analyser's own output,
+    # because a check that asks "is the ⌀24 correct?" can only be written by
+    # someone who already knows the ⌀24 exists. So instead of enumerating what we
+    # expect to find, account for EVERYTHING the solid contains: give every face
+    # a label, and report what is left over.
+    #
+    # A face is `unexamined` when its surface type is one this analyser never
+    # looks at (cones, tori, spheres, NURBS — up to a third of the faces on real
+    # parts, and where every countersink and chamfer lives), and `unexplained`
+    # when it is a type we do inspect but it ended up in no feature. Both are
+    # reported rather than dropped, so an omission shows up as a number and a
+    # colour instead of as silence.
+    face_labels: dict = {}
+    face_areas: dict = {}
+    SURFACE_NAMES = {GeomAbs_Plane: "planar", GeomAbs_Cylinder: "cylindrical",
+                     GeomAbs_Cone: "conical", GeomAbs_Sphere: "spherical",
+                     GeomAbs_Torus: "toroidal", GeomAbs_BSplineSurface: "freeform",
+                     GeomAbs_BezierSurface: "freeform"}
+
+    def _label(idx: int, label: str) -> None:
+        face_labels[idx] = label
+
     fexp = TopExp_Explorer(shape, TopAbs_FACE)
     while fexp.More():
         face = TopoDS.Face_s(fexp.Current())
         face_map.Add(face)
+        fidx = face_map.FindIndex(face)
         n_faces += 1
         ad = BRepAdaptor_Surface(face)
         st = ad.GetType()
+        try:
+            face_areas[fidx] = _face_area(face)
+        except Exception:
+            face_areas[fidx] = 0.0
+        # Default: this analyser never inspects this surface type at all. Anything
+        # that IS inspected overwrites the label below.
+        _label(fidx, "unexamined:" + SURFACE_NAMES.get(st, "other"))
         if st == GeomAbs_Plane:
             n_planar += 1
             planar_faces.append(face)
+            _label(fidx, "planar")
         elif st == GeomAbs_Cylinder:
             n_cyl += 1
             ax = _unit(_np(ad.Cylinder().Axis().Direction()))
@@ -239,7 +280,8 @@ def analyze_milling(shape) -> dict:
                 # breaks out of the part (through) or stops inside it (blind).
                 base_ax = float(np.dot(np.array([loc.X(), loc.Y(), loc.Z()]), ax))
                 hole_cyls.append((ax, np.array([loc.X(), loc.Y(), loc.Z()]), r, abs(u1 - u0),
-                                  base_ax + min(_v0, _v1), base_ax + max(_v0, _v1)))
+                                  base_ax + min(_v0, _v1), base_ax + max(_v0, _v1), fidx))
+                _label(fidx, "bore")
             elif r <= bore_radius_cap:
                 # Not flagged internal. Ask the geometry directly rather than
                 # trusting the flag: material INSIDE the cylinder means a round
@@ -251,12 +293,14 @@ def analyze_milling(shape) -> dict:
                 u0, u1, _v0, _v1 = BRepTools.UVBounds_s(face)
                 pt2 = np.array([loc2.X(), loc2.Y(), loc2.Z()])
                 base2 = float(np.dot(pt2, ax))
-                entry = (ax, pt2, r, abs(u1 - u0), base2 + min(_v0, _v1), base2 + max(_v0, _v1))
+                entry = (ax, pt2, r, abs(u1 - u0), base2 + min(_v0, _v1), base2 + max(_v0, _v1), fidx)
                 if _cylinder_has_material_outside(face, ad, ax, r):
                     hole_axes.append(ax)
                     hole_cyls.append(entry)
+                    _label(fidx, "bore")
                 else:
                     boss_cyls.append(entry)
+                    _label(fidx, "boss")
         fexp.Next()
 
     def _fid(f) -> int:
@@ -429,7 +473,7 @@ def analyze_milling(shape) -> dict:
     # away the smaller drill entirely: part 031167-A's four ⌀8 counterbores each
     # sat over a ⌀4.5 through-hole, and only the ⌀8 was ever costed.
     hole_groups: List[dict] = []
-    for ax, pt, r, span, a_lo, a_hi in hole_cyls:
+    for ax, pt, r, span, a_lo, a_hi, fidx in hole_cyls:
         placed = False
         for g in hole_groups:
             if abs(float(np.dot(ax, g["axis"]))) > 0.98:
@@ -449,12 +493,13 @@ def analyze_milling(shape) -> dict:
                     g["faces"] += 1
                     g["axLo"] = min(g["axLo"], a_lo)
                     g["axHi"] = max(g["axHi"], a_hi)
+                    g["faceIdx"].append(fidx)
                     placed = True
                     break
         if not placed:
             hole_groups.append({"axis": ax, "point": pt, "maxRadius": r,
                                 "minRadius": r, "span": span, "faces": 1,
-                                "axLo": a_lo, "axHi": a_hi,
+                                "axLo": a_lo, "axHi": a_hi, "faceIdx": [fidx],
                                 "steps": [{"radius": r, "span": span, "faces": 1}]})
 
     # Which circular features are real machining operations?
@@ -485,6 +530,14 @@ def analyze_milling(shape) -> dict:
 
     partial_bores = [g for g in hole_groups
                      if _is_real_circular_feature(g) and g["span"] < 0.85 * FULL_TURN]
+    # A circular face we DID inspect and then deliberately discarded as a corner
+    # blend is a judgement, not a fact — this is where a real ⌀10.5 relief and a
+    # real R5 fillet look identical. Label them so the discard is visible and
+    # arguable instead of silent.
+    for g in hole_groups:
+        if not _is_real_circular_feature(g):
+            for i in g.get("faceIdx", []):
+                _label(i, "ignored:blend-or-fillet")
     hole_groups = [g for g in hole_groups if _is_real_circular_feature(g)]
 
     # One machining operation per distinct coaxial ⌀ — a stepped hole is a drill
@@ -517,7 +570,7 @@ def analyze_milling(shape) -> dict:
     # --- Round bosses / spigots (external cylinders) ------------------------
     # Grouped the same way, so a spigot split into halves counts once.
     boss_groups: List[dict] = []
-    for ax, pt, r, span, a_lo, a_hi in boss_cyls:
+    for ax, pt, r, span, a_lo, a_hi, fidx in boss_cyls:
         placed = False
         for g in boss_groups:
             if abs(float(np.dot(ax, g["axis"]))) > 0.98:
@@ -773,7 +826,41 @@ def analyze_milling(shape) -> dict:
                  if sparse_billet else "")
               + ".")
 
+    # --- Roll the ledger up -------------------------------------------------
+    # Grouped by label, with the AREA share as well as the count: one large
+    # unexplained face matters more than a dozen slivers, and area is what tells
+    # a reader whether the analysis covered the part or merely touched it.
+    total_area = sum(face_areas.values()) or 1.0
+    ledger: dict = {}
+    for idx, label in face_labels.items():
+        head = label.split(":")[0]
+        row = ledger.setdefault(head, {"faces": 0, "areaMm2": 0.0, "detail": {}})
+        row["faces"] += 1
+        row["areaMm2"] += face_areas.get(idx, 0.0)
+        if ":" in label:
+            d = label.split(":", 1)[1]
+            row["detail"][d] = row["detail"].get(d, 0) + 1
+    face_ledger = [
+        {"label": k,
+         "faces": v["faces"],
+         "areaMm2": round(v["areaMm2"], 2),
+         "areaShare": round(v["areaMm2"] / total_area, 4),
+         "detail": v["detail"]}
+        for k, v in sorted(ledger.items(), key=lambda kv: -kv[1]["areaMm2"])
+    ]
+    # The headline number: faces this analyser did not account for, either
+    # because it never inspects that surface type or because it inspected one and
+    # produced nothing. This is the figure that should make a reader distrust a
+    # quote, and the one that has been missing every time a feature vanished.
+    unaccounted = [r for r in face_ledger if r["label"] in ("unexamined", "unexplained")]
+    unaccounted_faces = sum(r["faces"] for r in unaccounted)
+    unaccounted_share = round(sum(r["areaShare"] for r in unaccounted), 4)
+
     return {
+        "faceLedger": face_ledger,
+        "unaccountedFaces": unaccounted_faces,
+        "unaccountedAreaShare": unaccounted_share,
+        "faceLabels": {str(k): v for k, v in sorted(face_labels.items())},
         "setupCount": setup_count,
         "accessDirections": [[round(x, 4) for x in d.tolist()]
                              for d in (face_access_dirs + tool_access_dirs)],

@@ -250,6 +250,26 @@ Return ONLY the JSON object.`;
     }
   });
 
+  // The face-classification mesh: a tessellation coloured by what the geometry
+  // analyser understood, including the faces it could not account for. Kept off
+  // the quote path deliberately — it is roughly ten times the size of the
+  // analysis and is diagnostic, not load-bearing.
+  app.post('/api/labelled-mesh-b64', async (req, res) => {
+    try {
+      const { fileBase64, fileName } = req.body;
+      if (!fileBase64) return res.json({ ok: false, error: 'no data' });
+      const upstream = await fetch(`${GEOMETRY_URL}/labelled-mesh-b64`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileBase64, fileName }),
+      });
+      const json = await upstream.json();
+      return res.json(json);
+    } catch (err: any) {
+      return res.json({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

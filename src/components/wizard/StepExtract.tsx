@@ -23,6 +23,8 @@ import { cn } from '../../utils/cn';
 import { useMoney } from '../../utils/useMoney';
 import { dimsDesc } from '../../utils/dims';
 import { MACHINE_CATALOG } from '../../utils/machineSelection';
+import FaceCoverageViewer from '../cad/FaceCoverageViewer';
+import { fetchLabelledMesh, LabelledMesh } from '../../utils/geometryService';
 
 interface StepExtractProps {
   cadAnalysis?: ExtractedCadAnalysis;
@@ -48,6 +50,11 @@ const loadingMessages = [
 export default function StepExtract({ cadAnalysis, materialId, onContinue, onBack, onSnapshot, savedThumbnail }: StepExtractProps) {
   const { materials } = useQuotes();
   const { symbol } = useMoney();
+  // Face coverage: the part painted by what the engine understood, including the
+  // faces it could not account for. Fetched separately from the analysis because
+  // the mesh is roughly ten times its size and is never persisted.
+  const [coverage, setCoverage] = useState<LabelledMesh | null>(null);
+  const [coverageLoading, setCoverageLoading] = useState(false);
   // A 3D solid part: it either has live tessellated geometry (fresh upload) OR it
   // was measured from a STEP but the heavy mesh was stripped on save (edit/clone).
   const isStepModel = cadAnalysis?.fileType === 'STEP' || !!cadAnalysis?.stepData;
@@ -97,6 +104,17 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
       });
     }
   }, [cadAnalysis, materials]);
+
+  useEffect(() => {
+    const b64 = cadAnalysis?.fileBase64;
+    if (!b64) { setCoverage(null); return; }
+    let live = true;
+    setCoverageLoading(true);
+    fetchLabelledMesh(b64, cadAnalysis?.fileName)
+      .then((m) => { if (live) setCoverage(m); })
+      .finally(() => { if (live) setCoverageLoading(false); });
+    return () => { live = false; };
+  }, [cadAnalysis?.fileBase64, cadAnalysis?.fileName]);
 
   useEffect(() => {
     if (!isLoading) return;
@@ -528,6 +546,35 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
               </div>
             );
           })()}
+
+          {/* FACE COVERAGE — the audit that can see what the engine MISSED.
+              Every other check in this app is written from the analyser's own
+              output, so it shares the analyser's blind spots. This one starts
+              from the solid and asks what is left over. */}
+          {isStepModel && (cadAnalysis?.fileBase64 || coverage) && (
+            <div className="bg-card border border-border p-5 rounded-xl space-y-4">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5 flex items-center justify-between">
+                <span className="flex items-center gap-1.5"><Box size={14} className="text-primary" /> What the engine understood</span>
+                {coverage && (
+                  <span className={cn(
+                    'text-[10px] font-bold px-2 py-0.5 rounded-full border',
+                    (coverage.unaccountedFaces ?? 0) > 0
+                      ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30'
+                      : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
+                  )}>
+                    {(coverage.unaccountedFaces ?? 0) > 0
+                      ? `${coverage.unaccountedFaces} unaccounted`
+                      : 'fully accounted'}
+                  </span>
+                )}
+              </h3>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                The part coloured by how each face was classified. A quote can only price features the engine
+                found — so before trusting the number, look for anything the engine could not explain.
+              </p>
+              <FaceCoverageViewer mesh={coverage} loading={coverageLoading} />
+            </div>
+          )}
 
           {/* Machining drivers (turning / milling) */}
           {isTurned && cadAnalysis && (

@@ -117,3 +117,69 @@ export async function extractTurnedProfile(fileBase64: string, fileName?: string
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Face-classification mesh — the outside-in check on the geometry service
+// ---------------------------------------------------------------------------
+//
+// Every geometry defect found in this project so far has been a SILENT
+// OMISSION: a feature present in the solid that produced no output at all. None
+// were caught by our own tests, and they could not have been — a test written
+// from the analyser's output can only ask about features the analyser already
+// reports. What found them was someone looking at the part.
+//
+// This makes that check available in the product. Each triangle carries the
+// B-Rep face it came from, and each face carries how the analyser classified
+// it, so the viewer can paint the part by what the engine UNDERSTOOD rather
+// than by what it drew markers for. A face the engine never accounted for gets
+// a loud colour instead of blending into the model.
+
+export interface LabelledMesh {
+  ok: boolean;
+  positions: number[];
+  normals: number[];
+  indices: number[];
+  /** One B-Rep face index per TRIANGLE (indices.length / 3 entries). */
+  triangleFace: number[];
+  /** Face index (as string) → classification label. */
+  faceLabel: Record<string, string>;
+  vertexCount: number;
+  triangleCount: number;
+  faceLedger?: Array<{ label: string; faces: number; areaMm2: number; areaShare: number; detail: Record<string, number> }>;
+  /** Faces the analyser did not account for, by count and by share of area. */
+  unaccountedFaces?: number;
+  unaccountedAreaShare?: number;
+}
+
+/** How each classification reads, and what it means. Shared by the 3D overlay
+ *  and the legend so a colour always means the same thing. */
+export const FACE_CLASS_INFO: Record<string, { color: string; title: string; blurb: string }> = {
+  bore: { color: '#3b82f6', title: 'Bore / hole', blurb: 'Internal cylinder — drilled, bored or interpolated.' },
+  boss: { color: '#14b8a6', title: 'Boss / spigot', blurb: 'External cylinder the cutter profiles around.' },
+  planar: { color: '#94a3b8', title: 'Flat face', blurb: 'Inspected: drives setups, pockets and facing.' },
+  ignored: { color: '#f59e0b', title: 'Ignored as blend', blurb: 'Seen, then judged a corner fillet rather than a feature — the judgement worth arguing with.' },
+  unexamined: { color: '#ef4444', title: 'NOT EXAMINED', blurb: 'A surface type this analyser never inspects. Countersinks, chamfers and tapers live here.' },
+  unexplained: { color: '#dc2626', title: 'UNEXPLAINED', blurb: 'Inspected but attributed to no feature — an omission, not a decision.' },
+};
+
+export function faceClassOf(label: string): string {
+  return (label || 'unexplained').split(':')[0];
+}
+
+/** Fetch the classification mesh. Null on any failure — the viewer falls back to
+ *  the plain in-browser tessellation, so this never costs a quote. */
+export async function fetchLabelledMesh(fileBase64: string, fileName?: string): Promise<LabelledMesh | null> {
+  if (!fileBase64) return null;
+  try {
+    const res = await fetch('/api/labelled-mesh-b64', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileBase64, fileName }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json?.ok === true ? (json as LabelledMesh) : null;
+  } catch {
+    return null;
+  }
+}
