@@ -241,3 +241,26 @@ def test_labelled_mesh_pairs_every_triangle_with_a_classified_face():
     # triangle would paint as "unexplained", which must mean something real.
     for fidx in set(mesh["triangleFace"]):
         assert str(fidx) in mesh["faceLabel"]
+
+
+def test_the_ledger_never_claims_coverage_the_output_does_not_have():
+    # The ledger labelled a face `boss` at the moment it was classified, but a
+    # boss group that fails the wrap/size test produces no boss feature. Part
+    # 035838 had 17 such faces — 23% of its surface — counted as understood while
+    # nothing in the quote named them. A ledger that overstates its own coverage
+    # is the exact failure it exists to expose, so labels must survive the
+    # downstream filters, not just the initial classification.
+    for name in ("spigot", "counterbore", "multi", "bigbore", "pocket"):
+        m = _milled(name)
+        bosses_claimed = sum(r["faces"] for r in m["faceLedger"] if r["label"] == "boss")
+        if bosses_claimed:
+            assert m["roundBossCount"] > 0, (
+                f"{name}: ledger labels {bosses_claimed} faces `boss` but the "
+                f"analysis reports no boss feature"
+            )
+        holes_claimed = sum(r["faces"] for r in m["faceLedger"] if r["label"] == "bore")
+        if holes_claimed:
+            assert m["holeCount"] > 0, (
+                f"{name}: ledger labels {holes_claimed} faces `bore` but the "
+                f"analysis reports no hole"
+            )

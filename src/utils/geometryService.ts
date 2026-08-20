@@ -157,8 +157,8 @@ export const FACE_CLASS_INFO: Record<string, { color: string; title: string; blu
   bore: { color: '#3b82f6', title: 'Bore / hole', blurb: 'Internal cylinder — drilled, bored or interpolated.' },
   boss: { color: '#14b8a6', title: 'Boss / spigot', blurb: 'External cylinder the cutter profiles around.' },
   planar: { color: '#94a3b8', title: 'Flat face', blurb: 'Inspected: drives setups, pockets and facing.' },
-  ignored: { color: '#f59e0b', title: 'Ignored as blend', blurb: 'Seen, then judged a corner fillet rather than a feature — the judgement worth arguing with.' },
-  unexamined: { color: '#ef4444', title: 'NOT EXAMINED', blurb: 'A surface type this analyser never inspects. Countersinks, chamfers and tapers live here.' },
+  ignored: { color: '#f59e0b', title: 'Seen, then discarded', blurb: 'Inspected and then judged a corner blend or an outside-profile radius rather than a feature. A judgement, not a fact — and the one most worth arguing with.' },
+  unexamined: { color: '#ef4444', title: 'NOT EXAMINED', blurb: 'A surface type this analyser never inspects. Every countersink, chamfer and taper lives here.' },
   unexplained: { color: '#dc2626', title: 'UNEXPLAINED', blurb: 'Inspected but attributed to no feature — an omission, not a decision.' },
 };
 

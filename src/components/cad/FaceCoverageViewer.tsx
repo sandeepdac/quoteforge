@@ -213,9 +213,11 @@ export default function FaceCoverageViewer({ mesh, loading, unavailableNote }: P
               <strong className="text-foreground">
                 {unaccounted} face{unaccounted === 1 ? '' : 's'} unaccounted for
               </strong>{' '}
-              ({(share * 100).toFixed(1)}% of the part&rsquo;s surface). Anything red was not turned into a feature,
-              so no operation, tool or minute in this quote represents it. Rotate the part and check what is red before
-              you send the price.
+              ({(share * 100).toFixed(1)}% of the part&rsquo;s surface). Their material and area DO reach the price —
+              roughing is billet minus part, and finishing bills the whole wetted area — but{' '}
+              <strong className="text-foreground">no operation, tool or setup names them</strong>. What is missing is
+              feature-specific work: a countersink and its tool, a contour pass at a proper stepover, an extra clamping
+              to reach them. Rotate the part, see what is red, and add those before you send the price.
             </>
           ) : (
             <>

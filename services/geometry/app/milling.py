@@ -580,15 +580,26 @@ def analyze_milling(shape) -> dict:
                     g["span"] += span
                     g["axLo"] = min(g["axLo"], a_lo)
                     g["axHi"] = max(g["axHi"], a_hi)
+                    g["faceIdx"].append(fidx)
                     placed = True
                     break
         if not placed:
             boss_groups.append({"axis": ax, "point": pt, "radius": r, "span": span,
-                                "axLo": a_lo, "axHi": a_hi})
+                                "axLo": a_lo, "axHi": a_hi, "faceIdx": [fidx]})
     # A real spigot wraps most of the way round and is big enough to profile
     # around; small external radii are just corner rounds on the outside profile.
     round_bosses = [g for g in boss_groups
                     if g["span"] >= 0.85 * FULL_TURN and 2.0 * g["radius"] > corner_dia_max]
+    # External cylinders that did NOT survive that test produce no boss feature,
+    # so leaving them labelled `boss` would have the ledger claim coverage it does
+    # not have — the very failure this ledger exists to expose. On part 035838 that
+    # was 17 faces and 23% of the surface: the outside profile radii of a C-shape,
+    # counted as understood while nothing in the quote named them.
+    _kept_boss_faces = {i for g in round_bosses for i in g.get("faceIdx", [])}
+    for g in boss_groups:
+        for i in g.get("faceIdx", []):
+            if i not in _kept_boss_faces:
+                _label(i, "ignored:external-radius")
     round_boss_diameters = sorted((round(2.0 * g["radius"], 3) for g in round_bosses), reverse=True)
 
     # --- TURNED vs MILLED features ------------------------------------------
