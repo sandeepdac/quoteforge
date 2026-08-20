@@ -10,6 +10,7 @@ import {
   STEEL_MILL_TOOLS,
 } from './millingTools';
 import { materialPropsFor } from './materials';
+import { buildMilledPlan } from './milledPlanner';
 
 describe('milling tool library selection', () => {
   it('picks the aluminium set for aluminium, the steel set for ferrous', () => {
@@ -95,7 +96,10 @@ describe('milled plan reads like a CAM operation sheet', () => {
     expect(names).toContain('Rest roughing');
     expect(names).toContain('Wall finishing');
     expect(names).toContain('Floor finishing');
-    expect(names).toContain('Chamfer / edge break'); // holes present → edge break
+    // No chamfer GEOMETRY in this profile, so the plan reserves an allowance and
+    // says so. Conical faces were invisible to the analyser until recently, and
+    // "there are holes, someone breaks the edges" was all it could honestly say.
+    expect(names).toContain('Chamfer / edge break (estimated)');
   });
 
   it('groups work into the measured number of setups', () => {
@@ -135,5 +139,59 @@ describe('no phantom setups — work is distributed, not piled into setup 1', ()
     expect(c.plan!.setups.length).toBeLessThan(8);
     expect(c.plan!.setups.every((s) => s.operations.length > 0)).toBe(true);
     expect(c.setups).toBe(c.plan!.setups.length); // billing matches the shown plan
+  });
+});
+
+// --- Conical work: measured, not assumed ----------------------------------
+// The analyser read only planes and cylinders, so every countersink and chamfer
+// on every part quoted cost nothing. Now they are measured — which also means
+// the plan can distinguish a real chamfer from an allowance for one.
+describe('countersinks and chamfers come off the solid', () => {
+  const base = {
+    m: materialPropsFor('Aluminium 6082'),
+    minPlaneDimMm: 40,
+    facingSec: 20, roughBaseSec: 60, finishBaseSec: 80,
+    roughComplexSec: 0, finishComplexSec: 0, drillSec: 30,
+    removedVolCm3: 20, millMrr: 60, finishAreaCm2: 50, finishRate: 40,
+    holeCount: 4, holeDiametersMm: [6, 6, 6, 6], maxDrillMm: 20,
+    bossCount: 0, setups: 1, eff: 0.8,
+    opCost: (sec: number) => sec / 60,
+    toolChangeSec: 10,
+    colors: { rough: '#1', finish: '#2', drill: '#3', deep: '#4', facing: '#5', turn: '#6' },
+  };
+
+  it('names a measured countersink with the tool a programmer would pick', () => {
+    const plan = buildMilledPlan({
+      ...base,
+      countersinkSec: 12,
+      countersinks: [{ diameterMm: 9.34, includedDeg: 90, depthMm: 1.9, count: 4 }],
+    });
+    const ops = plan.setups.flatMap((s) => s.operations);
+    const cs = ops.find((o) => o.name.startsWith('Countersink'))!;
+    expect(cs).toBeTruthy();
+    expect(cs.tool).toMatch(/90° countersink/);
+    expect(cs.driver).toMatch(/4 countersinks/);
+  });
+
+  it('a measured chamfer is additive work, not a slice of the finish budget', () => {
+    const withOut = buildMilledPlan(base);
+    const withCham = buildMilledPlan({
+      ...base,
+      chamferSec: 15,
+      chamfers: [{ diameterMm: 6, includedDeg: 90, depthMm: 0.5, count: 4 }],
+    });
+    const nameOf = (p: typeof withOut) => p.setups.flatMap((s) => s.operations).map((o) => o.name);
+    // Measured → named plainly; unmeasured → labelled as the allowance it is.
+    expect(nameOf(withCham)).toContain('Chamfer / edge break');
+    expect(nameOf(withOut)).toContain('Chamfer / edge break (estimated)');
+    // The allowance is carved out of wall finishing; the measured one is not.
+    const wall = (p: typeof withOut) =>
+      p.setups.flatMap((s) => s.operations).find((o) => o.name === 'Wall finishing')!.seconds;
+    expect(wall(withCham)).toBeGreaterThan(wall(withOut));
+  });
+
+  it('does not invent a countersink when the solid has none', () => {
+    const plan = buildMilledPlan(base);
+    expect(plan.setups.flatMap((s) => s.operations).some((o) => /Countersink/.test(o.name))).toBe(false);
   });
 });

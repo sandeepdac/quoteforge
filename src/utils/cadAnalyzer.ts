@@ -360,6 +360,11 @@ async function analyzeSolid(
           partialBoreDiametersMm: mm.partialBoreDiametersMm,
           steppedHoleCount: mm.steppedHoleCount,
           roundBossDiametersMm: mm.roundBossDiametersMm,
+          // Conical work, measured rather than assumed. Drill points are
+          // deliberately not carried through: the drill already paid for them.
+          countersinks: mm.countersinks,
+          chamfers: mm.chamfers,
+          tapers: mm.tapers,
           turnedFeatures: (mm.turnedFeatures ?? []).map((f) => ({
             kind: f.kind, diameterMm: f.diameterMm, lengthMm: f.lengthMm ?? 0,
           })),

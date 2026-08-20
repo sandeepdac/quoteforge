@@ -36,6 +36,19 @@ export interface GeometryMilled {
   partialBoreDiametersMm?: number[];
   /** Holes carrying a counterbore/step — drill PLUS counterbore, two tools. */
   steppedHoleCount?: number;
+  // --- conical features: countersinks, chamfers, drill points, tapers ------
+  /** Countersinks — a real operation with its own tool. */
+  countersinkCount?: number;
+  countersinks?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; onHoleDiaMm?: number; count?: number }>;
+  /** Measured chamfers / edge breaks (rather than a guess carved from finishing). */
+  chamferCount?: number;
+  chamfers?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
+  /** Tapered / draft walls — contoured surface, not an edge treatment. */
+  taperCount?: number;
+  tapers?: Array<{ minDiaMm: number; maxDiaMm: number; includedDeg: number; lengthMm: number; count?: number }>;
+  /** Conical hole bottoms left by the drill. Reported, NOT costed — the drilling
+   *  operation already paid for them. */
+  drillPointCount?: number;
   /** Round bosses / spigots (external cylinders) the cutter profiles around. */
   roundBossCount?: number;
   roundBossDiametersMm?: number[];
@@ -158,7 +171,11 @@ export const FACE_CLASS_INFO: Record<string, { color: string; title: string; blu
   boss: { color: '#14b8a6', title: 'Boss / spigot', blurb: 'External cylinder the cutter profiles around.' },
   planar: { color: '#94a3b8', title: 'Flat face', blurb: 'Inspected: drives setups, pockets and facing.' },
   ignored: { color: '#f59e0b', title: 'Seen, then discarded', blurb: 'Inspected and then judged a corner blend or an outside-profile radius rather than a feature. A judgement, not a fact — and the one most worth arguing with.' },
-  unexamined: { color: '#ef4444', title: 'NOT EXAMINED', blurb: 'A surface type this analyser never inspects. Every countersink, chamfer and taper lives here.' },
+  countersink: { color: '#8b5cf6', title: 'Countersink', blurb: 'A cone opening out past its hole — a real operation with its own tool, measured from the solid.' },
+  chamfer: { color: '#a78bfa', title: 'Chamfer / edge break', blurb: 'A short cone breaking an edge. Measured, so the time is real rather than an allowance.' },
+  'drill-point': { color: '#c4b5fd', title: 'Drill point', blurb: 'The conical bottom a twist drill leaves (~118°). Reported for completeness but NOT charged — the drilling operation already paid for it.' },
+  taper: { color: '#06b6d4', title: 'Taper / draft wall', blurb: 'A shallow-angle cone with real length — contoured wall to be surfaced, not an edge treatment.' },
+  unexamined: { color: '#ef4444', title: 'NOT EXAMINED', blurb: 'A surface type this analyser never inspects — spheres and freeform NURBS. Cones used to live here too.' },
   unexplained: { color: '#dc2626', title: 'UNEXPLAINED', blurb: 'Inspected but attributed to no feature — an omission, not a decision.' },
 };
 

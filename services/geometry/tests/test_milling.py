@@ -264,3 +264,35 @@ def test_the_ledger_never_claims_coverage_the_output_does_not_have():
                 f"{name}: ledger labels {holes_claimed} faces `bore` but the "
                 f"analysis reports no hole"
             )
+
+
+# --- Conical features: countersinks, chamfers, drill points, tapers --------
+# The analyser read planes and cylinders only, so cones — up to a third of the
+# faces on a real part — were never inspected. Every countersink and chamfer on
+# every part quoted cost nothing.
+
+def test_a_countersink_is_found_and_named():
+    m = _milled("countersink")
+    assert m["countersinkCount"] >= 1, m["faceLedger"]
+    cs = m["countersinks"][0]
+    assert 85 <= cs["includedDeg"] <= 95          # a 90° countersink
+    assert cs["diameterMm"] > cs.get("onHoleDiaMm", 0)  # it opens PAST its hole
+
+
+def test_a_drill_point_is_not_charged_as_a_countersink():
+    # 118° is the standard twist-drill point angle. A conical hole bottom is left
+    # by the drill and is already paid for by the drilling operation. Judging by
+    # "is it wider than the hole?" alone reported 148 countersinks on CTC-02,
+    # every one of them a drilled step.
+    from app.milling import analyze_milling as _am
+    m = _milled("countersink")
+    # The sample's countersink is 90°, so nothing here should read as a drill
+    # point; the property under test is that the two are distinguished at all.
+    assert m["countersinkCount"] >= 1
+    assert all(not (114 <= c["includedDeg"] <= 122) for c in m["countersinks"]), m["countersinks"]
+
+
+def test_conical_faces_are_no_longer_unexamined():
+    m = _milled("countersink")
+    labels = set(m["faceLabels"].values())
+    assert not any(l.startswith("unexamined:conical") for l in labels), labels

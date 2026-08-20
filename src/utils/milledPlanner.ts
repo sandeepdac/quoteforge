@@ -49,6 +49,13 @@ export interface MilledPlanInput {
   turnedFeatures?: Array<{ kind: 'bore' | 'spigot'; diameterMm: number; lengthMm: number }>;
   /** The chosen machine has a spindle that turns — changes the tool vocabulary. */
   turningRoute?: boolean;
+  /** MEASURED conical work: countersinks and chamfers, with their own seconds.
+   *  Absent (0) means the geometry service found none — not that none were
+   *  looked for, which was the situation until cones were inspected at all. */
+  countersinkSec?: number;
+  chamferSec?: number;
+  countersinks?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
+  chamfers?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
   setups: number;
   /**
    * Setups that exist for WORKHOLDING, not for work volume — a hole drilled on a
@@ -202,19 +209,49 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
     }
   }
 
-  // --- Chamfer / edge-break: carved from the finish budget so the total is
-  // unchanged, shown as its own op when there are edges worth breaking. -----
+  // --- Countersinks: a MEASURED operation with its own tool ----------------
+  // Conical faces were never inspected, so countersinks were invisible. Now the
+  // ⌀ and included angle come off the solid, which means the traveller can name
+  // the tool a programmer would actually pick.
+  const csinks = inp.countersinks ?? [];
+  const nCsink = csinks.reduce((n, x) => n + Math.max(1, x.count ?? 1), 0);
+  if ((inp.countersinkSec ?? 0) > 0.5 && nCsink > 0) {
+    const angles = [...new Set(csinks.map((x) => Math.round(x.includedDeg)))];
+    addSub({
+      name: `Countersink ⌀${r1(csinks[0].diameterMm)}`,
+      tool: `⌀${r1(csinks[0].diameterMm)} × ${angles[0]}° countersink`,
+      sec: inp.countersinkSec ?? 0,
+      driver: `${nCsink} countersink${nCsink === 1 ? '' : 's'} — ${csinks.map((x) => `⌀${r1(x.diameterMm)}@${Math.round(x.includedDeg)}°`).join(', ')}`,
+      color: c.drill,
+    });
+  }
+
+  // --- Chamfer / edge break ------------------------------------------------
+  // When chamfers are MEASURED the time is real and additive: it is work that
+  // was simply never counted. Without measurements the old behaviour stands — a
+  // slice carved out of the finish budget so the total is conserved, which was
+  // only ever a placeholder for "there are edges here, someone breaks them".
   let chamfer: SubOp | null = null;
-  if ((inp.holeCount > 0 || inp.bossCount > 0) && cham) {
+  const chamfs = inp.chamfers ?? [];
+  const nCham = chamfs.reduce((n, x) => n + Math.max(1, x.count ?? 1), 0);
+  if ((inp.chamferSec ?? 0) > 0.5 && nCham > 0) {
+    chamfer = {
+      name: 'Chamfer / edge break',
+      tool: toolName(cham, 'Chamfer mill'),
+      sec: inp.chamferSec ?? 0,
+      driver: `${nCham} measured chamfer${nCham === 1 ? '' : 's'} — ${chamfs.map((x) => `⌀${r1(x.diameterMm)}@${Math.round(x.includedDeg)}°`).join(', ')}`,
+      color: c.facing,
+    };
+  } else if ((inp.holeCount > 0 || inp.bossCount > 0) && cham) {
     const chamSec = Math.min(inp.finishBaseSec * 0.08, 30);
     if (chamSec > 0.5) {
       const wall = subs.find((o) => o.name === 'Wall finishing');
       if (wall) wall.sec = Math.max(0, wall.sec - chamSec); // conserve total time
       chamfer = {
-        name: 'Chamfer / edge break',
+        name: 'Chamfer / edge break (estimated)',
         tool: toolName(cham, 'Chamfer mill'),
         sec: chamSec,
-        driver: `${inp.holeCount} holes + edges`,
+        driver: `${inp.holeCount} holes + edges — no chamfer geometry found, allowance only`,
         color: c.facing,
       };
     }

@@ -68,6 +68,19 @@ export interface MilledProfile {
   /** Round spigots the cutter has to profile around (⌀ mm). */
   roundBossDiametersMm?: number[];
   /**
+   * CONICAL features, which were invisible to this model until now — the
+   * analyser only read planes and cylinders, so every countersink and chamfer on
+   * every part ever quoted cost nothing at all.
+   *
+   * Drill points are deliberately absent: a conical hole bottom is left by the
+   * drill and is already paid for by the drilling operation. Counting it again
+   * would invent work that nobody does.
+   */
+  countersinks?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
+  chamfers?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
+  /** Tapered / draft walls — contoured surface a ball tool has to sweep. */
+  tapers?: Array<{ minDiaMm: number; maxDiaMm: number; includedDeg: number; lengthMm: number; count?: number }>;
+  /**
    * Features the SPINDLE can cut, because they are coaxial with the part's
    * turning axis — bores, spigots, faces. On a lathe or mill-turn these are
    * TURNED (roughly 4x faster than interpolating them with an end mill); only
@@ -438,8 +451,38 @@ export function calculateMilledCosts(
   const drillPerHole = DRILL_SEC_PER_HOLE_REF * (1 / Math.max(0.3, m.machinability)) * (throughDepthMm / 20);
   const drillSec = holes * drillPerHole * feedMult;
 
+  // --- Conical features: countersinks and chamfers -------------------------
+  // These cost nothing at all until now, because the analyser read only planes
+  // and cylinders. They are cheap per feature and there are often a lot of them,
+  // and — unlike most of what this model estimates — they are MEASURED, so the
+  // count is not a guess.
+  //
+  // A countersink is a short plunge with its own tool. A chamfer is one pass
+  // round an edge. Both scale with diameter and with how hard the material is to
+  // cut. Drill points are deliberately excluded upstream: a conical hole bottom
+  // is left by the drill and is already inside `drillSec`.
+  const csinks = p.countersinks ?? [];
+  const chamfs = p.chamfers ?? [];
+  const countTimes = <T extends { count?: number }>(items: T[]) =>
+    items.reduce((n, it) => n + Math.max(1, it.count ?? 1), 0);
+  const countersinkCount = countTimes(csinks);
+  const chamferCount = countTimes(chamfs);
+  const machDerate = 1 / Math.max(0.3, m.machinability);
+  // Plunge to depth, dwell, retract — a few seconds each, larger ⌀ taking longer.
+  const countersinkSec = csinks.reduce(
+    (sec, c) => sec + Math.max(1, c.count ?? 1) * (2.0 + 0.25 * Math.max(0, c.diameterMm)) * machDerate,
+    0
+  ) * feedMult;
+  // One lap of the edge at a chamfer-mill feed; a circular chamfer is πd long.
+  const CHAMFER_FEED_MM_PER_MIN = 900;
+  const chamferSec = chamfs.reduce((sec, c) => {
+    const pathMm = Math.PI * Math.max(1, c.diameterMm);
+    return sec + Math.max(1, c.count ?? 1) * ((pathMm / CHAMFER_FEED_MM_PER_MIN) * 60) * machDerate;
+  }, 0) * feedMult;
+  const edgeSec = countersinkSec + chamferSec;
+
   // --- Cycle time (theoretical → actual via efficiency) --------------------
-  const cuttingSec = roughSec + turningSec + facingSec + finishSec + drillSec;
+  const cuttingSec = roughSec + turningSec + facingSec + finishSec + drillSec + edgeSec;
   const toolCount = estimateToolCount(p);
   const toolChangeSec = cnc.millToolChangeSec ?? 10;
   const airSec = toolCount * toolChangeSec + cuttingSec * 0.08; // rapids between features
@@ -464,6 +507,10 @@ export function calculateMilledCosts(
     turningSec,
     turnedFeatures: onAxis,
     turningRoute: !!p.turningRoute,
+    countersinkSec,
+    chamferSec,
+    countersinks: csinks,
+    chamfers: chamfs,
     finishBaseSec,
     roughComplexSec: roughBaseSec * (deepMult - 1),
     finishComplexSec: finishBaseSec * (deepMult - 1),
@@ -551,6 +598,7 @@ export function calculateMilledCosts(
     { key: 'rough', name: turnedVol > 0 ? 'Roughing (milled, off-axis)' : 'Roughing (hog-out)', driver: `${r1(milledVol)} cm³ removed @ ${r1(millMrr)} cm³/min — ${secStr(roughBaseSec)}`, value: opCost(roughBaseSec), color: COLORS.rough },
     { key: 'finish', name: 'Finishing (walls/floors)', driver: `${r1(finishAreaCm2)} cm²${finishSculpt > 1.05 ? ` contoured ×${r1(finishSculpt)} (small ball)` : ` @ ${r1(finishRate)} cm²/min`} — ${secStr(finishBaseSec)}`, value: opCost(finishBaseSec), color: COLORS.finish },
     { key: 'drill', name: 'Drilling', driver: `${holes} hole${holes === 1 ? '' : 's'}${turnedBoreDias.length ? ` (${turnedBoreDias.length} on-axis bore${turnedBoreDias.length === 1 ? '' : 's'} turned, not drilled)` : ''} — ${secStr(drillSec)}`, value: opCost(drillSec), color: COLORS.drill },
+    { key: 'edge', name: 'Countersink / chamfer', driver: edgeSec > 0 ? `${countersinkCount ? `${countersinkCount} countersink${countersinkCount === 1 ? '' : 's'}` : ''}${countersinkCount && chamferCount ? ' + ' : ''}${chamferCount ? `${chamferCount} chamfer${chamferCount === 1 ? '' : 's'}` : ''} measured from the solid — ${secStr(edgeSec)}` : '', value: opCost(edgeSec), color: COLORS.facing },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${p.pocketCount} pocket${p.pocketCount === 1 ? '' : 's'}`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },

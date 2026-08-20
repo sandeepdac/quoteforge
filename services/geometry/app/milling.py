@@ -162,6 +162,11 @@ def analyze_milling(shape) -> dict:
     hole_cyls: List[tuple] = []
     # External cylinders as (axis, point-on-axis, radius, wrap): round bosses.
     boss_cyls: List[tuple] = []
+    # CONICAL faces. Never inspected until now — up to a third of the faces on a
+    # real part, and where every countersink, chamfer, drill point and tapered
+    # wall lives. Collected raw here and classified once the holes are known,
+    # because what a cone MEANS depends on the hole it sits on.
+    cone_faces: List[dict] = []
 
     # External cylindrical features — round bosses / spigots / pads standing
     # proud of the stock. These are NOT holes (material lies inside them, not
@@ -301,6 +306,30 @@ def analyze_milling(shape) -> dict:
                 else:
                     boss_cyls.append(entry)
                     _label(fidx, "boss")
+        elif st == GeomAbs_Cone:
+            co = ad.Cone()
+            cax = _unit(_np(co.Axis().Direction()))
+            u0, u1, v0, v1 = BRepTools.UVBounds_s(face)
+            semi = abs(co.SemiAngle())
+            # Radius at each end of the slant range: a cone's V runs along the
+            # slant, so this gives the small and large ⌀ of the actual face —
+            # which is what separates a countersink (opens out past its hole)
+            # from a drill point (closes down to the tip).
+            ra = abs(co.RefRadius() + v0 * math.tan(co.SemiAngle()))
+            rb = abs(co.RefRadius() + v1 * math.tan(co.SemiAngle()))
+            r_lo, r_hi = (ra, rb) if ra <= rb else (rb, ra)
+            slant = abs(v1 - v0)
+            loc_c = co.Axis().Location()
+            pt_c = np.array([loc_c.X(), loc_c.Y(), loc_c.Z()])
+            cone_faces.append({
+                "faceIdx": fidx, "axis": cax, "point": pt_c,
+                "semiDeg": math.degrees(semi),
+                "includedDeg": 2.0 * math.degrees(semi),
+                "rLo": r_lo, "rHi": r_hi,
+                "wrap": abs(u1 - u0),
+                "axialMm": slant * abs(math.cos(semi)),
+                "internal": face.Orientation() == TopAbs_REVERSED,
+            })
         fexp.Next()
 
     def _fid(f) -> int:
@@ -602,6 +631,110 @@ def analyze_milling(shape) -> dict:
                 _label(i, "ignored:external-radius")
     round_boss_diameters = sorted((round(2.0 * g["radius"], 3) for g in round_bosses), reverse=True)
 
+    # --- CONICAL FEATURES: countersinks, chamfers, drill points, tapers -----
+    #
+    # Cones were never inspected at all, so every countersink and chamfer on
+    # every part quoted so far cost nothing. But they are not one thing, and
+    # costing them uniformly would be worse than ignoring them: measured across
+    # the sample parts, conical faces fall into four populations with different
+    # consequences.
+    #
+    #   DRILL POINT — a ~118° included cone (the standard twist-drill point)
+    #       whose LARGEST ⌀ equals the hole it terminates. It is the bottom of a
+    #       drilled hole, already paid for by the drilling operation. Costing it
+    #       as a countersink would invent an operation that does not exist, which
+    #       is why the discriminator matters: a drill point closes DOWN to the
+    #       tip, a countersink opens OUT past its hole.
+    #   COUNTERSINK — a cone opening out beyond a coaxial hole. A real operation
+    #       with its own tool.
+    #   CHAMFER / EDGE BREAK — a short cone not tied to a hole, typically 90°
+    #       included. Real, cheap, and the planner already reserves time for it —
+    #       now it can be driven by measured chamfers rather than a guess.
+    #   TAPER / DRAFT WALL — a shallow-angle cone with real axial length (a 1.8°
+    #       taper 13 mm long on part 031167-A, a 3° draft 39 mm long on CTC-02).
+    #       This is contoured wall to be surfaced, not an edge treatment.
+    # 118° is the standard twist-drill point angle. Countersinks are ground at
+    # 82°, 90°, 100° or 120° — so an included angle in the drill band, sitting on
+    # a hole, is the bottom the drill left, not a separate operation. Judging it
+    # by "is it wider than the hole?" alone reported 148 countersinks on CTC-02,
+    # every one of them a drilled step. The angle is the tell.
+    DRILL_ANGLE_MIN_DEG, DRILL_ANGLE_MAX_DEG = 114.0, 122.0
+    # A face that contains the cone's APEX (small end at ~zero ⌀) is a conical
+    # BOTTOM, whatever its angle — a countersink face is trimmed to the band
+    # between its hole and its rim and never reaches the point.
+    APEX_DIA_FRACTION = 0.15
+    EDGE_TREATMENT_MIN_DEG = 55.0     # below this it is a taper, not a chamfer
+    TAPER_MAX_SEMI_DEG = 25.0         # shallow cone → a wall with draft on it
+    CONE_SLIVER_WRAP = math.radians(15.0)  # a few degrees of wrap is a blend seam
+
+    def _nearest_hole_dia(c: dict) -> Optional[float]:
+        """Diameter of the hole this cone is coaxial with, if any."""
+        best = None
+        for g in hole_groups:
+            if abs(float(np.dot(c["axis"], g["axis"]))) <= 0.98:
+                continue
+            d = c["point"] - g["point"]
+            perp = d - float(np.dot(d, g["axis"])) * g["axis"]
+            if float(np.linalg.norm(perp)) < 0.5:
+                dia = 2.0 * g["maxRadius"]
+                if best is None or abs(dia - 2.0 * c["rHi"]) < abs(best - 2.0 * c["rHi"]):
+                    best = dia
+        return best
+
+    countersinks: List[dict] = []
+    chamfers: List[dict] = []
+    tapers: List[dict] = []
+    drill_points = 0
+    for c in cone_faces:
+        idx = c["faceIdx"]
+        if c["wrap"] < CONE_SLIVER_WRAP:
+            _label(idx, "ignored:blend-or-fillet")
+            continue
+        hole_dia = _nearest_hole_dia(c)
+        big_dia = 2.0 * c["rHi"]
+        small_dia = 2.0 * c["rLo"]
+        drill_angle = DRILL_ANGLE_MIN_DEG <= c["includedDeg"] <= DRILL_ANGLE_MAX_DEG
+        contains_apex = small_dia <= APEX_DIA_FRACTION * max(big_dia, 1e-6)
+        if (drill_angle and hole_dia is not None) or contains_apex:
+            drill_points += 1
+            _label(idx, "drill-point")
+        elif c["semiDeg"] <= TAPER_MAX_SEMI_DEG and c["axialMm"] > max(2.0, 2.0 * (c["rHi"] - c["rLo"])):
+            tapers.append({"minDiaMm": round(2.0 * c["rLo"], 2), "maxDiaMm": round(big_dia, 2),
+                           "includedDeg": round(c["includedDeg"], 1), "lengthMm": round(c["axialMm"], 2)})
+            _label(idx, "taper")
+        elif c["includedDeg"] >= EDGE_TREATMENT_MIN_DEG:
+            entry = {"diameterMm": round(big_dia, 2), "includedDeg": round(c["includedDeg"], 1),
+                     "depthMm": round(c["axialMm"], 2)}
+            if c["internal"] and hole_dia is not None and big_dia > hole_dia * 1.05:
+                countersinks.append({**entry, "onHoleDiaMm": round(hole_dia, 2)})
+                _label(idx, "countersink")
+            else:
+                chamfers.append(entry)
+                _label(idx, "chamfer")
+        else:
+            tapers.append({"minDiaMm": round(2.0 * c["rLo"], 2), "maxDiaMm": round(big_dia, 2),
+                           "includedDeg": round(c["includedDeg"], 1), "lengthMm": round(c["axialMm"], 2)})
+            _label(idx, "taper")
+
+    # Two halves of one countersink are one operation, as with holes.
+    def _dedupe(items: List[dict], key: str) -> List[dict]:
+        out: List[dict] = []
+        for it in sorted(items, key=lambda x: -x[key]):
+            if not any(abs(o[key] - it[key]) < 0.05 and o.get("includedDeg") == it.get("includedDeg")
+                       and abs(o.get("depthMm", o.get("lengthMm", 0)) - it.get("depthMm", it.get("lengthMm", 0))) < 0.05
+                       for o in out):
+                out.append(it)
+            else:
+                for o in out:
+                    if abs(o[key] - it[key]) < 0.05:
+                        o["count"] = o.get("count", 1) + 1
+                        break
+        return out
+
+    countersinks = _dedupe(countersinks, "diameterMm")
+    chamfers = _dedupe(chamfers, "diameterMm")
+    tapers = _dedupe(tapers, "maxDiaMm")
+
     # --- TURNED vs MILLED features ------------------------------------------
     #
     # On a mill-turn this is the first question about every feature, and nothing
@@ -898,6 +1031,17 @@ def analyze_milling(shape) -> dict:
         # Holes that carry a counterbore/step (drill + counterbore = 2 tools).
         "steppedHoleCount": stepped_holes,
         # Round bosses / spigots the cutter must profile around.
+        # --- Conical features (previously never inspected at all) -----------
+        # Countersinks and chamfers are real operations with their own tools;
+        # drill points are the bottoms of holes already paid for by drilling and
+        # are reported for transparency, NOT as work; tapers are contoured wall.
+        "countersinkCount": sum(c.get("count", 1) for c in countersinks),
+        "countersinks": countersinks,
+        "chamferCount": sum(c.get("count", 1) for c in chamfers),
+        "chamfers": chamfers,
+        "taperCount": sum(t.get("count", 1) for t in tapers),
+        "tapers": tapers,
+        "drillPointCount": drill_points,
         "roundBossCount": len(round_bosses),
         "roundBossDiametersMm": round_boss_diameters,
         # --- turned vs milled (the first question on a mill-turn) -----------

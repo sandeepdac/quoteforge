@@ -8,7 +8,7 @@ import os
 import sys
 
 from OCP.gp import gp_Ax2, gp_Pnt, gp_Dir
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeBox
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCone
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
 
@@ -125,6 +125,14 @@ def build(outdir):
         BRepPrimAPI_MakeBox(26.5, 25.0, 14.25).Shape(),
         cyl(12.0, 40, x=13.25, y=12.5, z=-10)).Shape()
     paths["bigbore"] = write(bigbore, os.path.join(outdir, "bigbore.step"))
+
+    # A ⌀6 through hole with a 90° COUNTERSINK on top, in a 40x40x12 block.
+    # Conical faces were never inspected, so this cost nothing at all.
+    cs = BRepPrimAPI_MakeBox(40, 40, 12).Shape()
+    cs = BRepAlgoAPI_Cut(cs, cyl(3, 40, x=20, y=20, z=-10)).Shape()
+    cone = BRepPrimAPI_MakeCone(gp_Ax2(gp_Pnt(20, 20, 12), gp_Dir(0, 0, -1)), 6.0, 3.0, 3.0).Shape()
+    cs = BRepAlgoAPI_Cut(cs, cone).Shape()
+    paths["countersink"] = write(cs, os.path.join(outdir, "countersink_cone.step"))
     return paths
 
 
