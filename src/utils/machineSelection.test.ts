@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectMachine, MACHINE_CATALOG } from './machineSelection';
+import { selectMachine, setupsOnMachine, MACHINE_CATALOG, REFERENCE_HOURLY_RATE, MachineId } from './machineSelection';
 
 // These tests are written against Turncircuit's REAL plant list, so a failure
 // means "the shop could not actually make it that way", not "a heuristic moved".
@@ -94,7 +94,7 @@ describe('milled parts: chucked turning is not the same as bar work', () => {
 
   it('picks the cheaper of the two mill-turns when both can hold it', () => {
     const r = selectMachine(flange);
-    expect(r.recommended).toBe('nl-2000'); // 1.35 vs the NTX's 1.6
+    expect(r.recommended).toBe('nl-2000'); // £88/hr against the NTX's £135
   });
 
   it('an elongated round part still bar-feeds', () => {
@@ -120,14 +120,27 @@ describe('milled parts: chucked turning is not the same as bar work', () => {
     expect(tm.reason).toMatch(/no coaxial turned features/i);
   });
 
-  it('a prismatic block is not turning work at all', () => {
-    // TCL0893 spoiler: fills ~34% of the cylinder around it.
+  it('a prismatic block is not TURNING work — but the 5-axis mill-turn is still the right MILL', () => {
+    // TCL0893 spoiler: fills ~34% of the cylinder around it, so nothing here is
+    // turned. It has compound-angle holes, though, and a 5-axis mill-turn holds
+    // a block in soft jaws and mills it done-complete. Routing it to a VMC
+    // because "it isn't round" quoted the shop's fallback machine instead of the
+    // one it bought to win this work.
     const r = selectMachine({
-      isTurned: false, setupCount: 8, angledSetups: 2, bossCount: 10,
+      isTurned: false, setupCount: 8, angledSetups: 2, axisAlignedSetups: 6, bossCount: 10,
       partDimsMm: { x: 61.487, y: 51.95, z: 47.4 }, partVolumeCm3: 45.088,
     });
-    expect(r.route).toBe('mill');
-    expect(MACHINE_CATALOG[r.recommended].kind).toBe('mill');
+    expect(r.route).toBe('mill'); // milled from billet — not a turning route
+    expect(r.stockForm).toBe('billet');
+    expect(r.recommended).toBe('ntx-1000');
+    // Six directions plus two compound angles: eight clamps on a 3-axis, two here.
+    expect(r.effectiveSetups).toBe(2);
+    const vf2 = r.bakeOff!.find((b) => b.id === 'haas-vf2')!;
+    expect(vf2.setups).toBeGreaterThan(r.effectiveSetups!);
+    expect(vf2.hourlyRate).toBeLessThan(MACHINE_CATALOG['ntx-1000'].hourlyRate);
+    // ...and the premium machine still wins, because the setups it deletes cost
+    // more than the hours it adds.
+    expect(r.bakeOff![0].id).toBe('ntx-1000');
   });
 
   it('a flat slab is not turning work either', () => {
@@ -189,15 +202,100 @@ describe('shop inventory still gates everything', () => {
     expect(r.candidates.every((c) => c.id === 'sabre')).toBe(true);
   });
 
-  it('compound-angle setups survive every route', () => {
-    const plain = selectMachine({
-      isTurned: false, setupCount: 4,
-      partDimsMm: { x: 90, y: 30, z: 30 }, partVolumeCm3: 63.6,
+  it('compound angles cost setups on 3 and 4 axes, and nothing on 5', () => {
+    // A hole can only be cut along its own axis. Reaching one tilted in two
+    // planes takes two rotations: a 3-axis needs a fixture per angle, a single
+    // rotary still cannot get there, and a 5-axis head simply points at it.
+    // This is the whole economic case for the machine, so it must not be a
+    // blanket "+1 per angle" applied regardless of what is making the part.
+    const demand = { faces: 4, angled: 2 };
+    const on = (id: MachineId) =>
+      setupsOnMachine(MACHINE_CATALOG[id], demand.faces, demand.angled).setups;
+    const without = (id: MachineId) =>
+      setupsOnMachine(MACHINE_CATALOG[id], demand.faces, 0).setups;
+
+    expect(on('sabre') - without('sabre')).toBe(2);       // 3-axis: a fixture each
+    expect(on('haas-vf2') - without('haas-vf2')).toBe(2); // 4-axis: one rotary is not enough
+    expect(on('ntx-1000') - without('ntx-1000')).toBe(0); // 5-axis: free
+  });
+
+  it('a part with compound angles is not silently under-costed when no 5-axis can hold it', () => {
+    // The protection that mattered — angles adding setups — now lives where it
+    // belongs: it applies whenever the machine that gets the job cannot reach
+    // them, rather than being charged even to the machine that can.
+    const big = {
+      isTurned: false as const, setupCount: 6, axisAlignedSetups: 4, angledSetups: 2,
+      partDimsMm: { x: 600, y: 400, z: 300 }, partVolumeCm3: 40000,
+    };
+    const r = selectMachine(big);
+    expect(MACHINE_CATALOG[r.recommended].kind).toBe('mill'); // too big for any chuck
+    expect(r.effectiveSetups!).toBeGreaterThanOrEqual(4);
+    expect(r.reasons.join(' ')).toMatch(/compound angle|tilted fixture/i);
+  });
+});
+
+// --- The bake-off ---------------------------------------------------------
+// Machine choice moves two things in OPPOSITE directions: a mill-turn needs far
+// fewer setups, and costs far more an hour. Ranking on rate alone can only ever
+// see one of them, which is how the shop's fallback machine came to be quoted
+// for the work its best machine exists to win.
+describe('total-cost bake-off', () => {
+  const spoiler = {
+    isTurned: false as const,
+    setupCount: 8, axisAlignedSetups: 6, angledSetups: 2, bossCount: 10,
+    partDimsMm: { x: 61.487, y: 51.95, z: 47.4 }, partVolumeCm3: 45.088,
+  };
+
+  it('rates span the real gap between a VMC and a 5-axis mill-turn', () => {
+    const vmc = MACHINE_CATALOG['haas-vf2'].hourlyRate;
+    const fiveAxis = MACHINE_CATALOG['ntx-1000'].hourlyRate;
+    // Not "110% vs 100%" — a different class of asset, with a rate to match.
+    expect(fiveAxis / vmc).toBeGreaterThan(2);
+    expect(fiveAxis / vmc).toBeLessThan(3.5);
+  });
+
+  it('the multiplier is derived from the hourly rate, never hand-set', () => {
+    for (const spec of Object.values(MACHINE_CATALOG)) {
+      expect(spec.rateMultiplier).toBeCloseTo(spec.hourlyRate / REFERENCE_HOURLY_RATE, 3);
+    }
+  });
+
+  it('ranks every capable machine and shows what each would cost', () => {
+    const r = selectMachine(spoiler);
+    expect(r.bakeOff!.length).toBeGreaterThan(1);
+    const totals = r.bakeOff!.map((b) => b.totalPerPart);
+    expect([...totals].sort((a, b) => a - b)).toEqual(totals); // cheapest first
+    for (const b of r.bakeOff!) {
+      expect(b.setups).toBeGreaterThan(0);
+      expect(b.setupReason.length).toBeGreaterThan(0);
+      expect(b.totalPerPart).toBeGreaterThan(0);
+    }
+  });
+
+  it('at qty 1 the setups decide, so the premium machine wins', () => {
+    const r = selectMachine({ ...spoiler, quantity: 1 });
+    expect(r.recommended).toBe('ntx-1000');
+    expect(r.reasons.join(' ')).toMatch(/cheaper per hour|done-complete|B-axis/i);
+  });
+
+  it('at high quantity the setups amortise away and the cheap machine takes over', () => {
+    // This flip is the whole point of costing the decision rather than asserting
+    // it: the right machine for one part is not the right machine for 500.
+    const one = selectMachine({ ...spoiler, quantity: 1 });
+    const many = selectMachine({ ...spoiler, quantity: 500 });
+    const rateOf = (id: MachineId) => MACHINE_CATALOG[id].hourlyRate;
+    expect(rateOf(many.recommended)).toBeLessThan(rateOf(one.recommended));
+  });
+
+  it('a shop without the 5-axis gets an honest, more expensive answer', () => {
+    // Selection must never quote a machine the shop does not own — and when the
+    // capable machine is missing, the price should rise, not quietly stay put.
+    const withNtx = selectMachine(spoiler);
+    const without = selectMachine({
+      ...spoiler,
+      ownedMachines: ['haas-vf2', 'sabre', 'h-mini-mill-300', 'hi-turner'],
     });
-    const angled = selectMachine({
-      isTurned: false, setupCount: 4, angledSetups: 2,
-      partDimsMm: { x: 90, y: 30, z: 30 }, partVolumeCm3: 63.6,
-    });
-    expect(angled.effectiveSetups!).toBe(plain.effectiveSetups! + 2);
+    expect(without.recommended).not.toBe('ntx-1000');
+    expect(without.effectiveSetups!).toBeGreaterThan(withNtx.effectiveSetups!);
   });
 });

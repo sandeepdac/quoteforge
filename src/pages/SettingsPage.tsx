@@ -374,8 +374,14 @@ function EstimateTab({
         <div>
           <h4 className="text-sm font-bold flex items-center gap-2"><Wrench size={15} className="text-primary" /> Machines on the floor</h4>
           <p className="text-xs text-muted-foreground mt-1">
-            Tick the machines your shop actually runs. Each quote picks the best route <strong className="text-foreground">among these</strong> —
-            e.g. a round-bar part goes to a turn-mill (one op) rather than being hogged from a billet on a machining centre.
+            Tick the machines your shop actually runs. Each quote costs the part on every capable machine
+            <strong className="text-foreground"> among these</strong> and picks the cheapest overall — trading setups against
+            hourly rate, which pull in opposite directions: a 5-axis mill-turn does in two clamps what a 3-axis needs six for,
+            and charges three times as much an hour for the privilege.
+          </p>
+          <p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5">
+            Hourly rates are defaults for a UK precision shop, not your books. They set which machine wins the work
+            and what the hours cost — confirm them before you send a quote.
           </p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -400,7 +406,10 @@ function EstimateTab({
                   <span className="text-sm font-semibold text-foreground flex items-center gap-2">
                     {spec.name}
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
-                      {Math.round(spec.rateMultiplier * 100)}% rate
+                      {spec.hourlyRate}/hr
+                    </span>
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
+                      {spec.axes} axes
                     </span>
                   </span>
                   <span className="block text-[11px] text-muted-foreground leading-snug mt-0.5">{spec.note}</span>

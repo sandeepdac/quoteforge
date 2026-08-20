@@ -19,12 +19,23 @@
  *   1. CAPABILITY (a hard gate) — can this machine physically make it? Bar or
  *      chuck diameter, turned length, milling envelope, live tooling for
  *      off-axis features.
- *   2. EFFICIENCY (the tie-break among capable machines) — the cheapest route,
- *      by charge-out rate, preferring bar-fed over chucked over milled.
+ *   2. COST (the tie-break among capable machines) — a real bake-off, because
+ *      the machine changes two things in OPPOSITE directions:
+ *        • setups — a 5-axis mill-turn reaches in one holding what a 3-axis
+ *          machining centre needs six clamps for;
+ *        • hourly rate — that mill-turn costs two to three times as much an
+ *          hour.
+ *      Ranking by rate alone (what this module used to do) structurally cannot
+ *      see that trade: it always picks the cheap machine and then pays for the
+ *      setups. Ranking by TOTAL cost at the quoted quantity can, and flips with
+ *      quantity the way real routing decisions do — setups dominate at qty 1,
+ *      the spindle rate dominates at qty 500.
  *
- * The recommendation carries a `rateMultiplier` so the choice moves the quote.
- * RATES ARE ADVISORY PLACEHOLDERS — relative multipliers against the base
- * spindle rate. A shop must set its real per-machine hourly rates before these
+ * Rates are per-machine hourly charge-outs, not nudges around a base rate. The
+ * spread between the cheapest mill and the 5-axis mill-turn is a factor of ~3;
+ * an earlier model expressed it as 100% vs 110%, which made the most capable
+ * machine on the floor look like a rounding error. THE FIGURES BELOW ARE
+ * DEFAULTS FOR A UK PRECISION SHOP — a shop must confirm its own before these
  * numbers mean money.
  */
 import { nextStandardBar } from './materials';
@@ -68,9 +79,31 @@ export interface MachineSpec {
   envelopeMm?: { x: number; y: number; z: number };
   /** Best achievable tolerance (mm) — gates precision work. */
   accuracyMm?: number;
-  /** Relative charge-out vs the base spindle rate. ADVISORY — set real rates. */
+  /**
+   * Charge-out rate per HOUR, in the shop's currency. This is a real cost
+   * centre: a 5-axis mill-turn is not "10% more" than a VMC, it is a different
+   * class of asset with a rate to match. DEFAULTS — confirm with the shop.
+   */
+  hourlyRate: number;
+  /**
+   * Relative charge-out vs the reference spindle rate — DERIVED from hourlyRate,
+   * never hand-set. Kept because the cost models multiply the shop's base rate
+   * by it; changing hourlyRate is what moves the quote.
+   */
   rateMultiplier: number;
   note: string;
+}
+
+/**
+ * The rate the shop's base `machineRatePerMin` setting is understood to mean
+ * (≈£75/hr → 1.25/min). Per-machine rates are expressed against it, so a shop
+ * that edits its base rate scales the whole floor proportionally.
+ */
+export const REFERENCE_HOURLY_RATE = 75;
+
+/** Fill in the derived multiplier so a catalog entry only states real money. */
+function spec(s: Omit<MachineSpec, 'rateMultiplier'>): MachineSpec {
+  return { ...s, rateMultiplier: Math.round((s.hourlyRate / REFERENCE_HOURLY_RATE) * 1000) / 1000 };
 }
 
 /**
@@ -79,60 +112,60 @@ export interface MachineSpec {
  * much here.
  */
 export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
-  hanwha: {
+  hanwha: spec({
     id: 'hanwha', name: 'Hanwha Sliding-Head', kind: 'sliding-head',
     liveTooling: true, axes: 5, maxBarDiaMm: 10, maxChuckDiaMm: 45,
-    accuracyMm: 0.01, rateMultiplier: 0.95,
+    accuracyMm: 0.01, hourlyRate: 48,
     note: 'Small bar-fed precision turning to ⌀10 bar (⌀45 turned). Driven tools: profiles, drilling, tapping, thread whirling.',
-  },
-  'star-sr20': {
+  }),
+  'star-sr20': spec({
     id: 'star-sr20', name: 'Star SR-20 Sliding-Head', kind: 'sliding-head',
     liveTooling: true, axes: 5, maxBarDiaMm: 20, maxTurnLengthMm: 350,
-    accuracyMm: 0.005, rateMultiplier: 1.0,
+    accuracyMm: 0.005, hourlyRate: 52,
     note: 'Bar-fed to ⌀20 × 350 mm. Tightest tolerance on the floor (0.005 mm). Driven tools + thread whirling.',
-  },
-  'star-sr32': {
+  }),
+  'star-sr32': spec({
     id: 'star-sr32', name: 'Star SR-32 Sliding-Head', kind: 'sliding-head',
     liveTooling: true, axes: 5, maxBarDiaMm: 32, maxTurnLengthMm: 310,
-    accuracyMm: 0.01, rateMultiplier: 1.05,
+    accuracyMm: 0.01, hourlyRate: 58,
     note: 'Bar-fed to ⌀32 × 310 mm. Driven tools: profiles, drilling, tapping, thread whirling.',
-  },
-  'ntx-1000': {
+  }),
+  'ntx-1000': spec({
     id: 'ntx-1000', name: 'DMG Mori NTX 1000 (5-axis Mill-Turn)', kind: 'turn-mill',
     liveTooling: true, axes: 5, maxBarDiaMm: 65, maxChuckDiaMm: 125, maxTurnLengthMm: 200,
-    accuracyMm: 0.01, rateMultiplier: 1.6,
-    note: 'The only 5-axis machine on the floor. Turning + milling in one clamp, Y ±105. Premium rate, repaid by eliminating setups.',
-  },
-  'nl-2000': {
+    accuracyMm: 0.01, hourlyRate: 135,
+    note: 'The only 5-axis machine on the floor: B-axis milling spindle, turning and milling in one clamp. Also mills PRISMATIC work done-complete in soft jaws — the reason a compound-angle part belongs here and not on a VMC. Premium rate, repaid by eliminating setups.',
+  }),
+  'nl-2000': spec({
     id: 'nl-2000', name: 'Mori NL 2000 Mill-Turn', kind: 'turn-mill',
     liveTooling: true, axes: 4, maxBarDiaMm: 65, maxChuckDiaMm: 430, maxTurnLengthMm: 450,
-    accuracyMm: 0.01, rateMultiplier: 1.35,
-    note: 'Large-capacity mill-turn: ⌀65 bar, but chucks to ⌀430 × 450 mm. Driven tools with Y ±70 for off-axis work.',
-  },
-  'hi-turner': {
+    accuracyMm: 0.01, hourlyRate: 88,
+    note: 'Large-capacity mill-turn: ⌀65 bar, but chucks to ⌀430 × 450 mm. Driven tools with Y ±70 for off-axis work. One rotary axis, so a compound angle still needs fixturing.',
+  }),
+  'hi-turner': spec({
     id: 'hi-turner', name: 'Hi Turner CNC Lathe', kind: 'lathe',
     liveTooling: false, axes: 2, maxBarDiaMm: 38, maxChuckDiaMm: 250, maxTurnLengthMm: 250,
-    rateMultiplier: 0.9,
+    hourlyRate: 42,
     note: 'Straightforward turning to ⌀250 × 250 mm. No live tooling — off-axis features need a separate milling op.',
-  },
-  'haas-vf2': {
+  }),
+  'haas-vf2': spec({
     id: 'haas-vf2', name: 'Haas VF-2 (4-axis VMC)', kind: 'mill',
     liveTooling: true, axes: 4, envelopeMm: { x: 762, y: 406, z: 508 },
-    rateMultiplier: 1.1,
-    note: 'Vertical machining centre with a 4th axis — indexes to reach extra faces without a full re-fixture.',
-  },
-  sabre: {
+    hourlyRate: 55,
+    note: 'Vertical machining centre with a 4th axis — indexes around ONE axis to reach the faces about it without a re-fixture. A compound angle needs two rotations, so it still costs a tilted fixture here.',
+  }),
+  sabre: spec({
     id: 'sabre', name: 'Sabre Machining Centre', kind: 'mill',
     liveTooling: true, axes: 3, envelopeMm: { x: 2000, y: 500, z: 500 },
-    rateMultiplier: 1.15,
-    note: 'Large-format milling to 2 m. Metals plus graphite, ABS, polycarbonate, nylon, POM and PEEK.',
-  },
-  'h-mini-mill-300': {
+    hourlyRate: 58,
+    note: 'Large-format milling to 2 m. Metals plus graphite, ABS, polycarbonate, nylon, POM and PEEK. Three axes: one clamp, one direction.',
+  }),
+  'h-mini-mill-300': spec({
     id: 'h-mini-mill-300', name: 'H Mini Mill 300', kind: 'mill',
     liveTooling: true, axes: 3, maxBarDiaMm: 60, envelopeMm: { x: 370, y: 300, z: 450 },
-    accuracyMm: 0.01, rateMultiplier: 1.0,
+    accuracyMm: 0.01, hourlyRate: 40,
     note: 'Small machining centre with ⌀10–60 collet / bar workholding, billet to 370 mm. CONFIRM its exact classification with the shop.',
-  },
+  }),
 };
 
 /** All machine ids in catalog order — the default "owns everything" set. */
@@ -173,15 +206,74 @@ export interface MachineSelectionInput {
    * round features settle it, and those come from the geometry service.
    */
   onAxisTurnedFeatures?: number;
+  /**
+   * Tool-access directions square to a stock face. Together with `angledSetups`
+   * this describes the part's ACCESS DEMAND — how many directions the cutter
+   * must come from — which each machine then satisfies with a different number
+   * of physical clamps depending on its kinematics.
+   */
+  axisAlignedSetups?: number;
+  /** Batch size — decides whether setups or spindle rate dominates the choice. */
+  quantity?: number;
+  /**
+   * First-order cutting minutes for the part. Used to weigh spindle rate against
+   * setup labour. Approximate is fine: it is the same figure for every candidate,
+   * so it scales the rate side of the trade without biasing which machine wins.
+   */
+  estimatedCutMinutes?: number;
+  /** Shop economics, so the bake-off is in money rather than in proxies. */
+  economics?: MachineEconomics;
   /** Machines the shop actually owns. Omit to consider the whole catalog. */
   ownedMachines?: MachineId[];
 }
+
+/** What a setup costs this shop — the other half of the machine trade-off. */
+export interface MachineEconomics {
+  /** Labour rate per minute for setting/fixturing. */
+  setupRatePerMin: number;
+  /** Minutes to set the first operation (clamp, tram, probe, touch-off). */
+  setupFirstOpMin: number;
+  /** Minutes for each subsequent re-clamp. */
+  setupPerExtraOpMin: number;
+  /** One-time CAM programming minutes per setup (NRE, amortised over the batch). */
+  programmingMinPerSetup: number;
+  /** Flat charge per setup, if the shop bills that way. */
+  flatChargePerSetup?: number;
+}
+
+const DEFAULT_ECONOMICS: MachineEconomics = {
+  setupRatePerMin: 0.8,
+  setupFirstOpMin: 60,
+  setupPerExtraOpMin: 45,
+  programmingMinPerSetup: 25,
+  flatChargePerSetup: 0,
+};
 
 export interface MachineCandidate {
   id: MachineId;
   name: string;
   capable: boolean;
   reason: string;
+  /** Costed comparison, when the candidate was capable enough to price. */
+  cost?: MachineCostEstimate;
+}
+
+/** One machine's costed offer for this part — the currency of the bake-off. */
+export interface MachineCostEstimate {
+  id: MachineId;
+  name: string;
+  hourlyRate: number;
+  setups: number;
+  setupReason: string;
+  /** Recurring per batch: clamping/fixturing labour. */
+  setupCost: number;
+  /** One-time per batch: CAM programming (NRE). */
+  programmingCost: number;
+  /** Per part: spindle time at THIS machine's rate. */
+  cycleCost: number;
+  /** Per part, all in, at the quoted quantity. */
+  totalPerPart: number;
+  quantity: number;
 }
 
 export interface MachineRecommendation {
@@ -198,6 +290,15 @@ export interface MachineRecommendation {
   barDiameterMm?: number;
   /** Setups the chosen route actually needs. */
   effectiveSetups?: number;
+  /**
+   * Every capable machine, costed and ranked — the trade made visible. Setups
+   * and hourly rate pull in opposite directions, so the runner-up is often
+   * cheaper at a different quantity; showing the whole table is what lets an
+   * estimator argue with the answer.
+   */
+  bakeOff?: MachineCostEstimate[];
+  /** How the winner compares with the cheapest-rate machine that could do it. */
+  bakeOffNote?: string;
 }
 
 const SLENDER_WARN = 10; // L/D above which a guide bush (sliding-head) really helps
@@ -275,6 +376,127 @@ function turnFit(input: MachineSelectionInput) {
     /** Suited to CHUCKED turning (round enough to grip and turn), any aspect. */
     chuckSuitable: barLike && roundEnough,
   };
+}
+
+/**
+ * SETUPS ARE A PROPERTY OF (PART, MACHINE) — NOT OF THE PART ALONE.
+ *
+ * The same geometry costs a different number of clamps on every machine, and
+ * that number is the single biggest lever on a low-quantity price. Counting
+ * tool-access directions describes what the PART demands; how many physical
+ * re-fixtures that becomes depends entirely on how the machine can move.
+ *
+ *   3 axes — the cutter only ever points one way. Every access direction is a
+ *            re-clamp, and a compound angle needs a tilted fixture on top.
+ *   4 axes — one rotary. It sweeps the faces AROUND that axis into a single
+ *            clamp, but the two ends still need holding separately, and a
+ *            compound angle (tilted in two planes at once) is out of reach of a
+ *            single rotation, so it still costs its own fixture.
+ *   5 axes — the head can point anywhere in the hemisphere above the work. Every
+ *            direction the part presents is reachable in one holding; only the
+ *            face being GRIPPED needs a second. Compound angles are free — this
+ *            is precisely what the extra two axes were bought for.
+ *
+ * This is why a compound-angle part belongs on the 5-axis machine even at three
+ * times the hourly rate: it converts six clamps into two.
+ */
+export interface MachineSetupPlan {
+  setups: number;
+  reason: string;
+}
+
+export function setupsOnMachine(
+  machine: MachineSpec,
+  axisAlignedFaces: number,
+  angledAxes: number
+): MachineSetupPlan {
+  const faces = Math.max(1, Math.round(axisAlignedFaces));
+  const angled = Math.max(0, Math.round(angledAxes));
+  const s = (n: number) => (n === 1 ? '' : 's');
+
+  if (machine.axes >= 5) {
+    // One holding reaches everything except what the jaws are covering.
+    const setups = Math.min(faces, 2);
+    return {
+      setups,
+      reason: angled > 0
+        ? `5-axis: the head tilts to all ${faces} direction${s(faces)} plus ${angled} compound angle${s(angled)} in ${setups === 1 ? 'a single holding' : 'one holding, plus one to reach the gripped face'} — the compound angles cost nothing here.`
+        : `5-axis: all ${faces} direction${s(faces)} reached in ${setups === 1 ? 'a single holding' : 'one holding, plus one to reach the gripped face'}.`,
+    };
+  }
+
+  if (machine.axes === 4) {
+    // The rotary sweeps up to four faces around it; the ends are separate, and a
+    // compound angle needs a second rotation this machine does not have.
+    const aroundRotary = Math.min(faces, 4);
+    const ends = Math.max(0, faces - 4);
+    // Floor of 2 whenever the part presents more than one direction: the rotary
+    // sweeps the faces around it, but the jaws still cover one, and that face
+    // needs a second holding whatever the kinematics.
+    const setups = Math.max(1 + ends, Math.min(faces, 2)) + angled;
+    const parts = [`its rotary indexes ${aroundRotary} face${s(aroundRotary)} in one clamp`];
+    if (ends > 0) parts.push(`${ends} end face${s(ends)} held separately`);
+    if (angled > 0) parts.push(`${angled} compound angle${s(angled)} needing a tilted fixture (one rotation cannot reach a two-plane angle)`);
+    return { setups, reason: `4-axis: ${parts.join(', ')} → ${setups} setup${s(setups)}.` };
+  }
+
+  const setups = faces + angled;
+  return {
+    setups,
+    reason: angled > 0
+      ? `3-axis: one clamp per direction — ${faces} face${s(faces)} plus ${angled} tilted fixture${s(angled)} for the compound angle${s(angled)} → ${setups} setup${s(setups)}.`
+      : `3-axis: one clamp per direction → ${setups} setup${s(setups)}.`,
+  };
+}
+
+/**
+ * Price one machine's offer for this part.
+ *
+ * The cutting-minutes figure is the same for every candidate. That is on
+ * purpose: it is a first-order proxy, and holding it constant means the bake-off
+ * compares the two things that genuinely differ between machines — how many
+ * clamps the part needs, and what an hour on the spindle costs. (A mill-turn
+ * also cuts on-axis features faster, which the cost model applies later; that
+ * only strengthens the case for the machine this already picks.)
+ */
+function costOnMachine(
+  machine: MachineSpec,
+  opts: { faces: number; angled: number; cutMin: number; qty: number; econ: MachineEconomics; setupsOverride?: number; setupReason?: string }
+): MachineCostEstimate {
+  const plan = opts.setupsOverride != null
+    ? { setups: Math.max(1, Math.round(opts.setupsOverride)), reason: opts.setupReason ?? '' }
+    : setupsOnMachine(machine, opts.faces, opts.angled);
+  const { econ } = opts;
+  const setupMin = econ.setupFirstOpMin + Math.max(0, plan.setups - 1) * econ.setupPerExtraOpMin;
+  const setupCost = setupMin * econ.setupRatePerMin + plan.setups * (econ.flatChargePerSetup ?? 0);
+  const programmingCost = plan.setups * econ.programmingMinPerSetup * econ.setupRatePerMin;
+  const cycleCost = (opts.cutMin * machine.hourlyRate) / 60;
+  const qty = Math.max(1, Math.round(opts.qty));
+  return {
+    id: machine.id,
+    name: machine.name,
+    hourlyRate: machine.hourlyRate,
+    setups: plan.setups,
+    setupReason: plan.reason,
+    setupCost: Math.round(setupCost * 100) / 100,
+    programmingCost: Math.round(programmingCost * 100) / 100,
+    cycleCost: Math.round(cycleCost * 100) / 100,
+    totalPerPart: Math.round((cycleCost + (setupCost + programmingCost) / qty) * 100) / 100,
+    quantity: qty,
+  };
+}
+
+/**
+ * A first-order cutting-time proxy for when the caller has not run the cost
+ * model yet. Roughly: material removed at a mid-range milling MRR, plus a floor
+ * so a near-net part still carries some spindle time.
+ */
+function fallbackCutMinutes(input: MachineSelectionInput): number {
+  const dims = input.partDimsMm;
+  if (!dims) return 10;
+  const boxCm3 = (dims.x * dims.y * dims.z) / 1000;
+  const removedCm3 = Math.max(0, boxCm3 - (input.partVolumeCm3 ?? boxCm3 * 0.6));
+  return Math.max(2, removedCm3 / 40); // ~40 cm³/min mid-range milling MRR
 }
 
 /** Does a part of these dimensions fit a machine's milling envelope? */
@@ -394,129 +616,223 @@ function selectTurningMachine(input: MachineSelectionInput): MachineRecommendati
 // Prismatic / milled parts — which may still be turning work
 // ---------------------------------------------------------------------------
 
+/** One machine's costed proposal for making this part, and how. */
+interface Offer {
+  machine: MachineSpec;
+  route: MachiningRoute;
+  stockForm: StockForm;
+  barDiameterMm?: number;
+  setups: number;
+  setupReason: string;
+  /** Why this machine, in the estimator's language. */
+  reasons: string[];
+  cost: MachineCostEstimate;
+}
+
+/**
+ * Setups for a TURN-MILL running the part as turning work.
+ *
+ * Bar-fed, the sub-spindle takes the part from the main spindle and finishes the
+ * back end in-cycle, so the base is a single holding. Chucked, you get one per
+ * end. Compound angles are free on the 5-axis machine and cost a fixture on the
+ * 4-axis one, exactly as for milling.
+ */
+function turnMillSetups(m: MachineSpec, barFed: boolean, angled: number): MachineSetupPlan {
+  const base = barFed ? 1 : 2;
+  if (m.axes >= 5) {
+    return {
+      setups: base,
+      reason: barFed
+        ? `Bar-fed with sub-spindle pick-off: turned, milled and parted in one holding${angled > 0 ? `, and the B-axis reaches the ${angled} compound angle${angled === 1 ? '' : 's'} in the same cycle` : ''}.`
+        : `Chucked one end then the other — 2 holdings${angled > 0 ? `, with the ${angled} compound angle${angled === 1 ? '' : 's'} reached by the B-axis in-cycle` : ''}.`,
+    };
+  }
+  const setups = base + angled;
+  return {
+    setups,
+    reason: angled > 0
+      ? `${barFed ? 'Bar-fed with sub-spindle pick-off' : 'Chucked each end'} (${base}), plus ${angled} tilted fixture${angled === 1 ? '' : 's'} — one rotary cannot reach a two-plane angle.`
+      : `${barFed ? 'Bar-fed with sub-spindle pick-off: one holding' : 'Chucked each end — 2 holdings'}.`,
+  };
+}
+
 function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommendation {
   const machines = availableMachines(input.ownedMachines);
-  const setups = Math.max(1, input.setupCount ?? 1);
+  const requested = Math.max(1, input.setupCount ?? 1);
   const angled = Math.max(0, input.angledSetups ?? 0);
+  // The part's ACCESS DEMAND, split into the two things machines answer
+  // differently: square-to-a-face directions, and compound angles.
+  const faces = Math.max(1, Math.round(input.axisAlignedSetups ?? Math.max(1, requested - angled)));
   const dims = input.partDimsMm;
   const fit = turnFit(input);
+  const econ = input.economics ?? DEFAULT_ECONOMICS;
+  const qty = Math.max(1, Math.round(input.quantity ?? 1));
+  const cutMin = input.estimatedCutMinutes ?? fallbackCutMinutes(input);
+  const price = (m: MachineSpec, plan: MachineSetupPlan) =>
+    costOnMachine(m, { faces, angled, cutMin, qty, econ, setupsOverride: plan.setups, setupReason: plan.reason });
 
   const turnMills = machines.filter((m) => m.kind === 'turn-mill');
   const mills = machines.filter((m) => m.kind === 'mill');
 
   const candidates: MachineCandidate[] = [];
+  const offers: Offer[] = [];
 
-  // --- Can a turn-mill take it, bar-fed or chucked? ------------------------
-  const barCapable: MachineSpec[] = [];
-  const chuckCapable: MachineSpec[] = [];
+  // --- Turn-mills: three different ways they can take the work -------------
+  // Bar-fed turning, chucked turning, or — the case this model used to miss
+  // entirely — holding a PRISMATIC block in soft jaws and milling it with the
+  // B-axis head. A 5-axis mill-turn is a 5-axis milling machine that happens to
+  // have a spindle; excluding it from milled parts because they are "not round"
+  // threw away the most capable machine on the floor.
   for (const m of turnMills) {
     const barOk = !!fit && fit.barSuitable && fit.barDiameterMm <= (m.maxBarDiaMm ?? 0);
     const lenOk = !fit || !m.maxTurnLengthMm || fit.lengthMm <= m.maxTurnLengthMm;
-    // Chucked turning needs positive evidence of coaxial round features, not
-    // just a volume ratio that a hollowed-out block also satisfies.
     const hasTurnedFeatures = (input.onAxisTurnedFeatures ?? 0) >= 1;
     const chuckOk = !!fit && fit.chuckSuitable && hasTurnedFeatures
       && fit.containDiaMm <= (m.maxChuckDiaMm ?? 0);
-    const capable = (barOk || chuckOk) && lenOk;
-    if (capable && barOk) barCapable.push(m);
-    if (capable && !barOk && chuckOk) chuckCapable.push(m);
+    // Soft-jaw milling: the workholding limit is the chuck, not roundness.
+    const gripOk = !!fit && fit.containDiaMm <= (m.maxChuckDiaMm ?? 0) && lenOk;
+    // It only earns its rate as a milling machine if it can actually collapse
+    // setups — i.e. it has the axes a machining centre lacks.
+    const millOk = gripOk && m.axes >= 5;
 
     let reason: string;
-    if (!fit) {
+    if (barOk && lenOk) {
+      const plan = turnMillSetups(m, true, angled);
+      offers.push({
+        machine: m, route: 'mill-turn', stockForm: 'bar', barDiameterMm: fit!.barDiameterMm,
+        setups: plan.setups, setupReason: plan.reason, cost: price(m, plan),
+        reasons: [
+          `Round cross-section (⌀${r0(fit!.widthMm)}, ${Math.round(fit!.balance * 100)}% square) fits ⌀${fit!.barDiameterMm} bar within the ${m.name}'s ${m.maxBarDiaMm} mm capacity → made from ROUND BAR, not a solid billet.`,
+          `Turned to profile then milled with driven tools — ${plan.reason}`,
+        ],
+      });
+      reason = `Round ⌀${r0(fit!.widthMm)} × ${r0(fit!.lengthMm)} mm → ⌀${fit!.barDiameterMm} bar within its ${m.maxBarDiaMm} mm capacity; turned and milled in one clamp.`;
+    } else if (chuckOk && lenOk) {
+      const plan = turnMillSetups(m, false, angled);
+      offers.push({
+        machine: m, route: 'mill-turn', stockForm: 'billet',
+        setups: plan.setups, setupReason: plan.reason, cost: price(m, plan),
+        reasons: [
+          `⌀${r0(fit!.containDiaMm)} × ${r0(fit!.lengthMm)} mm is too ${fit!.elongated ? 'large' : 'short'} to bar-feed, but chucks within the ${m.name}'s ${m.maxChuckDiaMm} mm swing.`,
+          `On-axis features (bores, spigots, faces) are TURNED on the spindle — far faster than interpolating them with an end mill — and driven tools cut the off-axis work in the same clamp.`,
+        ],
+      });
+      reason = `Too ${fit!.elongated ? 'large' : 'short'} to bar-feed, but chucks at ⌀${r0(fit!.containDiaMm)} ≤ ${m.maxChuckDiaMm} mm — turn the on-axis features, driven tools for the rest.`;
+    } else if (millOk) {
+      const plan = setupsOnMachine(m, faces, angled);
+      offers.push({
+        machine: m, route: 'mill', stockForm: 'billet',
+        setups: plan.setups, setupReason: plan.reason, cost: price(m, plan),
+        reasons: [
+          `Prismatic part, but held in soft jaws on the ${m.name} it is milled DONE-COMPLETE: ${plan.reason}`,
+          `Its B-axis head reaches directions a machining centre can only get to by re-fixturing — which is what makes the higher rate worth paying at low quantity.`,
+        ],
+      });
+      reason = `Not turning work, but grips at ⌀${r0(fit!.containDiaMm)} ≤ ${m.maxChuckDiaMm} mm in soft jaws and mills done-complete on 5 axes — ${plan.setups} setup${plan.setups === 1 ? '' : 's'} vs ${faces + angled} on a 3-axis.`;
+    } else if (!fit) {
       reason = 'No measured geometry — cannot judge turnability.';
-    } else if (!fit.barLike) {
-      reason = `Flat/slab cross-section (${Math.round(fit.balance * 100)}% square) — not turning work.`;
-    } else if (!fit.roundEnough) {
-      reason = `Prismatic solid — fills only ${Math.round(fit.cylFill * 100)}% of the ⌀${r0(fit.widthMm)} cylinder around it, so it is a block, not a body of revolution.`;
     } else if (!lenOk) {
       reason = `${r0(fit.lengthMm)} mm long exceeds its ${m.maxTurnLengthMm} mm turning length.`;
-    } else if (!barOk && !hasTurnedFeatures) {
-      reason = `Round enough to chuck, but no coaxial turned features were found — nothing for the spindle to cut, so this is milling work.`;
-    } else if (barOk) {
-      reason = `Round ⌀${r0(fit.widthMm)} × ${r0(fit.lengthMm)} mm → ⌀${fit.barDiameterMm} bar within its ${m.maxBarDiaMm} mm capacity; turned and milled in one clamp.`;
-    } else if (chuckOk) {
-      reason = `Too ${fit.elongated ? 'large' : 'short'} to bar-feed, but chucks at ⌀${r0(fit.containDiaMm)} ≤ ${m.maxChuckDiaMm} mm — turn the on-axis features, driven tools for the rest.`;
+    } else if (!gripOk) {
+      reason = `⌀${r0(fit.containDiaMm)} exceeds its ${m.maxChuckDiaMm} mm chuck — cannot be held here at all.`;
+    } else if (!fit.barLike) {
+      reason = `Flat/slab cross-section (${Math.round(fit.balance * 100)}% square) — not turning work, and with ${m.axes} axes it has no setup advantage over a machining centre.`;
+    } else if (!fit.roundEnough) {
+      reason = `Prismatic solid — fills only ${Math.round(fit.cylFill * 100)}% of the ⌀${r0(fit.widthMm)} cylinder around it, so it is a block, not a body of revolution; with ${m.axes} axes it has no setup advantage as a mill.`;
     } else {
-      reason = `Needs ⌀${fit.barDiameterMm} stock — beyond its ${m.maxBarDiaMm} mm bar / ${m.maxChuckDiaMm} mm chuck capacity.`;
+      reason = `Round enough to chuck, but no coaxial turned features were found — nothing for the spindle to cut, so this is milling work.`;
     }
-    candidates.push({ id: m.id, name: m.name, capable, reason });
+    candidates.push({
+      id: m.id, name: m.name, capable: offers.some((o) => o.machine.id === m.id), reason,
+      cost: offers.find((o) => o.machine.id === m.id)?.cost,
+    });
   }
 
   // --- Milling centres: envelope is a hard gate ----------------------------
   for (const m of mills) {
     const envOk = fitsEnvelope(m, dims);
+    if (envOk) {
+      const plan = setupsOnMachine(m, faces, angled);
+      offers.push({
+        machine: m, route: 'mill', stockForm: 'billet',
+        setups: plan.setups, setupReason: plan.reason, cost: price(m, plan),
+        reasons: [`Milled from billet on the ${m.name} — ${plan.reason}`],
+      });
+    }
     const reason = !envOk && m.envelopeMm && dims
       ? `Part ${[dims.x, dims.y, dims.z].map(r0).join('×')} mm exceeds its ${m.envelopeMm.x}×${m.envelopeMm.y}×${m.envelopeMm.z} mm envelope.`
-      : m.axes >= 4
-        ? `${setups} tool-access direction${setups === 1 ? '' : 's'} — its 4th axis indexes to some of them without a full re-fixture.`
-        : `${setups} access direction${setups === 1 ? '' : 's'} → ${setups} setup${setups === 1 ? '' : 's'} on a 3-axis.`;
-    candidates.push({ id: m.id, name: m.name, capable: envOk, reason });
-  }
-
-  const reasons: string[] = [];
-  const cheapest = (list: MachineSpec[]) =>
-    list.slice().sort((a, b) => a.rateMultiplier - b.rateMultiplier)[0];
-  const barMachine = cheapest(barCapable);
-  const chuckMachine = cheapest(chuckCapable);
-
-  // --- Prefer a turn-mill when the part is genuinely turning work ----------
-  if (barMachine && fit) {
-    const eff = (setups >= 3 ? 2 : 1) + angled;
-    reasons.push(`Round cross-section (⌀${r0(fit.widthMm)}, ${Math.round(fit.balance * 100)}% square) fits ⌀${fit.barDiameterMm} bar within the ${barMachine.name}'s ${barMachine.maxBarDiaMm} mm capacity → made from ROUND BAR, not a solid billet.`);
-    reasons.push(`Turned to profile then milled with driven tools in ${eff === 1 ? 'a single clamp' : `${eff} clamps`} — replacing the ${setups} re-clamp${setups === 1 ? '' : 's'} a machining centre would need.`);
-    return recommend(barMachine, reasons, candidates, {
-      route: 'mill-turn', stockForm: 'bar', barDiameterMm: fit.barDiameterMm, effectiveSetups: eff,
+      : setupsOnMachine(m, faces, angled).reason;
+    candidates.push({
+      id: m.id, name: m.name, capable: envOk, reason,
+      cost: offers.find((o) => o.machine.id === m.id)?.cost,
     });
   }
 
-  if (chuckMachine && fit) {
-    // The flange case: too short to bar-feed, but a perfectly ordinary chucking
-    // job. Its on-axis features are TURNED; only the off-axis ones are milled.
-    const eff = Math.max(2, 1 + angled); // one chucking per end, plus angled work
-    reasons.push(`⌀${r0(fit.containDiaMm)} × ${r0(fit.lengthMm)} mm is too ${fit.elongated ? 'large' : 'short'} to bar-feed, but chucks within the ${chuckMachine.name}'s ${chuckMachine.maxChuckDiaMm} mm swing.`);
-    reasons.push(`On-axis features (bores, spigots, faces) are TURNED on the spindle — far faster than interpolating them with an end mill — and driven tools cut the off-axis work in the same clamp.`);
-    return recommend(chuckMachine, reasons, candidates, {
-      route: 'mill-turn', stockForm: 'billet', effectiveSetups: eff,
-    });
-  }
-
-  // --- Otherwise a machining centre: cheapest capable that fits ------------
-  const capableMills = mills.filter((m) => fitsEnvelope(m, dims));
-  if (!capableMills.length) {
+  if (!offers.length) {
     const biggest = mills.slice().sort((a, b) => (b.envelopeMm?.x ?? 0) - (a.envelopeMm?.x ?? 0))[0] ?? machines[0];
     return recommend(biggest, [
       dims
         ? `Part ${[dims.x, dims.y, dims.z].map(r0).join('×')} mm exceeds every milling envelope on the floor — confirm the route before quoting.`
         : 'No measured geometry — confirm the route before quoting.',
-    ], candidates, { route: 'mill', stockForm: 'billet', effectiveSetups: setups });
+    ], candidates, { route: 'mill', stockForm: 'billet', effectiveSetups: requested });
   }
 
-  // More axes earn their rate only when there are setups to collapse.
-  const wantsIndexing = setups >= 4;
-  const chosen = capableMills.slice().sort((a, b) => {
-    if (wantsIndexing && b.axes !== a.axes) return b.axes - a.axes;
-    return a.rateMultiplier - b.rateMultiplier;
-  })[0];
+  // --- The bake-off --------------------------------------------------------
+  // Rank on what the part actually costs to make: setups × setup labour, spread
+  // over the batch, plus spindle time at THIS machine's rate. That is the only
+  // comparison that can see a premium machine paying for itself by deleting four
+  // clamps — and it correctly flips back to the cheap machine at high quantity,
+  // where the setups amortise away and the hourly rate is all that is left.
+  const ranked = offers.slice().sort((a, b) => a.cost.totalPerPart - b.cost.totalPerPart);
+  let winner = ranked[0];
+  const reasons: string[] = [];
 
-  if (wantsIndexing && chosen.axes >= 4) {
-    reasons.push(`Features are approached from ${setups} directions. The ${chosen.name}'s 4th axis indexes to several of them without a full re-fixture, so the higher rate is repaid.`);
-  } else {
-    reasons.push(`Features are reachable in ${setups} setup${setups === 1 ? '' : 's'} — the ${chosen.name} is the lowest-cost route that fits.`);
+  // Two things the bake-off structurally cannot see, both favouring turning.
+  //
+  // The cut-time proxy is deliberately machine-blind, but a spindle removes
+  // on-axis material several times faster than an end mill interpolating the
+  // same feature — so a turning route's cycle cost is overstated here. And bar
+  // work buys round bar instead of a sawn billet (far better yield) and runs
+  // unattended off the feeder, neither of which appears in a per-part cost.
+  //
+  // Rather than bury a correction inside the numbers, prefer a turning route
+  // openly when one exists and is close, and SAY that the bake-off had another
+  // machine marginally cheaper. The full table ships with the recommendation, so
+  // an estimator who disagrees can see exactly what was traded away.
+  const TURN_ROUTE_TOLERANCE = 1.5;
+  const turnOffer = ranked.find((o) => o.route === 'mill-turn');
+  if (turnOffer && turnOffer !== winner && turnOffer.cost.totalPerPart <= winner.cost.totalPerPart * TURN_ROUTE_TOLERANCE) {
+    reasons.push(
+      `Costed against the ${winner.machine.name} at ${winner.cost.totalPerPart.toFixed(2)}/part, but routed to the ${turnOffer.machine.name} at ${turnOffer.cost.totalPerPart.toFixed(2)}: this part has coaxial features a spindle TURNS, which the comparison above prices as milling. Turning them is several times faster, and the round part chucks far more easily than it clamps.`
+    );
+    winner = turnOffer;
   }
-  if (fit && !fit.roundEnough) reasons.push(`Prismatic solid — not turning work, so it belongs on a machining centre.`);
-  if ((input.pocketCount ?? 0) > 0) reasons.push(`${input.pocketCount} pocket(s) roughed and finished on the machining centre.`);
 
-  // NOTE: no 4th-axis setup discount is applied. A rotary axis genuinely does
-  // let one clamp reach the faces around it, so the real setup count is likely
-  // lower than the measured access-direction count — but by how much depends on
-  // this shop's fixturing, and inventing a divisor here would quietly re-create
-  // the under-costing this model has repeatedly been caught doing. The measured
-  // count stands until the shop calibrates it; the reasoning says the 4th axis
-  // may reduce it so the estimator knows to look.
-  if (chosen.axes >= 4 && setups > 2) {
-    reasons.push(`Its 4th axis may let one clamp reach several of these ${setups} directions — CONFIRM the real setup count with the shop before quoting at low quantity.`);
+  reasons.unshift(...winner.reasons);
+  const cheapestRate = offers.slice().sort((a, b) => a.machine.hourlyRate - b.machine.hourlyRate)[0];
+  let bakeOffNote: string | undefined;
+  if (cheapestRate.machine.id !== winner.machine.id) {
+    const saved = Math.round((cheapestRate.cost.totalPerPart - winner.cost.totalPerPart) * 100) / 100;
+    if (saved > 0) {
+      bakeOffNote =
+        `The ${cheapestRate.machine.name} is cheaper per hour (${cheapestRate.machine.hourlyRate} vs ${winner.machine.hourlyRate}) but needs ${cheapestRate.cost.setups} setup${cheapestRate.cost.setups === 1 ? '' : 's'} against ${winner.cost.setups} — at qty ${qty} that costs ${saved.toFixed(2)}/part more, so the faster-to-set machine wins.`;
+      reasons.push(bakeOffNote);
+    } else {
+      bakeOffNote =
+        `Chosen on total cost at qty ${qty}. Note the ${cheapestRate.machine.name} is close behind and cheaper per hour — at a larger batch, where setups amortise away, it likely takes over.`;
+      reasons.push(bakeOffNote);
+    }
   }
-  return recommend(chosen, reasons, candidates, {
-    route: 'mill', stockForm: 'billet', effectiveSetups: setups,
+  if ((input.pocketCount ?? 0) > 0 && winner.route === 'mill') {
+    reasons.push(`${input.pocketCount} pocket(s) roughed and finished in these setups.`);
+  }
+
+  return recommend(winner.machine, reasons, candidates, {
+    route: winner.route,
+    stockForm: winner.stockForm,
+    barDiameterMm: winner.barDiameterMm,
+    effectiveSetups: winner.setups,
+    bakeOff: ranked.map((o) => o.cost),
+    bakeOffNote,
   });
 }

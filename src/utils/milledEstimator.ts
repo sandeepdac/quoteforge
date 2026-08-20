@@ -57,6 +57,8 @@ export interface MilledProfile {
    * and they are the reason a quote for an angled part must be reviewed.
    */
   angledSetups?: number;
+  /** Access directions square to a stock face (the rest are compound angles). */
+  axisAlignedSetups?: number;
   /** How far off a stock axis each angled hole/bore axis sits (degrees). */
   angledToolAxisDegs?: number[];
   /** Open/partial circular features (⌀ mm) — interpolated bores, not drilled. */

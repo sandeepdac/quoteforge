@@ -26,6 +26,7 @@ import MachiningCostTable from '../quote/MachiningCostTable';
 import MilledOperationStrategy from '../quote/MilledOperationStrategy';
 import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
+import { MACHINE_CATALOG } from '../../utils/machineSelection';
 import { cn } from '../../utils/cn';
 
 interface StepReviewProps {
@@ -234,7 +235,12 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
               {cadAnalysis?.machineRecommendation && (
                 <p className="text-[11px] text-muted-foreground">
                   <strong className="text-foreground">Machine:</strong> {cadAnalysis.machineRecommendation.recommendedName}
-                  <span className="text-muted-foreground/70"> · {Math.round(cadAnalysis.machineRecommendation.rateMultiplier * 100)}% of base spindle rate</span>
+                  <span className="text-muted-foreground/70"> · {MACHINE_CATALOG[cadAnalysis.machineRecommendation.recommended]?.hourlyRate ?? '—'}/hr</span>
+                </p>
+              )}
+              {cadAnalysis?.machineRecommendation?.bakeOffNote && (
+                <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
+                  {cadAnalysis.machineRecommendation.bakeOffNote}
                 </p>
               )}
               {mc && mc.machineClass === 'mill' && (

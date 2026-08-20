@@ -14,7 +14,7 @@ import { classifyPart, PartClass } from './partClass';
 import { computeStock } from './cncEstimator';
 import { TurningProfile } from './turning';
 import { MilledProfile, contouredSetupCount, toBarStockProfile } from './milledEstimator';
-import { selectMachine, MachineRecommendation, MachineId } from './machineSelection';
+import { selectMachine, MACHINE_CATALOG, MachineRecommendation, MachineId } from './machineSelection';
 import { materialPropsFor, milledBilletMm, nextStandardBar } from './materials';
 import { extractTurnedProfile, arrayBufferToBase64, GeometryResult } from './geometryService';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
@@ -144,6 +144,13 @@ export function stripCadForStorage(a: ExtractedCadAnalysis): ExtractedCadAnalysi
 export interface AnalyzeOptions {
   /** Machines on the shop floor; omitted → the whole catalog is considered. */
   machines?: MachineId[];
+  /**
+   * Batch size, if known at analysis time. It decides the machine: setups
+   * dominate at qty 1 (favouring the machine that needs fewest), the hourly rate
+   * dominates at qty 500 (favouring the cheapest). Defaults to 1 — the
+   * conservative reading, and the one that matters for a first quote.
+   */
+  quantity?: number;
 }
 
 export async function analyzeCadFile(file: CadFileInput, opts: AnalyzeOptions = {}): Promise<ExtractedCadAnalysis> {
@@ -341,6 +348,7 @@ async function analyzeSolid(
           holeDiametersMm: mm.holeDiametersMm,
           sparseBillet: mm.sparseBillet,
           angledSetups: mm.angledSetups,
+          axisAlignedSetups: mm.axisAlignedSetups,
           angledToolAxisDegs: (mm.angledToolAxes ?? []).map((a) => a.offAxisDeg),
           partialBoreDiametersMm: mm.partialBoreDiametersMm,
           steppedHoleCount: mm.steppedHoleCount,
@@ -400,6 +408,17 @@ async function analyzeSolid(
       crossFeatures,
       setupCount: milledProfile?.setupCount,
       angledSetups: milledProfile?.angledSetups,
+      // The part's access DEMAND, split so each machine can answer it with its
+      // own kinematics: a compound angle is free on 5 axes and a fixture on 3.
+      axisAlignedSetups: milledProfile?.axisAlignedSetups,
+      quantity: opts.quantity,
+      economics: {
+        setupRatePerMin: DEFAULT_CNC_SETTINGS.setupRatePerMin,
+        setupFirstOpMin: DEFAULT_CNC_SETTINGS.millSetupFirstOpMin ?? 60,
+        setupPerExtraOpMin: DEFAULT_CNC_SETTINGS.millSetupPerExtraOpMin ?? 45,
+        programmingMinPerSetup: DEFAULT_CNC_SETTINGS.programmingMinPerSetup ?? 25,
+        flatChargePerSetup: DEFAULT_CNC_SETTINGS.flatSetupChargePerSetup ?? 0,
+      },
       pocketCount: milledProfile?.pocketCount,
       bossCount: milledProfile?.bossCount,
       partDimsMm: { x: meas.lengthMm, y: meas.widthMm, z: meas.heightMm },
@@ -437,14 +456,17 @@ async function analyzeSolid(
       // (which only applied to hogging a solid block) no longer holds.
       setups = Math.max(1, milledProfile.setupCount);
       sparseBillet = false;
-    } else if (milledProfile && machineRecommendation.route === 'mill-turn') {
-      // CHUCKED turn-mill work: too short or too large to bar-feed, but held in
-      // the chuck and turned — the flange case. The stock stays a sawn billet,
-      // but the part is presented to a spindle rather than re-clamped once per
-      // face, so the setup count is the machine's, not the access-direction count.
+    } else if (milledProfile && machineRecommendation.effectiveSetups != null) {
+      // SETUPS BELONG TO THE (PART, MACHINE) PAIR, not to the part. The geometry
+      // service counts tool-access DIRECTIONS — what the part demands — and the
+      // selected machine turns that into physical clamps with its own kinematics:
+      // six directions are six re-fixtures on a 3-axis, three on a 4-axis, two on
+      // a 5-axis mill-turn holding it in soft jaws. Pricing the direction count
+      // regardless of machine is what made a 5-setup VMC plan out of a job the
+      // shop's mill-turn does in two.
       milledProfile = {
         ...milledProfile,
-        setupCount: Math.max(1, Math.round(machineRecommendation.effectiveSetups ?? milledProfile.setupCount)),
+        setupCount: Math.max(1, Math.round(machineRecommendation.effectiveSetups)),
       };
       setups = milledProfile.setupCount;
     }
@@ -529,7 +551,11 @@ async function analyzeSolid(
               ? `${setups} setup${setups === 1 ? '' : 's'} (distinct tool-access directions), ${milledProfile.pocketCount} pocket${milledProfile.pocketCount === 1 ? '' : 's'}${milledProfile.deepPocketCount > 0 ? ` (${milledProfile.deepPocketCount} deep)` : ''}, ${milledProfile.holeCount} hole${milledProfile.holeCount === 1 ? '' : 's'}. Setups are the biggest cost lever.`
               : '',
             (milledProfile?.angledSetups ?? 0) > 0
-              ? `⚠️ COMPOUND-ANGLE WORK: ${milledProfile!.angledSetups} hole/bore axis/axes sit ${(milledProfile!.angledToolAxisDegs ?? []).map((d) => `${Math.round(d)}°`).join(', ')} off a stock face. A hole can only be cut along its own axis, so each needs a tilted fixture or a 4th/5th-axis rotation — counted as extra setups. Setups dominate the price at low quantity, so CONFIRM how these are held before sending.`
+              ? `⚠️ COMPOUND-ANGLE WORK: ${milledProfile!.angledSetups} hole/bore axis/axes sit ${(milledProfile!.angledToolAxisDegs ?? []).map((d) => `${Math.round(d)}°`).join(', ')} off a stock face. A hole can only be cut along its own axis, so reaching one tilted in two planes takes two rotations. ${
+                  MACHINE_CATALOG[machineRecommendation.recommended]?.axes >= 5
+                    ? `The ${machineRecommendation.recommendedName} tilts its head to them in-cycle, so they cost NO extra setups here — that capability is why it was chosen over a cheaper machine.`
+                    : `The ${machineRecommendation.recommendedName} cannot reach them in one rotation, so each is priced with its own tilted fixture. A 5-axis machine would absorb them; CONFIRM how these are held before sending.`
+                }`
               : '',
             (milledProfile?.partialBoreDiametersMm?.length ?? 0) > 0
               ? `${milledProfile!.partialBoreDiametersMm!.length} open/partial circular feature(s) (⌀${milledProfile!.partialBoreDiametersMm!.map((d) => d.toFixed(1)).join(', ⌀')} mm) are milled by interpolation rather than drilled.`

@@ -22,6 +22,7 @@ import DfmPanel from '../cad/DfmPanel';
 import { cn } from '../../utils/cn';
 import { useMoney } from '../../utils/useMoney';
 import { dimsDesc } from '../../utils/dims';
+import { MACHINE_CATALOG } from '../../utils/machineSelection';
 
 interface StepExtractProps {
   cadAnalysis?: ExtractedCadAnalysis;
@@ -440,7 +441,7 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                 <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5 flex items-center justify-between">
                   <span className="flex items-center gap-1.5"><Cpu size={14} className="text-primary" /> Recommended Machine</span>
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                    {Math.round(mr.rateMultiplier * 100)}% rate
+                    {symbol}{MACHINE_CATALOG[mr.recommended]?.hourlyRate ?? '—'}/hr
                   </span>
                 </h3>
 
@@ -459,6 +460,45 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                   <div className="flex gap-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5">
                     <AlertCircle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                     <p className="text-[10px] text-muted-foreground leading-relaxed">{mr.secondOpNote}</p>
+                  </div>
+                )}
+
+                {/* The bake-off: setups and hourly rate pull in opposite
+                    directions, so the decision is only legible as a table. */}
+                {(mr.bakeOff?.length ?? 0) > 1 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                      Cost bake-off at qty {mr.bakeOff![0].quantity}
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[10px]">
+                        <thead>
+                          <tr className="text-muted-foreground/70 text-left">
+                            <th className="font-semibold py-1 pr-2">Machine</th>
+                            <th className="font-semibold py-1 pr-2 text-right">Rate</th>
+                            <th className="font-semibold py-1 pr-2 text-right">Setups</th>
+                            <th className="font-semibold py-1 pr-2 text-right">Cycle</th>
+                            <th className="font-semibold py-1 text-right">Per part</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {mr.bakeOff!.map((b) => (
+                            <tr key={b.id} className={cn('border-t border-border/60', b.id === mr.recommended && 'bg-emerald-500/10 font-semibold')}>
+                              <td className="py-1 pr-2 text-foreground">{b.name}</td>
+                              <td className="py-1 pr-2 text-right text-muted-foreground">{symbol}{b.hourlyRate}/hr</td>
+                              <td className="py-1 pr-2 text-right text-muted-foreground" title={b.setupReason}>{b.setups}</td>
+                              <td className="py-1 pr-2 text-right text-muted-foreground">{symbol}{b.cycleCost.toFixed(2)}</td>
+                              <td className="py-1 text-right text-foreground">{symbol}{b.totalPerPart.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
+                      Setups and hourly rate move in opposite directions: the machine that needs fewest
+                      clamps wins at low quantity, the cheapest hour wins at high quantity. Cycle cost is
+                      a first-order estimate used only to rank the machines — the quote uses the full model.
+                    </p>
                   </div>
                 )}
 
@@ -482,7 +522,8 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                   })}
                 </div>
                 <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
-                  The chosen machine's charge-out ({Math.round(mr.rateMultiplier * 100)}% of the base spindle rate) is applied to the cycle-time price.
+                  The chosen machine's charge-out ({symbol}{MACHINE_CATALOG[mr.recommended]?.hourlyRate ?? '—'}/hr) is applied to the
+                  cycle-time price. Rates are defaults for a UK precision shop — set your own before sending a quote.
                 </p>
               </div>
             );
@@ -626,10 +667,23 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                     <strong className="text-foreground">
                       {(mp.angledToolAxisDegs ?? []).map((d) => `${Math.round(d)}°`).join(', ')}
                     </strong>{' '}
-                    off a stock face. A hole can only be cut along its own axis, so each needs a tilted fixture or a
-                    4th/5th-axis rotation — counted here as{' '}
-                    <strong className="text-foreground">{mp.angledSetups} extra setup{mp.angledSetups === 1 ? '' : 's'}</strong>.
-                    Setups dominate the price at low quantity, so check this against how you'd really hold it.
+                    off a stock face. A hole can only be cut along its own axis, so reaching one tilted in two planes
+                    takes two rotations.{' '}
+                    {(MACHINE_CATALOG[cadAnalysis?.machineRecommendation?.recommended ?? 'haas-vf2']?.axes ?? 3) >= 5 ? (
+                      <>
+                        The <strong className="text-foreground">{cadAnalysis?.machineRecommendation?.recommendedName}</strong> tilts
+                        its head to them in-cycle, so they cost{' '}
+                        <strong className="text-foreground">no extra setups</strong> here — that reach is why it was chosen over a
+                        cheaper machine. Confirm the shop would really run it there.
+                      </>
+                    ) : (
+                      <>
+                        The <strong className="text-foreground">{cadAnalysis?.machineRecommendation?.recommendedName}</strong> cannot
+                        reach them in one rotation, so each is priced with its own tilted fixture —{' '}
+                        <strong className="text-foreground">{mp.angledSetups} extra setup{mp.angledSetups === 1 ? '' : 's'}</strong>.
+                        Setups dominate the price at low quantity, so check this against how you'd really hold it.
+                      </>
+                    )}
                   </p>
                 </div>
               )}
