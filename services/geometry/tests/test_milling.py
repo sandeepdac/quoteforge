@@ -296,3 +296,32 @@ def test_conical_faces_are_no_longer_unexamined():
     m = _milled("countersink")
     labels = set(m["faceLabels"].values())
     assert not any(l.startswith("unexamined:conical") for l in labels), labels
+
+
+# --- The brake -------------------------------------------------------------
+def test_the_sample_corpus_matches_the_committed_baseline():
+    """
+    Every analyser change in this project was checked by diffing the sample
+    corpus before and after by hand. That caught real regressions, but only
+    because someone remembered to run it. This makes it automatic: any change to
+    a setup count, hole count, feature count or volume on a known part shows up
+    here as a named line, and has to be either intended or fixed.
+
+    Skips when the corpus is not present (it is ~40 MB of customer parts and
+    lives outside the repo); the committed baseline keeps the numbers reviewable
+    in git regardless.
+    """
+    import pytest
+    from tests.baseline import corpus_files, load_baseline, measure_all, diff
+
+    if not corpus_files():
+        pytest.skip("sample corpus not available (set QF_CORPUS_DIR)")
+    base = load_baseline()
+    if not base:
+        pytest.skip("no committed baseline yet — run: python -m tests.baseline --update")
+    changes = diff(measure_all(), base)
+    assert not changes, (
+        "The analyser now reports different geometry for known parts.\n"
+        "If this is intended, re-run: python -m tests.baseline --update\n"
+        + "\n".join(changes)
+    )
