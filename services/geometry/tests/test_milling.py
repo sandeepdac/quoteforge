@@ -175,3 +175,22 @@ def test_a_through_hole_alone_does_not_force_a_flip():
     # a second setup on an otherwise one-sided part.
     m = _milled("throughonly")
     assert m["setupCount"] == 1
+
+
+def test_a_bore_nearly_as_wide_as_the_part_is_still_a_bore():
+    # The bore branch capped radius at 0.4 x the longest edge and the boss branch
+    # at 0.5, so a cylinder between the two matched NEITHER and disappeared. A
+    # ⌀24 bore in a 26.5 mm-wide part is ordinary, not absurd; what makes a face
+    # a bore is material lying outside it, not its size.
+    m = _milled("bigbore")
+    assert any(abs(d - 24.0) < 0.5 for d in m["holeDiametersMm"]), m["holeDiametersMm"]
+    assert m["roundBossCount"] == 0  # and it is NOT the part's outside profile
+
+
+def test_every_cylindrical_face_is_classified_as_bore_or_boss():
+    # The failure mode was silent: a real feature belonging to neither list. Any
+    # cylinder inside the size bound must land somewhere, or it is invisible to
+    # both the cost model and the traveller.
+    for name in ("bigbore", "counterbore", "spigot", "multi"):
+        m = _milled(name)
+        assert m["holeCount"] + m["roundBossCount"] > 0, name

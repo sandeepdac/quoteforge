@@ -136,7 +136,14 @@ def analyze_milling(shape) -> dict:
     removed_mm3 = max(stock_vol_mm3 - part_vol_mm3, 0.0)
     removal_ratio = removed_mm3 / stock_vol_mm3
 
+    # NOTE ON NAMING: `diag` is the LONGEST EDGE, not the box diagonal. The name
+    # was wrong and two size gates below were written as though it were a
+    # diagonal, which made them far tighter than intended — a ⌀24 bore in a
+    # 26.5 mm-wide part was rejected as "too big to be a hole". Both are kept
+    # (they are calibrated against the sample parts) but the real diagonal is now
+    # available under its own name for gates that genuinely want part SIZE.
     diag = max((bx, by, bz))
+    box_diagonal = math.sqrt(bx * bx + by * by + bz * bz)
     tol_len = max(0.2, 0.01 * diag)
 
     # --- Face index map (stable identity across loops) & edge→faces --------
@@ -202,12 +209,23 @@ def analyze_milling(shape) -> dict:
             ax = _unit(_np(ad.Cylinder().Axis().Direction()))
             cyl_axes.append(ax)
             # A hole/bore is an INTERNAL cylinder (material outside → the face is
-            # REVERSED) of modest radius. Convex external rounds/fillets — which
-            # inflate a naive cylinder count — are FORWARD and are excluded.
-            # (Verified against a geometric inside/outside probe: the orientation
-            # flag and the probe agree, so the cheap flag is kept.)
+            # REVERSED). Convex external rounds/fillets — which inflate a naive
+            # cylinder count — are FORWARD. The orientation flag is the cheap
+            # test and the geometric probe is the authority; they normally agree.
             r = ad.Cylinder().Radius()
-            if face.Orientation() == TopAbs_REVERSED and r <= 0.4 * max(diag, 1.0):
+            # A cylindrical face is INTERNAL (a bore) or EXTERNAL (a boss). The
+            # two tests below used to disagree about where the boundary was — the
+            # bore branch capped radius at 0.4 x longest-edge, the boss branch at
+            # 0.5 — so a face between those limits matched NEITHER and vanished
+            # from the analysis entirely. Part 032736's ⌀24 (r=12) in a 26.5 mm
+            # part landed in exactly that gap: it was reported as no feature at
+            # all, its volume showing up only inside the roughing total.
+            #
+            # The real discriminator is inside-vs-outside, not size, and both the
+            # orientation flag and the geometric probe answer that. Size only has
+            # to bound the absurd: a bore cannot be wider than the part.
+            bore_radius_cap = 0.5 * max(diag, 1.0)
+            if face.Orientation() == TopAbs_REVERSED and r <= bore_radius_cap:
                 loc = ad.Cylinder().Axis().Location()
                 # How far around the axis this face wraps. A drilled/bored hole
                 # closes the full 360° (often as two 180° halves); a filleted
@@ -222,14 +240,23 @@ def analyze_milling(shape) -> dict:
                 base_ax = float(np.dot(np.array([loc.X(), loc.Y(), loc.Z()]), ax))
                 hole_cyls.append((ax, np.array([loc.X(), loc.Y(), loc.Z()]), r, abs(u1 - u0),
                                   base_ax + min(_v0, _v1), base_ax + max(_v0, _v1)))
-            elif r <= 0.5 * max(diag, 1.0) and not _cylinder_has_material_outside(face, ad, ax, r):
-                # Material INSIDE the cylinder → a round boss / spigot standing
-                # proud, which the cutter still has to profile around.
+            elif r <= bore_radius_cap:
+                # Not flagged internal. Ask the geometry directly rather than
+                # trusting the flag: material INSIDE the cylinder means a round
+                # boss / spigot standing proud, material OUTSIDE means the flag
+                # was wrong and this is a bore after all. Either way the face is
+                # CLASSIFIED — the one outcome that must never happen is a real
+                # feature belonging to neither list and disappearing.
                 loc2 = ad.Cylinder().Axis().Location()
                 u0, u1, _v0, _v1 = BRepTools.UVBounds_s(face)
-                base2 = float(np.dot(np.array([loc2.X(), loc2.Y(), loc2.Z()]), ax))
-                boss_cyls.append((ax, np.array([loc2.X(), loc2.Y(), loc2.Z()]), r, abs(u1 - u0),
-                                  base2 + min(_v0, _v1), base2 + max(_v0, _v1)))
+                pt2 = np.array([loc2.X(), loc2.Y(), loc2.Z()])
+                base2 = float(np.dot(pt2, ax))
+                entry = (ax, pt2, r, abs(u1 - u0), base2 + min(_v0, _v1), base2 + max(_v0, _v1))
+                if _cylinder_has_material_outside(face, ad, ax, r):
+                    hole_axes.append(ax)
+                    hole_cyls.append(entry)
+                else:
+                    boss_cyls.append(entry)
         fexp.Next()
 
     def _fid(f) -> int:

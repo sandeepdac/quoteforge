@@ -114,6 +114,17 @@ def build(outdir):
     th = BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(60, 60, 20).Shape(),
                          cyl(3, 60, x=30, y=30, z=-10)).Shape()
     paths["throughonly"] = write(th, os.path.join(outdir, "throughonly.step"))
+
+    # A bore that is LARGE relative to the part: ⌀24 through a 26.5 x 25 x 14.25
+    # block, i.e. nearly as wide as the stock. Two size gates disagreed about
+    # where a cylinder stopped being a bore and started being a boss (0.4 vs 0.5
+    # of the longest edge), so a face in between matched neither test and was
+    # dropped from the analysis entirely — no hole, no boss, nothing, its volume
+    # visible only inside the roughing total. This is part 032736's ⌀24.
+    bigbore = BRepAlgoAPI_Cut(
+        BRepPrimAPI_MakeBox(26.5, 25.0, 14.25).Shape(),
+        cyl(12.0, 40, x=13.25, y=12.5, z=-10)).Shape()
+    paths["bigbore"] = write(bigbore, os.path.join(outdir, "bigbore.step"))
     return paths
 
 
