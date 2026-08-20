@@ -43,10 +43,10 @@ export interface GeometryMilled {
   /** The axis the part's circular features share, if any — the turning axis. */
   turningAxis?: number[] | null;
   /** Circular features coaxial with it: the spindle can TURN these. */
-  turnedFeatures?: Array<{ kind: 'bore' | 'spigot'; diameterMm: number; offAxisMm: number }>;
+  turnedFeatures?: Array<{ kind: 'bore' | 'spigot'; diameterMm: number; lengthMm: number; offAxisMm: number }>;
   turnedFeatureCount?: number;
   /** Circular features off that axis — driven tools / milling. */
-  milledFeatures?: Array<{ kind: 'bore' | 'spigot'; diameterMm: number; offAxisMm: number }>;
+  milledFeatures?: Array<{ kind: 'bore' | 'spigot'; diameterMm: number; lengthMm: number; offAxisMm: number }>;
   /** Planar faces square to the turning axis — facing cuts on a lathe. */
   facingCandidates?: number;
   pocketCount: number;

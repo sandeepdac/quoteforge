@@ -227,7 +227,9 @@ def analyze_milling(shape) -> dict:
                 # proud, which the cutter still has to profile around.
                 loc2 = ad.Cylinder().Axis().Location()
                 u0, u1, _v0, _v1 = BRepTools.UVBounds_s(face)
-                boss_cyls.append((ax, np.array([loc2.X(), loc2.Y(), loc2.Z()]), r, abs(u1 - u0)))
+                base2 = float(np.dot(np.array([loc2.X(), loc2.Y(), loc2.Z()]), ax))
+                boss_cyls.append((ax, np.array([loc2.X(), loc2.Y(), loc2.Z()]), r, abs(u1 - u0),
+                                  base2 + min(_v0, _v1), base2 + max(_v0, _v1)))
         fexp.Next()
 
     def _fid(f) -> int:
@@ -488,7 +490,7 @@ def analyze_milling(shape) -> dict:
     # --- Round bosses / spigots (external cylinders) ------------------------
     # Grouped the same way, so a spigot split into halves counts once.
     boss_groups: List[dict] = []
-    for ax, pt, r, span in boss_cyls:
+    for ax, pt, r, span, a_lo, a_hi in boss_cyls:
         placed = False
         for g in boss_groups:
             if abs(float(np.dot(ax, g["axis"]))) > 0.98:
@@ -496,10 +498,13 @@ def analyze_milling(shape) -> dict:
                 perp = d - float(np.dot(d, g["axis"])) * g["axis"]
                 if float(np.linalg.norm(perp)) < 0.25 and abs(g["radius"] - r) < 0.05:
                     g["span"] += span
+                    g["axLo"] = min(g["axLo"], a_lo)
+                    g["axHi"] = max(g["axHi"], a_hi)
                     placed = True
                     break
         if not placed:
-            boss_groups.append({"axis": ax, "point": pt, "radius": r, "span": span})
+            boss_groups.append({"axis": ax, "point": pt, "radius": r, "span": span,
+                                "axLo": a_lo, "axHi": a_hi})
     # A real spigot wraps most of the way round and is big enough to profile
     # around; small external radii are just corner rounds on the outside profile.
     round_bosses = [g for g in boss_groups
@@ -525,9 +530,11 @@ def analyze_milling(shape) -> dict:
     ON_AXIS_TOL_MM = 0.5  # how close two features must run to share an axis
 
     circular_features = (
-        [{"axis": g["axis"], "point": g["point"], "radius": g["maxRadius"], "kind": "bore"}
+        [{"axis": g["axis"], "point": g["point"], "radius": g["maxRadius"], "kind": "bore",
+          "length": max(0.0, g["axHi"] - g["axLo"])}
          for g in hole_groups]
-        + [{"axis": g["axis"], "point": g["point"], "radius": g["radius"], "kind": "spigot"}
+        + [{"axis": g["axis"], "point": g["point"], "radius": g["radius"], "kind": "spigot",
+            "length": max(0.0, g["axHi"] - g["axLo"])}
            for g in round_bosses]
     )
 
@@ -569,6 +576,8 @@ def analyze_milling(shape) -> dict:
     milled_features: List[dict] = []
     for f in circular_features:
         entry = {"kind": f["kind"], "diameterMm": round(2.0 * f["radius"], 3),
+                 # Axial extent — how much length the tool actually has to cut.
+                 "lengthMm": round(f["length"], 3),
                  "offAxisMm": round(_line_gap(best_group[0], f) if best_group else 0.0, 3)}
         (turned_features if id(f) in turned_ids else milled_features).append(entry)
 

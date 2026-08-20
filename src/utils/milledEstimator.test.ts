@@ -436,3 +436,79 @@ describe('compound-angle setups reach the price', () => {
     expect(withAngled.angledToolAxisDegs).toEqual([30, 30]);
   });
 });
+
+// --- Hybrid turning + milling --------------------------------------------
+// On a mill-turn the first question is "is this feature turned or milled?".
+// A coaxial bore is opened by the spindle at turning MRR (~4× milling), so the
+// same geometry must not be priced as helical interpolation with an end mill.
+describe('hybrid turning/milling split (mill-turn route)', () => {
+  // A chucked disc: ⌀30 × 25 bore straight down the turning axis.
+  const chucked: MilledProfile = {
+    stockMm: { x: 60, y: 60, z: 25 },
+    stockVolumeCm3: 90,
+    partVolumeCm3: 60,
+    removedVolumeCm3: 30,
+    surfaceAreaCm2: 160,
+    setupCount: 1,
+    pocketCount: 1,
+    bossCount: 0,
+    deepPocketCount: 0,
+    holeCount: 0,
+    turnedFeatures: [{ kind: 'bore', diameterMm: 30, lengthMm: 25 }],
+    facingCandidates: 2,
+  };
+  const onMill = calculateMilledCosts(input(chucked), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+  const onLathe = calculateMilledCosts(
+    input({ ...chucked, turningRoute: true }),
+    1,
+    false,
+    0.25,
+    DEFAULT_SHOP_SETTINGS
+  );
+
+  it('only the turning route emits a turning line item', () => {
+    expect(onMill.lineItems.find((li) => li.key === 'turning')).toBeUndefined();
+    expect(onLathe.lineItems.find((li) => li.key === 'turning')?.value).toBeGreaterThan(0);
+  });
+
+  it('moves the on-axis volume off the roughing line', () => {
+    const millRough = onMill.lineItems.find((li) => li.key === 'rough')!;
+    const latheRough = onLathe.lineItems.find((li) => li.key === 'rough')!;
+    expect(latheRough.value).toBeLessThan(millRough.value);
+    // ~17.7 cm³ of the 30 cm³ is the bore, so roughing keeps roughly 12 cm³.
+    expect(latheRough.driver).toMatch(/12(\.\d)? cm³/);
+    expect(millRough.driver).toMatch(/30 cm³/);
+  });
+
+  it('turning is faster than milling the same volume, so the cycle is shorter', () => {
+    expect(onLathe.cycleTimeSec).toBeLessThan(onMill.cycleTimeSec);
+  });
+
+  it('never turns away more than is removed in total', () => {
+    // An over-large declared feature (bigger than the whole billet) must clamp.
+    const overClaimed = calculateMilledCosts(
+      input({
+        ...chucked,
+        turningRoute: true,
+        turnedFeatures: [{ kind: 'bore', diameterMm: 200, lengthMm: 200 }],
+      }),
+      1,
+      false,
+      0.25,
+      DEFAULT_SHOP_SETTINGS
+    );
+    const rough = overClaimed.lineItems.find((li) => li.key === 'rough');
+    expect(rough).toBeUndefined(); // all 30 cm³ absorbed by turning, none left to mill
+    expect(overClaimed.cycleTimeSec).toBeGreaterThan(0);
+  });
+
+  it('line items still sum to the subtotal with turning in the mix', () => {
+    const sum = onLathe.lineItems.reduce((s, li) => s + li.value, 0);
+    expect(sum).toBeCloseTo(onLathe.subtotal, 4);
+  });
+
+  it('the traveller lists a boring bar, not an end mill, for the on-axis bore', () => {
+    const tools = onLathe.plan!.tools.map((t) => t.name);
+    expect(tools).toContain('Boring bar');
+  });
+});

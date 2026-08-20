@@ -25,6 +25,7 @@ import {
 import { DEFAULT_CNC_SETTINGS } from '../constants';
 import { materialPropsFor } from './materials';
 import { millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, MillingToolConfig } from './milling';
+import { roughingMrrCm3PerMin, rpm as turningRpm } from './turning';
 import { buildMilledPlan } from './milledPlanner';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
 import type { SecondaryOperation } from './secondaryOps';
@@ -70,9 +71,15 @@ export interface MilledProfile {
    * TURNED (roughly 4x faster than interpolating them with an end mill); only
    * the off-axis features are milled with driven tools.
    */
-  turnedFeatureDiametersMm?: number[];
+  turnedFeatures?: Array<{ kind: 'bore' | 'spigot'; diameterMm: number; lengthMm: number }>;
   /** Planar faces square to the turning axis — facing cuts. */
   facingCandidates?: number;
+  /**
+   * True when the chosen machine is a lathe or mill-turn, so the on-axis
+   * features above are actually produced by TURNING. On a machining centre the
+   * same features exist but must be milled, so this stays false.
+   */
+  turningRoute?: boolean;
   /**
    * True when the stock is ROUND BAR (a mill-turn part) rather than a rectangular
    * billet: `stockMm` then holds the bar as {⌀, ⌀, length} and `barDiameterMm` is
@@ -157,6 +164,7 @@ const COLORS: Record<string, string> = {
   fixture: '#fb923c',
   tooling: '#93c5fd',
   nre: '#a855f7',
+  turn: '#14b8a6',
 };
 
 // Milling-specific tuning (first-order; the efficiency factor calibrates the rest).
@@ -337,15 +345,67 @@ export function calculateMilledCosts(
     maxRpm: cnc.millMaxRpm ?? 12000,
   };
   const millMrr = millingMrrCm3PerMin(m, millCfg);
+
+  // --- TURNED vs MILLED work ----------------------------------------------
+  //
+  // On a lathe or mill-turn, the features coaxial with the turning axis are cut
+  // by the SPINDLE, not by a cutter walking a toolpath. That is roughly 4x the
+  // metal-removal rate (aluminium: ~360 vs ~91 cm³/min), and it is the first
+  // question a mill-turn programmer asks about every feature. Costing all of it
+  // as milling meant a bore the spindle opens in seconds was priced as helical
+  // interpolation with an end mill — at the turn-mill's premium rate.
+  //
+  // Only the volume attributable to on-axis features is moved to the turning
+  // rate; everything off-axis stays milled with driven tools.
+  const turnMrr = roughingMrrCm3PerMin(m);
+  const onAxis = p.turningRoute ? (p.turnedFeatures ?? []) : [];
+  // The stock diameter the OD is turned down FROM: the bar for bar work, else
+  // the smaller cross-section of the sawn billet.
+  const stockDiaMm = p.fromBarStock
+    ? (p.barDiameterMm ?? Math.min(p.stockMm.x, p.stockMm.y))
+    : Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z) === p.stockMm.z
+      ? Math.min(p.stockMm.x, p.stockMm.y)
+      : Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z);
+  const turnedVolRaw = onAxis.reduce((sum, f) => {
+    const d = Math.max(0, f.diameterMm);
+    const L = Math.max(0, f.lengthMm);
+    if (d <= 0 || L <= 0) return sum;
+    if (f.kind === 'bore') {
+      // Drilled/bored on the spindle — the whole cylinder comes out.
+      return sum + ((Math.PI / 4) * d * d * L) / 1000;
+    }
+    // A spigot is what's LEFT: the turned volume is the annulus taken off around
+    // it, from the stock diameter down to the spigot.
+    const outer = Math.max(d, stockDiaMm);
+    return sum + ((Math.PI / 4) * (outer * outer - d * d) * L) / 1000;
+  }, 0);
+  // Can never turn away more than is removed in total.
+  const turnedVol = Math.min(turnedVolRaw, removedVol);
+  const milledVol = Math.max(0, removedVol - turnedVol);
+
   // Base (open, part-sized tool) time; the complexity delta is billed separately
   // so the line items sum cleanly to the subtotal.
-  const roughBaseSec = (removedVol > 0 && millMrr > 0 ? (removedVol / millMrr) * 60 : 0) * feedMult;
+  const roughBaseSec = (milledVol > 0 && millMrr > 0 ? (milledVol / millMrr) * 60 : 0) * feedMult;
   const roughSec = roughBaseSec * deepMult;
+  // Turning is not subject to the small-tool complexity derate: that models a
+  // cutter squeezing into detail, which has no analogue on a spindle.
+  const turningSec = (turnedVol > 0 && turnMrr > 0 ? (turnedVol / turnMrr) * 60 : 0) * feedMult;
 
-  // --- Facing: skim the top face(s) that are cut, ~ stock footprint --------
+  // --- Facing --------------------------------------------------------------
+  // On a lathe a face is spiralled from OD to centre in one pass — far quicker
+  // than a face mill stepping over the whole footprint.
   const footprintCm2 = (p.stockMm.x * p.stockMm.y) / 100;
   const finishRate = finishingRateCm2PerMin(m, millCfg);
-  const facingSec = (finishRate > 0 ? (footprintCm2 / finishRate) * 60 : 0) * feedMult;
+  const facesToTurn = p.turningRoute ? Math.min(2, p.facingCandidates ?? 0) : 0;
+  const facingSec = facesToTurn > 0
+    ? (() => {
+        const faceRpm = turningRpm(m.cuttingSpeedFinish, stockDiaMm * 0.5, cnc.maxRpm);
+        const perFaceSec = faceRpm > 0 && m.feedFinish > 0
+          ? ((stockDiaMm / 2) / (m.feedFinish * faceRpm)) * 60
+          : 0;
+        return facesToTurn * perFaceSec * feedMult;
+      })()
+    : (finishRate > 0 ? (footprintCm2 / finishRate) * 60 : 0) * feedMult;
 
   // --- Finishing: walls + floors of the machined faces ---------------------
   // Contoured parts finish far slower (small ball at fine stepover); the multiplier
@@ -364,7 +424,7 @@ export function calculateMilledCosts(
   const drillSec = holes * drillPerHole * feedMult;
 
   // --- Cycle time (theoretical → actual via efficiency) --------------------
-  const cuttingSec = roughSec + facingSec + finishSec + drillSec;
+  const cuttingSec = roughSec + turningSec + facingSec + finishSec + drillSec;
   const toolCount = estimateToolCount(p);
   const toolChangeSec = cnc.millToolChangeSec ?? 10;
   const airSec = toolCount * toolChangeSec + cuttingSec * 0.08; // rapids between features
@@ -386,6 +446,8 @@ export function calculateMilledCosts(
     minPlaneDimMm: sortedDims[1], // the smaller in-plane dimension (not the thickness)
     facingSec,
     roughBaseSec,
+    turningSec,
+    turnedFeatures: onAxis,
     finishBaseSec,
     roughComplexSec: roughBaseSec * (deepMult - 1),
     finishComplexSec: finishBaseSec * (deepMult - 1),
@@ -469,7 +531,8 @@ export function calculateMilledCosts(
   const lineItems: CostLineItem[] = [
     { key: 'material', name: 'Billet stock', driver: `${r1(p.stockMm.x)}×${r1(p.stockMm.y)}×${r1(p.stockMm.z)} mm ${m.label} — ${stockWeightKg.toFixed(3)} kg @ $${input.materialPricePerKg.toFixed(2)}/kg`, value: materialCost, color: COLORS.material },
     { key: 'facing', name: 'Face / skim', driver: `${r1(footprintCm2)} cm² footprint — ${secStr(facingSec)}`, value: opCost(facingSec), color: COLORS.facing },
-    { key: 'rough', name: 'Roughing (hog-out)', driver: `${r1(removedVol)} cm³ removed @ ${r1(millMrr)} cm³/min — ${secStr(roughBaseSec)}`, value: opCost(roughBaseSec), color: COLORS.rough },
+    { key: 'turning', name: 'Turning (on-axis)', driver: turnedVol > 0 ? `${r1(turnedVol)} cm³ on the spindle @ ${r1(turnMrr)} cm³/min — ${onAxis.map((f) => `${f.kind} ⌀${r1(f.diameterMm)}`).join(', ')} — ${secStr(turningSec)}` : '', value: opCost(turningSec), color: COLORS.turn },
+    { key: 'rough', name: turnedVol > 0 ? 'Roughing (milled, off-axis)' : 'Roughing (hog-out)', driver: `${r1(milledVol)} cm³ removed @ ${r1(millMrr)} cm³/min — ${secStr(roughBaseSec)}`, value: opCost(roughBaseSec), color: COLORS.rough },
     { key: 'finish', name: 'Finishing (walls/floors)', driver: `${r1(finishAreaCm2)} cm²${finishSculpt > 1.05 ? ` contoured ×${r1(finishSculpt)} (small ball)` : ` @ ${r1(finishRate)} cm²/min`} — ${secStr(finishBaseSec)}`, value: opCost(finishBaseSec), color: COLORS.finish },
     { key: 'drill', name: 'Drilling', driver: `${holes} hole${holes === 1 ? '' : 's'} — ${secStr(drillSec)}`, value: opCost(drillSec), color: COLORS.drill },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },

@@ -345,7 +345,9 @@ async function analyzeSolid(
           partialBoreDiametersMm: mm.partialBoreDiametersMm,
           steppedHoleCount: mm.steppedHoleCount,
           roundBossDiametersMm: mm.roundBossDiametersMm,
-          turnedFeatureDiametersMm: (mm.turnedFeatures ?? []).map((f) => f.diameterMm),
+          turnedFeatures: (mm.turnedFeatures ?? []).map((f) => ({
+            kind: f.kind, diameterMm: f.diameterMm, lengthMm: f.lengthMm ?? 0,
+          })),
           facingCandidates: mm.facingCandidates,
         };
         // A contoured part is re-clamped to finish curved faces from more angles
@@ -404,9 +406,17 @@ async function analyzeSolid(
       partVolumeCm3: volumeCm3,
       // Coaxial round features are the evidence that a prismatic-looking part is
       // really chucking work — without them a hollowed block reads as "round".
-      onAxisTurnedFeatures: milledProfile?.turnedFeatureDiametersMm?.length,
+      onAxisTurnedFeatures: milledProfile?.turnedFeatures?.length,
       ownedMachines: opts.machines,
     });
+
+    // TURNED vs MILLED: the same coaxial bore exists whichever machine makes it,
+    // but only a spindle can TURN it. The route decides which — on a mill-turn
+    // the on-axis features are cut at turning rates; on a machining centre the
+    // identical features must be interpolated with an end mill.
+    if (milledProfile && machineRecommendation.route === 'mill-turn') {
+      milledProfile = { ...milledProfile, turningRoute: true };
+    }
 
     // MILL-TURN: when the chosen route runs from round bar, re-express the milled
     // profile as bar stock (⌀ + length) with collapsed setups. This is what makes

@@ -43,6 +43,10 @@ export interface MilledPlanInput {
   holeDiametersMm?: number[];
   maxDrillMm: number;
   bossCount: number;
+  /** Seconds of on-axis TURNING (spindle work), when the route is a lathe. */
+  turningSec?: number;
+  /** The on-axis features that turning covers — named in the traveller. */
+  turnedFeatures?: Array<{ kind: 'bore' | 'spigot'; diameterMm: number; lengthMm: number }>;
   setups: number;
   /**
    * Setups that exist for WORKHOLDING, not for work volume — a hole drilled on a
@@ -98,6 +102,33 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   const addSub = (o: SubOp) => {
     if (o.sec > 0.5) subs.push(o);
   };
+
+  // On a lathe or mill-turn the on-axis features are cut by the SPINDLE, with
+  // turning tools — a boring bar and an OD tool, not an end mill. Listing them
+  // as milling operations was the visible symptom of the whole turned-vs-milled
+  // gap: the traveller told the programmer to interpolate a bore the machine
+  // could simply bore.
+  const turnedBores = (inp.turnedFeatures ?? []).filter((f) => f.kind === 'bore');
+  const turnedOds = (inp.turnedFeatures ?? []).filter((f) => f.kind === 'spigot');
+  if ((inp.turningSec ?? 0) > 0.5 && (turnedBores.length || turnedOds.length)) {
+    const total = turnedBores.length + turnedOds.length;
+    const odShare = (inp.turningSec ?? 0) * (turnedOds.length / total);
+    const boreShare = (inp.turningSec ?? 0) * (turnedBores.length / total);
+    addSub({
+      name: turnedOds.length ? `Turn OD ⌀${r1(turnedOds[0].diameterMm)}` : 'Turn OD',
+      tool: 'OD turning tool (CNMG insert)',
+      sec: odShare,
+      driver: turnedOds.map((f) => `⌀${r1(f.diameterMm)}×${r1(f.lengthMm)}`).join(', ') || 'on-axis profile',
+      color: c.turn ?? c.rough,
+    });
+    addSub({
+      name: turnedBores.length ? `Bore ⌀${r1(turnedBores[0].diameterMm)} (turned)` : 'Boring',
+      tool: 'Boring bar',
+      sec: boreShare,
+      driver: turnedBores.map((f) => `⌀${r1(f.diameterMm)}×${r1(f.lengthMm)} deep`).join(', ') || 'on-axis bore',
+      color: c.turn ?? c.drill,
+    });
+  }
 
   addSub({
     name: 'Adaptive roughing',
