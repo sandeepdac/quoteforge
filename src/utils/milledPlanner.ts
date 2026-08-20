@@ -47,6 +47,8 @@ export interface MilledPlanInput {
   turningSec?: number;
   /** The on-axis features that turning covers — named in the traveller. */
   turnedFeatures?: Array<{ kind: 'bore' | 'spigot'; diameterMm: number; lengthMm: number }>;
+  /** The chosen machine has a spindle that turns — changes the tool vocabulary. */
+  turningRoute?: boolean;
   setups: number;
   /**
    * Setups that exist for WORKHOLDING, not for work volume — a hole drilled on a
@@ -80,6 +82,14 @@ interface SubOp {
   sec: number;
   driver: string;
   color: string;
+  /**
+   * Force this operation into a specific setup. Turning operations are pinned to
+   * the first holding: the OD and the bore are cut in ONE chucking on a lathe —
+   * you do not turn a diameter, unclamp, and come back to bore it concentric
+   * with it. Round-robin distribution is right for independent milling passes
+   * and wrong for a turned register.
+   */
+  pinSetup?: number;
 }
 
 /** Build the tool-specific, setup-grouped plan. */
@@ -120,6 +130,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
       sec: odShare,
       driver: turnedOds.map((f) => `⌀${r1(f.diameterMm)}×${r1(f.lengthMm)}`).join(', ') || 'on-axis profile',
       color: c.turn ?? c.rough,
+      pinSetup: 1,
     });
     addSub({
       name: turnedBores.length ? `Bore ⌀${r1(turnedBores[0].diameterMm)} (turned)` : 'Boring',
@@ -127,6 +138,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
       sec: boreShare,
       driver: turnedBores.map((f) => `⌀${r1(f.diameterMm)}×${r1(f.lengthMm)} deep`).join(', ') || 'on-axis bore',
       color: c.turn ?? c.drill,
+      pinSetup: 1,
     });
   }
 
@@ -228,7 +240,15 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   // finishing and drilling — the way a re-clamped job spreads work, instead of
   // piling every operation into the first setup and leaving the rest empty.
   const ops: DraftOp[] = [];
-  subs.forEach((s, i) => ops.push({ ...s, setup: (i % setups) + 1 }));
+  let slot = 0;
+  for (const s of subs) {
+    if (s.pinSetup) {
+      ops.push({ ...s, setup: Math.min(setups, Math.max(1, s.pinSetup)) });
+      continue; // pinned work does not consume a round-robin slot
+    }
+    ops.push({ ...s, setup: (slot % setups) + 1 });
+    slot += 1;
+  }
   if (chamfer) ops.push({ ...chamfer, setup: setups }); // edge-break on the last setup
 
   // --- Facing (once per real setup — you skim each re-clamped face) ---------
@@ -237,9 +257,14 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
     for (let s = 1; s <= setups; s++) {
       ops.push({
         name: 'Facing',
-        tool: toolName(face, 'Face mill'),
+        // On a lathe the face is spiralled from OD to centre with a turning
+        // insert; a face mill on a turning machine is the same category error as
+        // interpolating a bore it could simply bore.
+        tool: inp.turningRoute ? 'Facing tool (turning insert)' : toolName(face, 'Face mill'),
         sec: facePerSetup,
-        driver: `skim face @ ${r1(face?.vc ?? 0)} m/min`,
+        driver: inp.turningRoute
+          ? 'face on the spindle, OD → centre'
+          : `skim face @ ${r1(face?.vc ?? 0)} m/min`,
         color: c.facing,
         setup: s,
       });

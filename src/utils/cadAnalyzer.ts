@@ -430,10 +430,17 @@ async function analyzeSolid(
     });
 
     // TURNED vs MILLED: the same coaxial bore exists whichever machine makes it,
-    // but only a spindle can TURN it. The route decides which — on a mill-turn
-    // the on-axis features are cut at turning rates; on a machining centre the
-    // identical features must be interpolated with an end mill.
-    if (milledProfile && machineRecommendation.route === 'mill-turn') {
+    // but only a spindle can TURN it. What decides is whether the chosen machine
+    // HAS a spindle that can — not what the stock is called.
+    //
+    // Keying this off `route === 'mill-turn'` was wrong, and quietly so: when a
+    // prismatic part is routed to a mill-turn for soft-jaw milling the route is
+    // 'mill', so the turning model switched off and the machine's own ⌀30 bore
+    // came out as "bore / interpolate" — a lathe being driven like a VMC. The
+    // machine's kind is the honest test.
+    const chosenSpec = MACHINE_CATALOG[machineRecommendation.recommended];
+    const spindleCanTurn = !!chosenSpec && chosenSpec.kind !== 'mill';
+    if (milledProfile && spindleCanTurn && (milledProfile.turnedFeatures?.length ?? 0) > 0) {
       milledProfile = { ...milledProfile, turningRoute: true };
     }
 

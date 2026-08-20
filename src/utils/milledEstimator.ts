@@ -420,7 +420,20 @@ export function calculateMilledCosts(
   const complexitySec = (roughBaseSec + finishBaseSec) * (deepMult - 1);
 
   // --- Drilling: holes, depth ~ smallest stock dimension -------------------
-  const holes = Math.max(0, p.holeCount || 0);
+  // A feature can be turned or drilled, never both. The on-axis bores the
+  // spindle opens must come OUT of the hole list, or the ⌀30 register is priced
+  // twice — turned above, then billed again as "bore / interpolate ⌀30" by the
+  // hole grouping, which is the milling vocabulary this route exists to replace.
+  const turnedBoreDias = onAxis.filter((f) => f.kind === 'bore').map((f) => f.diameterMm);
+  const remainingHoleDias = [...(p.holeDiametersMm ?? [])];
+  for (const d of turnedBoreDias) {
+    const i = remainingHoleDias.findIndex((h) => Math.abs(h - d) <= Math.max(0.2, d * 0.02));
+    if (i >= 0) remainingHoleDias.splice(i, 1);
+  }
+  const drilledHoleDias = p.holeDiametersMm ? remainingHoleDias : undefined;
+  const holes = p.holeDiametersMm
+    ? remainingHoleDias.length
+    : Math.max(0, (p.holeCount || 0) - turnedBoreDias.length);
   const throughDepthMm = Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z) || 10;
   const drillPerHole = DRILL_SEC_PER_HOLE_REF * (1 / Math.max(0.3, m.machinability)) * (throughDepthMm / 20);
   const drillSec = holes * drillPerHole * feedMult;
@@ -450,6 +463,7 @@ export function calculateMilledCosts(
     roughBaseSec,
     turningSec,
     turnedFeatures: onAxis,
+    turningRoute: !!p.turningRoute,
     finishBaseSec,
     roughComplexSec: roughBaseSec * (deepMult - 1),
     finishComplexSec: finishBaseSec * (deepMult - 1),
@@ -459,7 +473,7 @@ export function calculateMilledCosts(
     finishAreaCm2,
     finishRate,
     holeCount: holes,
-    holeDiametersMm: p.holeDiametersMm,
+    holeDiametersMm: drilledHoleDias,
     maxDrillMm: cnc.maxDrillDiaMm ?? 20,
     bossCount: p.bossCount,
     setups: Math.max(1, Math.round(p.setupCount || 1)),
@@ -536,7 +550,7 @@ export function calculateMilledCosts(
     { key: 'turning', name: 'Turning (on-axis)', driver: turnedVol > 0 ? `${r1(turnedVol)} cm³ on the spindle @ ${r1(turnMrr)} cm³/min — ${onAxis.map((f) => `${f.kind} ⌀${r1(f.diameterMm)}`).join(', ')} — ${secStr(turningSec)}` : '', value: opCost(turningSec), color: COLORS.turn },
     { key: 'rough', name: turnedVol > 0 ? 'Roughing (milled, off-axis)' : 'Roughing (hog-out)', driver: `${r1(milledVol)} cm³ removed @ ${r1(millMrr)} cm³/min — ${secStr(roughBaseSec)}`, value: opCost(roughBaseSec), color: COLORS.rough },
     { key: 'finish', name: 'Finishing (walls/floors)', driver: `${r1(finishAreaCm2)} cm²${finishSculpt > 1.05 ? ` contoured ×${r1(finishSculpt)} (small ball)` : ` @ ${r1(finishRate)} cm²/min`} — ${secStr(finishBaseSec)}`, value: opCost(finishBaseSec), color: COLORS.finish },
-    { key: 'drill', name: 'Drilling', driver: `${holes} hole${holes === 1 ? '' : 's'} — ${secStr(drillSec)}`, value: opCost(drillSec), color: COLORS.drill },
+    { key: 'drill', name: 'Drilling', driver: `${holes} hole${holes === 1 ? '' : 's'}${turnedBoreDias.length ? ` (${turnedBoreDias.length} on-axis bore${turnedBoreDias.length === 1 ? '' : 's'} turned, not drilled)` : ''} — ${secStr(drillSec)}`, value: opCost(drillSec), color: COLORS.drill },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${p.pocketCount} pocket${p.pocketCount === 1 ? '' : 's'}`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },

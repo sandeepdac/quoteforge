@@ -512,3 +512,72 @@ describe('hybrid turning/milling split (mill-turn route)', () => {
     expect(tools).toContain('Boring bar');
   });
 });
+
+// --- Operation vocabulary: does the engine TURN, or only mill? -------------
+// Selecting the mill-turn is not the same as generating a mill-turn process
+// plan. Part 031581's ⌀32/⌀30 register came out as "bore / interpolate ⌀30" —
+// the right machine driven like a VMC — because the turning model keyed off the
+// route LABEL, and a prismatic part routed to a mill-turn for soft-jaw milling
+// carries route 'mill'. What matters is whether the chosen machine has a spindle.
+describe('a turning machine gets a turning process plan', () => {
+  const register: MilledProfile = {
+    stockMm: { x: 46, y: 31.75, z: 44.45 },
+    stockVolumeCm3: 64.9,
+    partVolumeCm3: 8.4,
+    removedVolumeCm3: 56.5,
+    surfaceAreaCm2: 90,
+    setupCount: 2,
+    pocketCount: 1,
+    bossCount: 1,
+    deepPocketCount: 0,
+    holeCount: 15,
+    holeDiametersMm: [30, 13, 13, 13, 3.4, 3.4, 3.4, 2.5, 2.5, 2, 2, 1.6, 1.6, 1.6, 1.6],
+    turnedFeatures: [
+      { kind: 'spigot', diameterMm: 32, lengthMm: 19.35 },
+      { kind: 'bore', diameterMm: 30, lengthMm: 26.35 },
+    ],
+    facingCandidates: 9,
+  };
+  const onLathe = calculateMilledCosts(
+    input({ ...register, turningRoute: true }), 1, false, 0.25, DEFAULT_SHOP_SETTINGS
+  );
+  const onMill = calculateMilledCosts(input(register), 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+  const opNames = (c: typeof onLathe) => c.plan!.setups.flatMap((s) => s.operations.map((o) => o.name));
+  const toolNames = (c: typeof onLathe) => c.plan!.tools.map((t) => t.name);
+
+  it('turns the register instead of interpolating it', () => {
+    expect(opNames(onLathe)).toContain('Bore ⌀30 (turned)');
+    expect(toolNames(onLathe)).toContain('Boring bar');
+    expect(opNames(onLathe).some((n) => /interpolate/i.test(n))).toBe(false);
+  });
+
+  it('...and the same geometry on a machining centre still interpolates it', () => {
+    // Not a bug: a VMC genuinely cannot turn. The plan should say so.
+    expect(opNames(onMill).some((n) => /interpolate ⌀30/i.test(n))).toBe(true);
+    expect(toolNames(onMill)).not.toContain('Boring bar');
+  });
+
+  it('never both turns and drills the same feature', () => {
+    const drilled = opNames(onLathe).filter((n) => /^Drilling|interpolate/i.test(n));
+    expect(drilled.some((n) => n.includes('30'))).toBe(false);
+    // The other 14 holes are still drilled — only the on-axis bore moved.
+    const line = onLathe.lineItems.find((li) => li.key === 'drill')!;
+    expect(line.driver).toMatch(/^14 holes/);
+    expect(line.driver).toMatch(/turned, not drilled/);
+  });
+
+  it('cuts the whole turned register in ONE holding', () => {
+    // You do not turn a diameter, unclamp, and come back to bore concentric with
+    // it. Round-robin distribution is right for independent milling passes and
+    // wrong for a turned register.
+    const setupOf = (name: string) =>
+      onLathe.plan!.setups.find((s) => s.operations.some((o) => o.name === name))?.index;
+    expect(setupOf('Turn OD ⌀32')).toBe(1);
+    expect(setupOf('Bore ⌀30 (turned)')).toBe(1);
+  });
+
+  it('faces with a turning insert, not a face mill', () => {
+    expect(toolNames(onLathe)).toContain('Facing tool (turning insert)');
+    expect(toolNames(onMill).some((t) => /Face/i.test(t))).toBe(true);
+  });
+});
