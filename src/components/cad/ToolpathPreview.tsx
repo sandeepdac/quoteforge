@@ -8,6 +8,15 @@ interface ToolpathPreviewProps {
   toolpath: Toolpath;
   partName?: string;
   materialName?: string;
+  /**
+   * Off-axis feature ⌀s the turned path CANNOT contain — a cross-drilled hole,
+   * a flat, a drill breaking through the OD. They are cut with live tooling in a
+   * second operation. Naming them here stops the path looking as though the
+   * engine failed to see them: on part 029068 a ⌀1 drill through the OD was
+   * detected and flagged, but the path showed five turning passes and no hint
+   * that anything had been left out.
+   */
+  crossFeatureDiametersMm?: number[];
 }
 
 const PAD = 30;
@@ -16,7 +25,7 @@ const SVG_W = 560;
 const r1 = (v: number) => Math.round(v * 10) / 10;
 
 /** A full longitudinal (Z–X) section of the estimated turning passes. Reference only. */
-export default function ToolpathPreview({ toolpath: tp, partName, materialName }: ToolpathPreviewProps) {
+export default function ToolpathPreview({ toolpath: tp, partName, materialName, crossFeatureDiametersMm }: ToolpathPreviewProps) {
   // Single-select "focus": which op's region we highlight. null = show every pass.
   const [focus, setFocus] = useState<TurningOp | null>(null);
   const opInfo = useMemo(() => turningOpRegions(tp), [tp]);
@@ -221,6 +230,22 @@ export default function ToolpathPreview({ toolpath: tp, partName, materialName }
           threads are quoted but not in this reference path.
         </p>
       </div>
+
+      {(crossFeatureDiametersMm?.length ?? 0) > 0 && (
+        <div className="px-4 pb-3 flex items-start gap-2">
+          <AlertTriangle size={13} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-[10px] text-muted-foreground leading-relaxed">
+            <strong className="text-amber-700 dark:text-amber-300">
+              Not in this path: {crossFeatureDiametersMm!.map((d) => `⌀${r1(d)}`).join(', ')}
+            </strong>{' '}
+            — {crossFeatureDiametersMm!.length === 1 ? 'this feature is' : 'these features are'} OFF-AXIS
+            (cross-drilled, a flat, or a drill breaking through the OD), so a turning path cannot produce
+            {crossFeatureDiametersMm!.length === 1 ? ' it' : ' them'}. The quote carries a second-op setup for
+            {crossFeatureDiametersMm!.length === 1 ? ' it' : ' them'} but <strong className="text-foreground">no
+            cutting time</strong> — add the live-tooling time separately.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

@@ -211,7 +211,42 @@ export function calculateMachiningCosts(
     { index: 1, name: setups > 1 ? 'Setup 1 — main turning' : 'Setup 1', operations: planOps, seconds: setup1Sec, cost: setup1Cost, toolChanges: t.toolCount },
   ];
   if (setups > 1) {
-    planSetups.push({ index: 2, name: 'Setup 2 — second op (back-face / cross features)', operations: [], seconds: 0, cost: 0, toolChanges: 0 });
+    // The second op used to be an empty row costing nothing, which reads as "no
+    // work here" — when what it actually means is "there IS work here and its
+    // cycle time is NOT estimated". On part 029068 that hid a ⌀1 drill breaking
+    // through the OD: detected, given 20 minutes of second-op setup labour, and
+    // then shown as a blank line, so it looked like the engine had missed it.
+    //
+    // These operations carry zero seconds ON PURPOSE — a cross feature is cut
+    // with live tooling that this turning model does not estimate. Naming them
+    // is what turns a silent exclusion into a stated one.
+    const cross = p.crossFeatureDiametersMm ?? [];
+    const secondOps: PlanOperation[] = cross.map((dia, i) => ({
+      name: `Off-axis feature ⌀${r1(dia)}`,
+      tool: 'Live tooling / second op',
+      seconds: 0,
+      cost: 0,
+      driver: `${i + 1} of ${cross.length} — NOT in the turned cycle time; add its time and tooling separately`,
+      color: COLORS.groove,
+    }));
+    if (!secondOps.length && p.crossFeatures) {
+      secondOps.push({
+        name: 'Off-axis feature(s)',
+        tool: 'Live tooling / second op',
+        seconds: 0,
+        cost: 0,
+        driver: 'NOT in the turned cycle time; add its time and tooling separately',
+        color: COLORS.groove,
+      });
+    }
+    planSetups.push({
+      index: 2,
+      name: 'Setup 2 — second op (back-face / cross features)',
+      operations: secondOps,
+      seconds: 0,
+      cost: 0,
+      toolChanges: 0,
+    });
   }
   const planToolAgg = new Map<string, { name: string; ops: number; seconds: number }>();
   for (const o of planOps) {

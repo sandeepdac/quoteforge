@@ -33,6 +33,15 @@ export interface TurningProfile {
   faceCount: number;
   /** Off-axis holes / flats / keyways present → needs live tooling / 2nd op. */
   crossFeatures: boolean;
+  /**
+   * The measured ⌀ of each off-axis feature, when the geometry service found
+   * them. A boolean alone could not say WHAT the second op is for, so the plan
+   * showed an empty "Setup 2" costing nothing and a real feature — a ⌀1 drill
+   * breaking through the OD — looked like something the engine had missed.
+   * These are NOT in the turned cycle time; naming them is what makes that
+   * exclusion visible rather than silent.
+   */
+  crossFeatureDiametersMm?: number[];
 }
 
 export interface TurningConfig {

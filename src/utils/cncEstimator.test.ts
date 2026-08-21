@@ -129,3 +129,53 @@ describe('turning machining plan', () => {
     expect(twoOp.plan!.setups.length).toBe(2);
   });
 });
+
+// --- Off-axis features: excluded on purpose, but say so -------------------
+// Part 029068 has a ⌀1 drill running parallel to the axis, right on the ⌀8 OD,
+// so half of it breaks through the outside surface. It IS detected — as a cross
+// feature — and it earns a second-op setup. What it does not get is cutting
+// time, because a turning model cannot estimate live tooling. The plan used to
+// show that as an empty "Setup 2" costing nothing, which reads as "no work
+// here" rather than "work here that we have not costed".
+describe('a cross feature is named rather than shown as an empty second op', () => {
+  const withCross = {
+    isTurned: true as const,
+    materialName: 'Aluminium 6082',
+    volumeCm3: 0.24,
+    profile: {
+      odMm: 8.09, lengthMm: 6.09, boreDiaMm: 5, boreDepthMm: 5,
+      grooveCount: 0, threadCount: 0, faceCount: 2,
+      crossFeatures: true, crossFeatureDiametersMm: [1.0],
+    },
+    setups: 2,
+    materialPricePerKg: 6,
+  };
+  const costs = calculateMachiningCosts(withCross, 1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+  const setup2 = costs.plan!.setups.find((s) => s.index === 2)!;
+
+  it('lists the off-axis feature with its measured diameter', () => {
+    expect(setup2.operations.length).toBeGreaterThan(0);
+    expect(setup2.operations[0].name).toMatch(/⌀1/);
+  });
+
+  it('carries zero cutting time, and says that is deliberate', () => {
+    expect(setup2.operations.every((o) => o.seconds === 0 && o.cost === 0)).toBe(true);
+    expect(setup2.operations[0].driver).toMatch(/NOT in the turned cycle time/i);
+  });
+
+  it('the second op still costs SETUP, so it is not free', () => {
+    const oneOp = calculateMachiningCosts(
+      { ...withCross, setups: 1, profile: { ...withCross.profile, crossFeatures: false, crossFeatureDiametersMm: [] } },
+      1, false, 0.25, DEFAULT_SHOP_SETTINGS
+    );
+    expect(costs.setupCost).toBeGreaterThan(oneOp.setupCost);
+  });
+
+  it('a part with no cross features has no second op at all', () => {
+    const plain = calculateMachiningCosts(
+      { ...withCross, setups: 1, profile: { ...withCross.profile, crossFeatures: false, crossFeatureDiametersMm: [] } },
+      1, false, 0.25, DEFAULT_SHOP_SETTINGS
+    );
+    expect(plain.plan!.setups.find((s) => s.index === 2)).toBeUndefined();
+  });
+});

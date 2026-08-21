@@ -364,7 +364,12 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
           )}
 
           {toolpath && (
-            <ToolpathPreview toolpath={toolpath} partName={data.partName} materialName={material.name} />
+            <ToolpathPreview
+              toolpath={toolpath}
+              partName={data.partName}
+              materialName={material.name}
+              crossFeatureDiametersMm={cadAnalysis?.turningProfile?.crossFeatureDiametersMm}
+            />
           )}
 
           <div className="space-y-3">

@@ -304,6 +304,12 @@ async function analyzeSolid(
         boreDiaMm: p.boreDiaMm, boreDepthMm: p.boreDepthMm,
         grooveCount: p.grooveCount, threadCount: p.threadCount,
         faceCount: p.faceCount || 2, crossFeatures: p.crossFeatures,
+        // The service reports each off-axis feature as a 'cross' segment with a
+        // measured radius. Carrying the sizes through lets the plan say what the
+        // second operation is actually for.
+        crossFeatureDiametersMm: (svc!.segments ?? [])
+          .filter((sg) => sg.type === 'cross')
+          .map((sg) => Math.round(sg.radiusMm * 2 * 100) / 100),
       };
       profileSource = 'brep-service';
     } else {
