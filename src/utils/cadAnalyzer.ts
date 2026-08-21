@@ -228,8 +228,13 @@ async function analyzeSolid(
     const useSvc = !!(svc && svc.ok);
     const volumeCm3 = useSvc ? svc!.measured.volumeCm3 : meas.volumeCm3;
     const surfaceAreaCm2 = useSvc ? svc!.measured.surfaceAreaCm2 : meas.surfaceAreaCm2;
-    const weightKg = round((volumeCm3 * density) / 1000, 2) || 0;
-    const surfaceAreaM2 = round(surfaceAreaCm2 / 10000, 3) || 0;
+    // 2 dp of a KILOGRAM is 10 grams, so anything under ~5 g rounded to zero and
+    // the field read "0" on a small turned part. Precision costs nothing here.
+    const weightKg = round((volumeCm3 * density) / 1000, 5);
+    // 3 dp of a square METRE is 1000 mm², so a small turned part rounded to
+    // zero and the field read "0". Keep enough digits that a 5 g part is still
+    // a number; the UI shows cm²/g alongside so the value is legible at all.
+    const surfaceAreaM2 = round(surfaceAreaCm2 / 10000, 6);
     const stepData = solidStepData(fileName, meas, stepResult);
 
     // Prefer holes and bends detected geometrically from the B-Rep faces — far more
@@ -817,7 +822,7 @@ export function fromAiData(
       heightMm: round(od, 2),
       holeCount: boreDia > 0 ? 1 : 0,
       holeDetails: boreDia > 0 ? [{ diameterMm: boreDia, count: 1 }] : [],
-      weightKg: round(weightKg, 3),
+      weightKg: round(weightKg, 5),
       surfaceAreaM2: 0,
       partClass: 'turned',
       machineClass: 'turn',

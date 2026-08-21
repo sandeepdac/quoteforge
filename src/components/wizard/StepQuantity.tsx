@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { 
   Users, 
   Truck, 
@@ -113,6 +113,13 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
 
   const maxItem = Math.max(...lineItems.map((li) => li.value), 0.0001);
+  // Keep the preview to a glance: the biggest lines are the ones that decide the
+  // price, and the rest stay one click away rather than off the bottom of a scroll.
+  const BREAKDOWN_PREVIEW_LINES = 5;
+  const [showAllLines, setShowAllLines] = useState(false);
+  const rankedLineItems = [...lineItems].sort((a, b) => b.value - a.value);
+  const shownLineItems = showAllLines ? rankedLineItems : rankedLineItems.slice(0, BREAKDOWN_PREVIEW_LINES);
+  const hiddenValue = rankedLineItems.slice(BREAKDOWN_PREVIEW_LINES).reduce((a, li) => a + li.value, 0);
   const mc = isMachining ? (costs as MachiningCosts) : null;
   const fmt = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -275,7 +282,7 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                 <PieChartIcon size={14} /> Cost Breakdown <span className="normal-case font-normal text-muted-foreground/70">/ unit</span>
               </h4>
               <div className="space-y-2.5">
-                {lineItems.map((li) => (
+                {shownLineItems.map((li) => (
                   <div key={li.key} className="space-y-1">
                     <div className="flex items-baseline justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
@@ -294,6 +301,19 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                   </div>
                 ))}
               </div>
+              {/* The full breakdown runs to a dozen lines with a driver sentence
+                  each, which turned the preview into a scroll. The lines that
+                  decide the price are the big ones; the rest are a click away. */}
+              {lineItems.length > BREAKDOWN_PREVIEW_LINES && (
+                <button
+                  onClick={() => setShowAllLines((v) => !v)}
+                  className="text-[11px] font-medium text-primary hover:underline"
+                >
+                  {showAllLines
+                    ? 'Show fewer lines'
+                    : `Show all ${lineItems.length} lines (${lineItems.length - BREAKDOWN_PREVIEW_LINES} more, ${Math.round((hiddenValue / Math.max(costs.subtotal, 0.0001)) * 100)}% of cost)`}
+                </button>
+              )}
               {mc && cadAnalysis && (
                 <div className="rounded-md border border-border bg-muted/40 p-2.5 space-y-1">
                   {cadAnalysis.machineRecommendation && (

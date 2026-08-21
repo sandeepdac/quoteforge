@@ -195,7 +195,14 @@ export function calculateMachiningCosts(
     { name: 'Part-off', sec: t.partingSec, tool: toolFor('partoff', 'Parting blade'), driver: 'cut to length', color: COLORS.parting },
   ];
   const planOps: PlanOperation[] = opSrc
-    .filter((o) => o.sec > 0.5)
+    // Keep every operation that carries real time. The old half-second floor was
+    // meant to drop operations that do not exist (no grooves, no thread → zero
+    // seconds), but on a small part it also hid REAL work: a ⌀14 × 11 mm bar
+    // part had its rough turning and pilot drill removed from the plan while the
+    // reference toolpath still listed them, so the two views of the same part
+    // disagreed and the drill looked un-costed. It never was: the seconds are in
+    // the cycle either way — only the display dropped them.
+    .filter((o) => o.sec > 0.01)
     .map((o) => ({ name: o.name, tool: o.tool, seconds: o.sec / eff, cost: opCost(o.sec), driver: o.driver, color: o.color }));
   const changeSec = t.toolCount * cnc.toolChangeSec;
   const setup1Sec = planOps.reduce((a, o) => a + o.seconds, 0) + changeSec / eff + cnc.barLoadSec;

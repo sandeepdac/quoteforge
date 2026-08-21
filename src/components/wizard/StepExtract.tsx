@@ -372,6 +372,35 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
 
           {/* Design-for-Manufacturing advisory findings */}
           {cadAnalysis?.dfm && <DfmPanel dfm={cadAnalysis.dfm} />}
+
+          {/* FACE COVERAGE — the audit that can see what the engine MISSED.
+              Every other check in this app is written from the analyser's own
+              output, so it shares the analyser's blind spots. This one starts
+              from the solid and asks what is left over. */}
+          {isStepModel && (cadAnalysis?.fileBase64 || coverage) && (
+            <div className="bg-card border border-border p-5 rounded-xl space-y-4">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5 flex items-center justify-between">
+                <span className="flex items-center gap-1.5"><Box size={14} className="text-primary" /> What the engine understood</span>
+                {coverage && (
+                  <span className={cn(
+                    'text-[10px] font-bold px-2 py-0.5 rounded-full border',
+                    (coverage.unaccountedFaces ?? 0) > 0
+                      ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30'
+                      : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
+                  )}>
+                    {(coverage.unaccountedFaces ?? 0) > 0
+                      ? `${coverage.unaccountedFaces} unaccounted`
+                      : 'fully accounted'}
+                  </span>
+                )}
+              </h3>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                The part coloured by how each face was classified. A quote can only price features the engine
+                found — so before trusting the number, look for anything the engine could not explain.
+              </p>
+              <FaceCoverageViewer mesh={coverage} loading={coverageLoading} />
+            </div>
+          )}
         </div>
 
         {/* Right Column: Feature Controls & Material Parameters */}
@@ -401,22 +430,30 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Calculated Weight (kg)</label>
                 <input 
                   type="number" 
-                  step="0.01"
+                  step="0.001"
                   className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-semibold"
                   value={features.weightKg}
                   onChange={(e) => setFeatures({...features, weightKg: Number(e.target.value)})}
                 />
+                {/* A kilogram is the wrong unit for a 5 g turned part — the field
+                    reads as noise. Grams alongside keep it legible. */}
+                <p className="text-[10px] text-muted-foreground">
+                  = {((features.weightKg ?? 0) * 1000).toFixed(1)} g
+                </p>
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Surface Area (m²)</label>
                 <input 
                   type="number" 
-                  step="0.01"
+                  step="0.0001"
                   className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-semibold"
                   value={features.surfaceAreaM2}
                   onChange={(e) => setFeatures({...features, surfaceAreaM2: Number(e.target.value)})}
                 />
+                <p className="text-[10px] text-muted-foreground">
+                  = {((features.surfaceAreaM2 ?? 0) * 10000).toFixed(1)} cm²
+                </p>
               </div>
             </div>
 
@@ -450,131 +487,6 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
               </div>
             </div>
           </div>
-
-          {/* Machine selection — the most efficient capable machine, and why */}
-          {isMachined && cadAnalysis?.machineRecommendation && (() => {
-            const mr = cadAnalysis.machineRecommendation!;
-            return (
-              <div className="bg-card border border-border p-5 rounded-xl space-y-4">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5"><Cpu size={14} className="text-primary" /> Recommended Machine</span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                    {symbol}{MACHINE_CATALOG[mr.recommended]?.hourlyRate ?? '—'}/hr
-                  </span>
-                </h3>
-
-                <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
-                  <p className="text-sm font-bold text-foreground">{mr.recommendedName}</p>
-                  <ul className="mt-1.5 space-y-1">
-                    {mr.reasons.map((r, i) => (
-                      <li key={i} className="flex items-start gap-1.5 text-[11px] text-muted-foreground leading-relaxed">
-                        <span className="text-primary font-bold mt-px">•</span><span>{r}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {mr.secondOpNote && (
-                  <div className="flex gap-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5">
-                    <AlertCircle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                    <p className="text-[10px] text-muted-foreground leading-relaxed">{mr.secondOpNote}</p>
-                  </div>
-                )}
-
-                {/* The bake-off: setups and hourly rate pull in opposite
-                    directions, so the decision is only legible as a table. */}
-                {(mr.bakeOff?.length ?? 0) > 1 && (
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                      Cost bake-off at qty {mr.bakeOff![0].quantity}
-                    </p>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-[10px]">
-                        <thead>
-                          <tr className="text-muted-foreground/70 text-left">
-                            <th className="font-semibold py-1 pr-2">Machine</th>
-                            <th className="font-semibold py-1 pr-2 text-right">Rate</th>
-                            <th className="font-semibold py-1 pr-2 text-right">Setups</th>
-                            <th className="font-semibold py-1 pr-2 text-right">Cycle</th>
-                            <th className="font-semibold py-1 text-right">Per part</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {mr.bakeOff!.map((b) => (
-                            <tr key={b.id} className={cn('border-t border-border/60', b.id === mr.recommended && 'bg-emerald-500/10 font-semibold')}>
-                              <td className="py-1 pr-2 text-foreground">{b.name}</td>
-                              <td className="py-1 pr-2 text-right text-muted-foreground">{symbol}{b.hourlyRate}/hr</td>
-                              <td className="py-1 pr-2 text-right text-muted-foreground" title={b.setupReason}>{b.setups}</td>
-                              <td className="py-1 pr-2 text-right text-muted-foreground">{symbol}{b.cycleCost.toFixed(2)}</td>
-                              <td className="py-1 text-right text-foreground">{symbol}{b.totalPerPart.toFixed(2)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
-                      Setups and hourly rate move in opposite directions: the machine that needs fewest
-                      clamps wins at low quantity, the cheapest hour wins at high quantity. Cycle cost is
-                      a first-order estimate used only to rank the machines — the quote uses the full model.
-                    </p>
-                  </div>
-                )}
-
-                <div className="space-y-1.5">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Machine options considered</p>
-                  {mr.candidates.map((c) => {
-                    const isPick = c.id === mr.recommended;
-                    return (
-                      <div key={c.id} className={cn('flex items-start gap-2 rounded-md p-2 text-[11px] border', isPick ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-accent/30 border-border')}>
-                        {c.capable
-                          ? <CheckCircle2 size={13} className="text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                          : <XCircle size={13} className="text-muted-foreground shrink-0 mt-0.5" />}
-                        <div className="min-w-0">
-                          <span className={cn('font-semibold', isPick ? 'text-foreground' : 'text-muted-foreground')}>
-                            {c.name}{isPick ? ' — chosen' : c.capable ? '' : ' — not capable'}
-                          </span>
-                          <p className="text-muted-foreground/80 leading-tight">{c.reason}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
-                  The chosen machine's charge-out ({symbol}{MACHINE_CATALOG[mr.recommended]?.hourlyRate ?? '—'}/hr) is applied to the
-                  cycle-time price. Rates are defaults for a UK precision shop — set your own before sending a quote.
-                </p>
-              </div>
-            );
-          })()}
-
-          {/* FACE COVERAGE — the audit that can see what the engine MISSED.
-              Every other check in this app is written from the analyser's own
-              output, so it shares the analyser's blind spots. This one starts
-              from the solid and asks what is left over. */}
-          {isStepModel && (cadAnalysis?.fileBase64 || coverage) && (
-            <div className="bg-card border border-border p-5 rounded-xl space-y-4">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5 flex items-center justify-between">
-                <span className="flex items-center gap-1.5"><Box size={14} className="text-primary" /> What the engine understood</span>
-                {coverage && (
-                  <span className={cn(
-                    'text-[10px] font-bold px-2 py-0.5 rounded-full border',
-                    (coverage.unaccountedFaces ?? 0) > 0
-                      ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30'
-                      : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
-                  )}>
-                    {(coverage.unaccountedFaces ?? 0) > 0
-                      ? `${coverage.unaccountedFaces} unaccounted`
-                      : 'fully accounted'}
-                  </span>
-                )}
-              </h3>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
-                The part coloured by how each face was classified. A quote can only price features the engine
-                found — so before trusting the number, look for anything the engine could not explain.
-              </p>
-              <FaceCoverageViewer mesh={coverage} loading={coverageLoading} />
-            </div>
-          )}
 
           {/* Machining drivers (turning / milling) */}
           {isTurned && cadAnalysis && (
@@ -801,6 +713,102 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
               </p>
             </div>
           )}
+
+          {/* Machine selection — the most efficient capable machine, and why */}
+          {isMachined && cadAnalysis?.machineRecommendation && (() => {
+            const mr = cadAnalysis.machineRecommendation!;
+            return (
+              <div className="bg-card border border-border p-5 rounded-xl space-y-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5"><Cpu size={14} className="text-primary" /> Recommended Machine</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                    {symbol}{MACHINE_CATALOG[mr.recommended]?.hourlyRate ?? '—'}/hr
+                  </span>
+                </h3>
+
+                <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
+                  <p className="text-sm font-bold text-foreground">{mr.recommendedName}</p>
+                  <ul className="mt-1.5 space-y-1">
+                    {mr.reasons.map((r, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-[11px] text-muted-foreground leading-relaxed">
+                        <span className="text-primary font-bold mt-px">•</span><span>{r}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {mr.secondOpNote && (
+                  <div className="flex gap-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5">
+                    <AlertCircle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">{mr.secondOpNote}</p>
+                  </div>
+                )}
+
+                {/* The bake-off: setups and hourly rate pull in opposite
+                    directions, so the decision is only legible as a table. */}
+                {(mr.bakeOff?.length ?? 0) > 1 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                      Cost bake-off at qty {mr.bakeOff![0].quantity}
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[10px]">
+                        <thead>
+                          <tr className="text-muted-foreground/70 text-left">
+                            <th className="font-semibold py-1 pr-2">Machine</th>
+                            <th className="font-semibold py-1 pr-2 text-right">Rate</th>
+                            <th className="font-semibold py-1 pr-2 text-right">Setups</th>
+                            <th className="font-semibold py-1 pr-2 text-right">Cycle</th>
+                            <th className="font-semibold py-1 text-right">Per part</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {mr.bakeOff!.map((b) => (
+                            <tr key={b.id} className={cn('border-t border-border/60', b.id === mr.recommended && 'bg-emerald-500/10 font-semibold')}>
+                              <td className="py-1 pr-2 text-foreground">{b.name}</td>
+                              <td className="py-1 pr-2 text-right text-muted-foreground">{symbol}{b.hourlyRate}/hr</td>
+                              <td className="py-1 pr-2 text-right text-muted-foreground" title={b.setupReason}>{b.setups}</td>
+                              <td className="py-1 pr-2 text-right text-muted-foreground">{symbol}{b.cycleCost.toFixed(2)}</td>
+                              <td className="py-1 text-right text-foreground">{symbol}{b.totalPerPart.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
+                      Setups and hourly rate move in opposite directions: the machine that needs fewest
+                      clamps wins at low quantity, the cheapest hour wins at high quantity. Cycle cost is
+                      a first-order estimate used only to rank the machines — the quote uses the full model.
+                    </p>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Machine options considered</p>
+                  {mr.candidates.map((c) => {
+                    const isPick = c.id === mr.recommended;
+                    return (
+                      <div key={c.id} className={cn('flex items-start gap-2 rounded-md p-2 text-[11px] border', isPick ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-accent/30 border-border')}>
+                        {c.capable
+                          ? <CheckCircle2 size={13} className="text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                          : <XCircle size={13} className="text-muted-foreground shrink-0 mt-0.5" />}
+                        <div className="min-w-0">
+                          <span className={cn('font-semibold', isPick ? 'text-foreground' : 'text-muted-foreground')}>
+                            {c.name}{isPick ? ' — chosen' : c.capable ? '' : ' — not capable'}
+                          </span>
+                          <p className="text-muted-foreground/80 leading-tight">{c.reason}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
+                  The chosen machine's charge-out ({symbol}{MACHINE_CATALOG[mr.recommended]?.hourlyRate ?? '—'}/hr) is applied to the
+                  cycle-time price. Rates are defaults for a UK precision shop — set your own before sending a quote.
+                </p>
+              </div>
+            );
+          })()}
 
           {/* Operations Breakdown (sheet-metal legacy path) */}
           {!isMachined && (
