@@ -232,6 +232,17 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
                   ? 'Grouped by setup — each operation shows the cutter from your shop tool library, its time and cost.'
                   : 'Each line is priced from a dimension measured from your CAD file.'}
               </p>
+              {!isMachining && (
+                <div className="flex gap-2 bg-amber-500/10 border border-amber-500/40 rounded-md p-2.5 mt-1">
+                  <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    <strong className="text-amber-700 dark:text-amber-300">Priced as fabrication, not machining.</strong>{' '}
+                    No turned or milled profile could be measured from this input, so the quote fell back to
+                    laser / brake / weld costing rather than cycle time on a machine. For a CNC part that is the wrong
+                    model — re-upload a STEP file if you have one, or treat this number as a placeholder.
+                  </p>
+                </div>
+              )}
               {cadAnalysis?.machineRecommendation && (
                 <p className="text-[11px] text-muted-foreground">
                   <strong className="text-foreground">Machine:</strong> {cadAnalysis.machineRecommendation.recommendedName}

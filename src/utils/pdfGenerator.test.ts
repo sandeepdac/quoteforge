@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildQuotePdf } from './pdfGenerator';
+import { buildQuotePdf, esc } from './pdfGenerator';
 import type { Quote, Customer, Part, Material, ShopSettings } from '../types';
 
 const quote = {
@@ -88,5 +88,46 @@ describe('buildQuotePdf', () => {
     const s = await bytesOf(blob);
     expect(s.startsWith('%PDF-1.4')).toBe(true);
     expect(s.trimEnd().endsWith('%%EOF')).toBe(true);
+  });
+});
+
+// --- Currency -------------------------------------------------------------
+// The shop picks a currency in Settings, and the quote PDF hardcoded '$'. A
+// shop set to GBP had dollars printed on the document it sent to its customer.
+describe('the quote PDF prints the shop currency', () => {
+  const base = {
+    quote: { id: 'q1', quoteNumber: 'Q-1', unitPrice: 123.45, grandTotal: 123.45, quantity: 1 } as any,
+    customer: { id: 'c1', name: 'Acme' } as any,
+    part: { id: 'p1', name: 'Part', features: {} } as any,
+    material: { id: 'm1', name: 'Aluminium 6082', pricePerKg: 6 } as any,
+  };
+  const textOf = async (blob: Blob) => await blob.text();
+
+  it('uses £ when the shop is set to GBP, not $', async () => {
+    const pdf = await textOf(buildQuotePdf({ ...base, shop: { currency: 'GBP' } as any }));
+    // £ must reach the reader as the single byte 0xA3, written as an octal
+    // escape — a raw character would be UTF-8 encoded and render as "Â£".
+    expect(pdf).toContain('\\243');
+    expect(pdf).toContain('WinAnsiEncoding');
+  });
+
+  it('still uses $ when the shop is set to USD', async () => {
+    const pdf = await textOf(buildQuotePdf({ ...base, shop: { currency: 'USD' } as any }));
+    expect(pdf).toContain('$');
+    expect(pdf).not.toContain('\\243');
+  });
+
+  it('defaults to $ when no currency is configured', async () => {
+    const pdf = await textOf(buildQuotePdf({ ...base }));
+    expect(pdf).toContain('$');
+  });
+
+  it('escapes every non-ASCII character as a byte the reader can decode', () => {
+    // Anything left raw here would be re-encoded by the Blob and drawn wrong.
+    const out = esc('£100 — 50µm ⌀12 €9');
+    expect(out).not.toMatch(/[^\x00-\x7F]/);
+    expect(out).toContain('\\243'); // £
+    expect(out).toContain('\\200'); // €
+    expect(out).toContain('dia 12');
   });
 });

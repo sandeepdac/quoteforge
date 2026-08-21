@@ -3,7 +3,6 @@ import {
   Settings as SettingsIcon, 
   User, 
   Building, 
-  DollarSign, 
   Zap, 
   Shield, 
   Mail,
@@ -32,7 +31,6 @@ export default function SettingsPage() {
 
   const tabs = [
     { id: 'shop', name: 'Shop Info', icon: Building },
-    { id: 'rates', name: 'Labor Rates', icon: DollarSign },
     { id: 'estimate', name: 'Estimate', icon: Calculator },
     { id: 'margins', name: 'Margins', icon: Zap },
     { id: 'tooling', name: 'Tooling', icon: Wrench },
@@ -69,29 +67,6 @@ export default function SettingsPage() {
         <div className="flex-1 bg-card border border-border rounded-xl shadow-sm overflow-hidden">
           {activeTab === 'shop' && (
             <ShopInfoTab settings={settings} onSave={(patch) => updateSettings(patch)} />
-          )}
-
-          {activeTab === 'rates' && (
-            <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
-              <div className="border-b border-border pb-4">
-                <h3 className="text-lg font-bold">Equipment &amp; Labor Rates</h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Fabrication rates (laser / brake / weld / finish) — used only for sheet-metal &amp; fabrication quotes. <strong className="text-foreground">CNC machining</strong> rates live under the <strong className="text-foreground">Estimate</strong> tab.
-                </p>
-              </div>
-              <div className="space-y-6">
-                <RateRow label="Laser Cutting" value={settings.rates.laserPerMin} unit="/ min" description="Per-minute cost for fiber laser operation" />
-                <RateRow label="Press Brake" value={settings.rates.pressBrakePerMin} unit="/ min" description="Bending setup and stroke time cost" />
-                <RateRow label="Welding Station" value={settings.rates.welderPerMin} unit="/ min" description="Manual and robotic welding labor rate" />
-                <RateRow label="Assembly" value={settings.rates.assemblyPerMin} unit="/ min" description="Post-processing and handling rate" />
-                <RateRow label="Finishing (Powder)" value={settings.rates.finishRatePerM2} unit="/ m²" description="Based on part surface area" />
-              </div>
-              <div className="pt-6 border-t border-border flex justify-end">
-                <button className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-shadow shadow">
-                  <Save size={16} /> Save Rates
-                </button>
-              </div>
-            </div>
           )}
 
           {activeTab === 'estimate' && (
@@ -921,25 +896,3 @@ function ToolingTab({
   );
 }
 
-function RateRow({ label, value, unit, description }: { label: string; value: number; unit: string; description: string }) {
-  const { symbol } = useMoney();
-  return (
-    <div className="flex items-start justify-between gap-4 p-4 hover:bg-muted/30 rounded-lg border border-transparent hover:border-border transition-all">
-      <div className="space-y-1">
-        <p className="text-sm font-semibold text-foreground">{label}</p>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1">
-          <span className="text-sm font-medium">{symbol}</span>
-          <input 
-            type="number" 
-            defaultValue={value.toFixed(2)} 
-            className="w-20 bg-background border border-border rounded px-2 py-1 text-sm font-mono text-right"
-          />
-        </div>
-        <span className="text-xs text-muted-foreground font-medium">{unit}</span>
-      </div>
-    </div>
-  );
-}

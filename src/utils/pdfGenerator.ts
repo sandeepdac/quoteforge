@@ -9,6 +9,7 @@
  * itemised cost breakdown and terms.
  */
 import type { Quote, Customer, Part, Material, ShopSettings } from '../types';
+import { currencySymbol } from './currency';
 
 export const PAGE_W = 612; // US Letter, points
 export const PAGE_H = 792;
@@ -21,7 +22,7 @@ const W_WIDE = 0.722; // W M — treated generously
 export function textWidth(s: string, size: number): number {
   let w = 0;
   for (const ch of s) {
-    if (/[0-9$]/.test(ch)) w += W_DIGIT;
+    if (/[0-9$£€¥]/.test(ch)) w += W_DIGIT;
     else if (/[.,: ()il]/.test(ch)) w += W_NARROW;
     else if (/[WM]/.test(ch)) w += W_WIDE;
     else w += 0.55;
@@ -36,13 +37,23 @@ export function esc(s: string): string {
     .replace(/[–—]/g, '-')
     .replace(/[’‘]/g, "'")
     .replace(/[“”]/g, '"')
-    .replace(/[^\x20-\x7E\xA0-\xFF]/g, '') // keep printable ASCII + Latin-1
+    .replace(/€/g, '\x80') // WinAnsi puts the euro at 0x80, outside Latin-1
+    .replace(/[^\x20-\x7E\x80\xA0-\xFF]/g, '') // printable ASCII + Latin-1 + euro
     .replace(/\\/g, '\\\\')
     .replace(/\(/g, '\\(')
-    .replace(/\)/g, '\\)');
+    .replace(/\)/g, '\\)')
+    // Anything above ASCII must reach the reader as a BYTE. Writing it as a raw
+    // character leaves the encoding to whatever turns this string into a Blob —
+    // UTF-8 would send "£" as two bytes and render it as "Â£". An octal escape
+    // is unambiguous: \243 is one byte, 0xA3, which WinAnsiEncoding draws as £.
+    .replace(/[\x80-\xFF]/g, (ch) => '\\' + ch.charCodeAt(0).toString(8).padStart(3, '0'));
 }
 
-const money = (n: number) => `$${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+/** Format money in the shop's currency. The symbol has to be passed in: this
+ *  module has no settings of its own, and hardcoding '$' meant a shop that had
+ *  chosen GBP in Settings still had dollars printed on the quote it sent out. */
+const moneyIn = (symbol: string) => (n: number) =>
+  `${symbol}${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
 
 /** Minimal content-stream builder in top-left coordinates (y grows downward). */
 export class Page {
@@ -74,6 +85,9 @@ export interface QuotePdfInput {
 /** Build the quote PDF as a Blob (application/pdf). */
 export function buildQuotePdf(input: QuotePdfInput): Blob {
   const { quote, customer, part, material, shop } = input;
+  // The shop's chosen currency, not a hardcoded dollar. `shop` was already
+  // threaded in from Settings and simply ignored here.
+  const money = moneyIn(currencySymbol(shop?.currency));
   const p = new Page();
   let y = MARGIN;
 
@@ -243,8 +257,8 @@ export function assemblePdf(content: string): Blob {
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>`,
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
     `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
   ];
 
