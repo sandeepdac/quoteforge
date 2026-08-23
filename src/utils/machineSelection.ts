@@ -677,7 +677,15 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
   const price = (m: MachineSpec, plan: MachineSetupPlan) =>
     costOnMachine(m, { faces, angled, cutMin, qty, econ, setupsOverride: plan.setups, setupReason: plan.reason });
 
-  const turnMills = machines.filter((m) => m.kind === 'turn-mill');
+  // Every machine that can hold work in a SPINDLE, not just the two turn-mills.
+  // Sliding heads and the lathe were excluded from this path entirely, so a part
+  // classified "milled" — which includes any round bar part carrying a freeform
+  // face — could never reach a Star or a Hanwha. A ⌀8 x 40 bar part with three
+  // coaxial diameters was routed to a ⌀430-swing mill-turn at £88/hr while the
+  // ⌀20 sliding head bought for exactly that work was not even a candidate.
+  const turningMachines = machines.filter(
+    (m) => m.kind === 'turn-mill' || m.kind === 'sliding-head' || m.kind === 'lathe'
+  );
   const mills = machines.filter((m) => m.kind === 'mill');
 
   const candidates: MachineCandidate[] = [];
@@ -689,17 +697,23 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
   // B-axis head. A 5-axis mill-turn is a 5-axis milling machine that happens to
   // have a spindle; excluding it from milled parts because they are "not round"
   // threw away the most capable machine on the floor.
-  for (const m of turnMills) {
-    const barOk = !!fit && fit.barSuitable && fit.barDiameterMm <= (m.maxBarDiaMm ?? 0);
+  for (const m of turningMachines) {
+    const barOk = !!fit && fit.barSuitable && m.liveTooling
+      && fit.barDiameterMm <= (m.maxBarDiaMm ?? 0);
     const lenOk = !fit || !m.maxTurnLengthMm || fit.lengthMm <= m.maxTurnLengthMm;
     const hasTurnedFeatures = (input.onAxisTurnedFeatures ?? 0) >= 1;
-    const chuckOk = !!fit && fit.chuckSuitable && hasTurnedFeatures
+    // A sliding head is a BAR machine: work is fed through a collet and guide
+    // bush, not clamped in jaws. Its "max turned ⌀" is the largest diameter it
+    // can cut on bar, not an invitation to chuck a 40 mm sawn slug — offering it
+    // chucked work sent a flange to a Hanwha. Bar only, for these.
+    const chuckOk = !!fit && fit.chuckSuitable && hasTurnedFeatures && m.liveTooling
+      && m.kind !== 'sliding-head'
       && fit.containDiaMm <= (m.maxChuckDiaMm ?? 0);
     // Soft-jaw milling: the workholding limit is the chuck, not roundness.
     const gripOk = !!fit && fit.containDiaMm <= (m.maxChuckDiaMm ?? 0) && lenOk;
     // It only earns its rate as a milling machine if it can actually collapse
     // setups — i.e. it has the axes a machining centre lacks.
-    const millOk = gripOk && m.axes >= 5;
+    const millOk = gripOk && m.axes >= 5 && m.kind === 'turn-mill';
 
     let reason: string;
     if (barOk && lenOk) {

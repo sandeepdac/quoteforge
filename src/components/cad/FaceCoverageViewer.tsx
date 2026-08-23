@@ -201,7 +201,19 @@ export default function FaceCoverageViewer({ mesh, loading, unavailableNote }: P
   // A thread has no geometric signature to find, so no amount of face work
   // fixes that; the badge simply must not claim what it did not check.
   const questions = mesh.openQuestions ?? [];
-  const fullyAccounted = unaccounted === 0 && questions.length === 0;
+  // "Seen, then discarded" is a JUDGEMENT — a circular face called a corner
+  // blend, a cylinder called an outside radius — not a fact. A few percent of
+  // that is ordinary. Half the part's surface is not: on a revolved, finned
+  // speck 55% of the area was discarded as external radii and the badge still
+  // read FULLY ACCOUNTED, while a part with 4% UNEXAMINED correctly went amber.
+  // A big discarded share has to be surfaced with the same weight, or the badge
+  // grades a judgement call as a clean bill of health.
+  const DISCARDED_SHARE_WARN = 0.15;
+  const discardedShare = (mesh.faceLedger ?? [])
+    .filter((r) => r.label === 'ignored')
+    .reduce((a, r) => a + r.areaShare, 0);
+  const heavilyDiscarded = discardedShare >= DISCARDED_SHARE_WARN;
+  const fullyAccounted = unaccounted === 0 && questions.length === 0 && !heavilyDiscarded;
 
   return (
     <div className="space-y-3">
@@ -227,6 +239,12 @@ export default function FaceCoverageViewer({ mesh, loading, unavailableNote }: P
               feature-specific work: a countersink and its tool, a contour pass at a proper stepover, an extra clamping
               to reach them. Rotate the part, see what is red, and add those before you send the price.
             </>
+          ) : heavilyDiscarded ? (
+            <>
+              <strong className="text-foreground">Every face was classified — but not all of them as features.</strong>{' '}
+              No surface went unexamined and nothing was silently dropped, yet a large share was classified as
+              something the quote names no operation for. That is the warning below, not a clean bill of health.
+            </>
           ) : (
             <>
               <strong className="text-foreground">Every face accounted for.</strong> Each surface of the solid was
@@ -240,6 +258,22 @@ export default function FaceCoverageViewer({ mesh, loading, unavailableNote }: P
       {/* Operations with no geometric signature. Listed separately from face
           coverage because they are a different claim: these cannot be found by
           looking at surfaces, however carefully. */}
+      {heavilyDiscarded && (
+        <div className="flex gap-2 rounded-md p-2.5 border bg-amber-500/10 border-amber-500/40">
+          <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-[10px] text-muted-foreground leading-relaxed">
+            <strong className="text-amber-700 dark:text-amber-300">
+              {(discardedShare * 100).toFixed(0)}% of the surface was seen and then discarded
+            </strong>{' '}
+            as corner blends or outside-profile radii rather than features. That is a judgement, not a
+            measurement, and at this share it is likely the part&rsquo;s actual FORM — a revolved or
+            contoured profile that needs a form tool or a surfacing pass. Its material and area reach the
+            price through roughing and finishing, but no operation names it. Check the amber faces before
+            trusting the number.
+          </p>
+        </div>
+      )}
+
       {questions.map((q) => (
         <div key={q.kind} className="flex gap-2 rounded-md p-2.5 border bg-amber-500/10 border-amber-500/40">
           <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />

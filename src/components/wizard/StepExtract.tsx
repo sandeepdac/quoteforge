@@ -55,6 +55,18 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
   // the mesh is roughly ten times its size and is never persisted.
   const [coverage, setCoverage] = useState<LabelledMesh | null>(null);
   const [coverageLoading, setCoverageLoading] = useState(false);
+  // The badge must agree with the panel underneath it. Three things can stop a
+  // part being fully accounted, and the badge previously knew only the first:
+  // faces nothing classified, operations with no geometric signature (threads),
+  // and a large share of surface SEEN AND DISCARDED as "not a feature" — which
+  // on a revolved part is usually the part's own form.
+  const coverageDiscardedShare = (coverage?.faceLedger ?? [])
+    .filter((r) => r.label === 'ignored')
+    .reduce((a, r) => a + r.areaShare, 0);
+  const coverageClean =
+    (coverage?.unaccountedFaces ?? 0) === 0 &&
+    (coverage?.openQuestions?.length ?? 0) === 0 &&
+    coverageDiscardedShare < 0.15;
   // A 3D solid part: it either has live tessellated geometry (fresh upload) OR it
   // was measured from a STEP but the heavy mesh was stripped on save (edit/clone).
   const isStepModel = cadAnalysis?.fileType === 'STEP' || !!cadAnalysis?.stepData;
@@ -384,19 +396,21 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                 {coverage && (
                   <span className={cn(
                     'text-[10px] font-bold px-2 py-0.5 rounded-full border',
-                    (coverage.unaccountedFaces ?? 0) > 0 || (coverage.openQuestions?.length ?? 0) > 0
+                    !coverageClean
                       ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30'
                       : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
                   )}>
                     {(coverage.unaccountedFaces ?? 0) > 0
                       ? `${coverage.unaccountedFaces} unaccounted`
-                      : (coverage.openQuestions?.length ?? 0) > 0
+                      : coverageDiscardedShare >= 0.15
+                        ? `${Math.round(coverageDiscardedShare * 100)}% discarded`
+                        : (coverage.openQuestions?.length ?? 0) > 0
                         // Face coverage is not operation coverage. A tapped hole
                         // is a plain cylinder in CAD, so every face can be
                         // classified while the tap goes unquoted — the badge must
                         // not say "fully accounted" over the top of that.
-                        ? 'check operations'
-                        : 'fully accounted'}
+                          ? 'check operations'
+                          : 'fully accounted'}
                   </span>
                 )}
               </h3>

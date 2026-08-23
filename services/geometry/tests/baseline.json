@@ -197,6 +197,28 @@
     "turnedFeatureCount": 3,
     "unaccountedFaces": 15
   },
+  "OLY014_01921A.step": {
+    "angledSetups": 0,
+    "axisAlignedSetups": 2,
+    "bossCount": 0,
+    "chamferCount": 2,
+    "countersinkCount": 0,
+    "deepPocketCount": 0,
+    "drillPointCount": 2,
+    "facingCandidates": 0,
+    "holeCount": 8,
+    "partVolumeCm3": 0.064,
+    "pocketCount": 0,
+    "removedVolumeCm3": 0.308,
+    "roundBossCount": 0,
+    "setupCount": 2,
+    "steppedHoleCount": 0,
+    "stockVolumeCm3": 0.372,
+    "taperCount": 0,
+    "threadCalloutCount": 0,
+    "turnedFeatureCount": 0,
+    "unaccountedFaces": 0
+  },
   "RD_FGCP508__P5_Round_Top_Flag_ISS4.STEP": {
     "angledSetups": 0,
     "axisAlignedSetups": 2,

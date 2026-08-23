@@ -341,3 +341,56 @@ describe('chucked turning is costed against the part, not a convention', () => {
     expect(turnMill.setups).toBe(cheapestMill.setups);
   });
 });
+
+// --- The Swiss lathes were not in the room --------------------------------
+// A part classified "milled" includes any round bar part carrying a freeform
+// face. That path only ever considered turn-mills and machining centres, so a
+// ⌀7 revolved bar part could not reach a Star or a Hanwha — the machines this
+// shop bought for exactly that work — and was quoted on a machining centre.
+describe('bar work can reach the sliding heads', () => {
+  const smallBar = {
+    isTurned: false as const,
+    setupCount: 1, axisAlignedSetups: 1, angledSetups: 0,
+    partDimsMm: { x: 8, y: 8, z: 40 }, partVolumeCm3: 1.8,
+    onAxisTurnedFeatures: 3, quantity: 1,
+  };
+
+  it('a small round bar part is offered to a sliding head at all', () => {
+    const r = selectMachine(smallBar);
+    const heads = r.candidates.filter((c) => MACHINE_CATALOG[c.id].kind === 'sliding-head');
+    expect(heads.length).toBeGreaterThan(0);
+    expect(heads.some((c) => c.capable)).toBe(true);
+  });
+
+  it('and wins it, rather than a ⌀430-swing mill-turn at twice the rate', () => {
+    const r = selectMachine(smallBar);
+    expect(MACHINE_CATALOG[r.recommended].kind).toBe('sliding-head');
+  });
+
+  it('but a sliding head is a BAR machine — it is never offered chucked work', () => {
+    // The 40x40x22 flange chucks from a sawn slug. A Swiss lathe feeds bar
+    // through a collet and guide bush; its "max turned ⌀" is not a chuck size.
+    const r = selectMachine({
+      isTurned: false, setupCount: 2, axisAlignedSetups: 2, angledSetups: 0,
+      partDimsMm: { x: 40, y: 40, z: 22 }, partVolumeCm3: 25,
+      onAxisTurnedFeatures: 2, quantity: 1,
+    });
+    expect(MACHINE_CATALOG[r.recommended].kind).toBe('turn-mill');
+  });
+
+  it('a machine with no driven tools is not offered work that needs them', () => {
+    // This path exists because the part has features a spindle alone cannot cut.
+    const r = selectMachine(smallBar);
+    const hiTurner = r.candidates.find((c) => c.id === 'hi-turner');
+    expect(hiTurner?.capable ?? false).toBe(false);
+  });
+
+  it('a lathe is never asked to mill a prismatic block', () => {
+    const r = selectMachine({
+      isTurned: false, setupCount: 8, angledSetups: 2, axisAlignedSetups: 6, bossCount: 10,
+      partDimsMm: { x: 61.487, y: 51.95, z: 47.4 }, partVolumeCm3: 45.088,
+    });
+    expect(MACHINE_CATALOG[r.recommended].kind).not.toBe('sliding-head');
+    expect(MACHINE_CATALOG[r.recommended].kind).not.toBe('lathe');
+  });
+});
