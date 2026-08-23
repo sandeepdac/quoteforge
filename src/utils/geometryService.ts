@@ -62,6 +62,10 @@ export interface GeometryMilled {
   milledFeatures?: Array<{ kind: 'bore' | 'spigot'; diameterMm: number; lengthMm: number; offAxisMm: number }>;
   /** Planar faces square to the turning axis — facing cuts on a lathe. */
   facingCandidates?: number;
+  /** Thread callouts read from the model's names, matched to tap-drill holes. */
+  threadCallouts?: Array<{ callout: string; majorDiaMm: number; tapDrillMm: number; source: string; matchedHoleDiaMm: number | null; matchedHoleCount: number }>;
+  /** Questions the faces cannot answer (threads today). */
+  openQuestions?: Array<{ kind: string; summary: string; detail: string }>;
   pocketCount: number;
   bossCount: number;
   deepPocketCount: number;
@@ -162,6 +166,15 @@ export interface LabelledMesh {
   /** Faces the analyser did not account for, by count and by share of area. */
   unaccountedFaces?: number;
   unaccountedAreaShare?: number;
+  /**
+   * Questions the FACES cannot answer. Face coverage and OPERATION coverage are
+   * not the same thing, and threads are the case that proves it: a tapped hole
+   * is modelled as a plain cylinder at the tap-drill ⌀, so the ledger classifies
+   * it correctly as a hole, reports the part fully accounted for, and the tap
+   * goes unquoted. "Every face classified" must never be allowed to read as
+   * "every operation costed".
+   */
+  openQuestions?: Array<{ kind: string; summary: string; detail: string }>;
 }
 
 /** How each classification reads, and what it means. Shared by the 3D overlay

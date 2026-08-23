@@ -36,7 +36,7 @@ TRACKED = [
     "roundBossCount", "countersinkCount", "chamferCount", "taperCount",
     "drillPointCount", "steppedHoleCount",
     "turnedFeatureCount", "facingCandidates",
-    "unaccountedFaces",
+    "unaccountedFaces", "threadCalloutCount",
     "partVolumeCm3", "stockVolumeCm3", "removedVolumeCm3",
 ]
 
@@ -61,8 +61,13 @@ def _key(path: str) -> str:
 def measure_one(path: str) -> dict:
     from app.extractor import read_step
     from app.milling import analyze_milling
+    from app.threads import find_thread_callouts
 
     m = analyze_milling(read_step(path))
+    # Threads are read from the file's NAMES, not its faces, so they are not part
+    # of the milling analysis — but a change in thread detection changes what a
+    # customer is quoted, so it belongs under the same brake.
+    m["threadCalloutCount"] = len(find_thread_callouts(path))
     out = {}
     for k in TRACKED:
         v = m.get(k)

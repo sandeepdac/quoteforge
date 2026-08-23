@@ -1,4 +1,26 @@
 {
+  "029068._IssB.STEP": {
+    "angledSetups": 0,
+    "axisAlignedSetups": 1,
+    "bossCount": 0,
+    "chamferCount": 0,
+    "countersinkCount": 0,
+    "deepPocketCount": 0,
+    "drillPointCount": 0,
+    "facingCandidates": 0,
+    "holeCount": 2,
+    "partVolumeCm3": 0.2,
+    "pocketCount": 0,
+    "removedVolumeCm3": 0.184,
+    "roundBossCount": 0,
+    "setupCount": 1,
+    "steppedHoleCount": 1,
+    "stockVolumeCm3": 0.384,
+    "taperCount": 0,
+    "threadCalloutCount": 0,
+    "turnedFeatureCount": 0,
+    "unaccountedFaces": 0
+  },
   "031167A.STEP": {
     "angledSetups": 0,
     "axisAlignedSetups": 2,
@@ -17,6 +39,7 @@
     "steppedHoleCount": 4,
     "stockVolumeCm3": 35.2,
     "taperCount": 4,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 2,
     "unaccountedFaces": 0
   },
@@ -38,6 +61,7 @@
     "steppedHoleCount": 0,
     "stockVolumeCm3": 44.616,
     "taperCount": 0,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 2,
     "unaccountedFaces": 0
   },
@@ -59,6 +83,7 @@
     "steppedHoleCount": 2,
     "stockVolumeCm3": 9.441,
     "taperCount": 0,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 0,
     "unaccountedFaces": 0
   },
@@ -80,6 +105,7 @@
     "steppedHoleCount": 1,
     "stockVolumeCm3": 15.603,
     "taperCount": 0,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 0,
     "unaccountedFaces": 0
   },
@@ -101,6 +127,7 @@
     "steppedHoleCount": 6,
     "stockVolumeCm3": 8.569,
     "taperCount": 0,
+    "threadCalloutCount": 1,
     "turnedFeatureCount": 0,
     "unaccountedFaces": 0
   },
@@ -122,8 +149,31 @@
     "steppedHoleCount": 2,
     "stockVolumeCm3": 72.611,
     "taperCount": 0,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 0,
     "unaccountedFaces": 1
+  },
+  "Kepler_00884.step": {
+    "angledSetups": 0,
+    "axisAlignedSetups": 3,
+    "bossCount": 0,
+    "chamferCount": 32,
+    "countersinkCount": 0,
+    "deepPocketCount": 0,
+    "drillPointCount": 0,
+    "facingCandidates": 0,
+    "holeCount": 6,
+    "partVolumeCm3": 32.312,
+    "pocketCount": 2,
+    "removedVolumeCm3": 11.259,
+    "roundBossCount": 0,
+    "setupCount": 3,
+    "steppedHoleCount": 2,
+    "stockVolumeCm3": 43.571,
+    "taperCount": 0,
+    "threadCalloutCount": 1,
+    "turnedFeatureCount": 0,
+    "unaccountedFaces": 0
   },
   "RD_FGCP508__P5_Round_Top_Flag_ISS4.STEP": {
     "angledSetups": 0,
@@ -143,6 +193,7 @@
     "steppedHoleCount": 2,
     "stockVolumeCm3": 84.45,
     "taperCount": 0,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 2,
     "unaccountedFaces": 0
   },
@@ -164,6 +215,7 @@
     "steppedHoleCount": 2,
     "stockVolumeCm3": 151.408,
     "taperCount": 0,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 0,
     "unaccountedFaces": 9
   },
@@ -185,6 +237,7 @@
     "steppedHoleCount": 0,
     "stockVolumeCm3": 54000.0,
     "taperCount": 0,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 0,
     "unaccountedFaces": 0
   },
@@ -206,6 +259,7 @@
     "steppedHoleCount": 2,
     "stockVolumeCm3": 234027.223,
     "taperCount": 10,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 0,
     "unaccountedFaces": 58
   },
@@ -227,6 +281,7 @@
     "steppedHoleCount": 0,
     "stockVolumeCm3": 27734.894,
     "taperCount": 0,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 0,
     "unaccountedFaces": 0
   },
@@ -248,6 +303,7 @@
     "steppedHoleCount": 10,
     "stockVolumeCm3": 142136.661,
     "taperCount": 0,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 2,
     "unaccountedFaces": 14
   },
@@ -269,6 +325,7 @@
     "steppedHoleCount": 10,
     "stockVolumeCm3": 7457.641,
     "taperCount": 4,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 2,
     "unaccountedFaces": 20
   },
@@ -290,6 +347,7 @@
     "steppedHoleCount": 4,
     "stockVolumeCm3": 12646.307,
     "taperCount": 20,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 0,
     "unaccountedFaces": 62
   },
@@ -311,6 +369,7 @@
     "steppedHoleCount": 0,
     "stockVolumeCm3": 14.091,
     "taperCount": 0,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 2,
     "unaccountedFaces": 4
   },
@@ -332,6 +391,7 @@
     "steppedHoleCount": 0,
     "stockVolumeCm3": 161.691,
     "taperCount": 0,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 0,
     "unaccountedFaces": 0
   },
@@ -353,6 +413,7 @@
     "steppedHoleCount": 8,
     "stockVolumeCm3": 386.188,
     "taperCount": 0,
+    "threadCalloutCount": 0,
     "turnedFeatureCount": 0,
     "unaccountedFaces": 54
   }

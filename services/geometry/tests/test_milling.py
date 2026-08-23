@@ -325,3 +325,59 @@ def test_the_sample_corpus_matches_the_committed_baseline():
         "If this is intended, re-run: python -m tests.baseline --update\n"
         + "\n".join(changes)
     )
+
+
+# --- Threads: the operation with no geometric signature --------------------
+# A tapped hole is modelled as a plain cylinder at the TAP-DRILL diameter. Face
+# analysis classifies it correctly as a hole and reports the part fully
+# accounted for — while the tap goes unquoted. This is the one case where face
+# coverage and OPERATION coverage come apart, and the ledger must say so.
+
+def test_thread_callouts_are_read_from_the_model_name():
+    from app.threads import find_thread_callouts, match_threads_to_holes, tap_drill_for
+    import tempfile, os
+    step = ("ISO-10303-21;\nDATA;\n"
+            "#1 = MANIFOLD_SOLID_BREP ( 'M3 Tapped Hole1', #2 ) ;\n"
+            "ENDSEC;\nEND-ISO-10303-21;\n")
+    fd, path = tempfile.mkstemp(suffix=".step")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(step)
+    try:
+        found = find_thread_callouts(path)
+        assert len(found) == 1
+        assert found[0]["callout"] == "M3"
+        assert found[0]["tapDrillMm"] == tap_drill_for(3.0) == 2.5
+        # ...and it pairs with the holes actually measured on the part.
+        matched = match_threads_to_holes(found, [7.5, 7.5, 5.5, 2.5, 2.5])
+        assert matched[0]["matchedHoleCount"] == 2
+    finally:
+        os.unlink(path)
+
+
+def test_a_bare_size_without_the_word_thread_is_not_a_callout():
+    # 'M3' on its own could be a part number, a material code or a revision.
+    from app.threads import find_thread_callouts
+    import tempfile, os
+    fd, path = tempfile.mkstemp(suffix=".step")
+    with os.fdopen(fd, "w") as fh:
+        fh.write("DATA;\n#1 = MANIFOLD_SOLID_BREP ( 'Bracket M3 revA', #2 ) ;\n")
+    try:
+        assert find_thread_callouts(path) == []
+    finally:
+        os.unlink(path)
+
+
+def test_a_thread_callout_stops_the_part_reading_as_fully_accounted():
+    # The ledger may legitimately account for every FACE while an operation is
+    # missing. That must surface as an open question, not a green badge.
+    from app.threads import find_thread_callouts
+    import glob
+    corpus = glob.glob("/root/.claude/uploads/*/*Kepler*.step")
+    if not corpus:
+        import pytest
+        pytest.skip("Kepler sample not available")
+    from app.extractor import extract
+    m = extract(corpus[0])["milled"]
+    assert m["unaccountedFaces"] == 0            # every face IS classified
+    assert m["openQuestions"], "a tapped part must not look fully accounted"
+    assert m["openQuestions"][0]["kind"] == "threads"

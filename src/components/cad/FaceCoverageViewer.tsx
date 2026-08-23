@@ -194,6 +194,14 @@ export default function FaceCoverageViewer({ mesh, loading, unavailableNote }: P
 
   const unaccounted = mesh.unaccountedFaces ?? 0;
   const share = mesh.unaccountedAreaShare ?? 0;
+  // FACE coverage and OPERATION coverage are different claims, and this badge
+  // used to conflate them. On a part named "M3 Tapped Hole1" every face was
+  // classified — the ⌀2.5 tap-drill holes are cylinders and were correctly
+  // called holes — so the badge went green while two M3 taps went unquoted.
+  // A thread has no geometric signature to find, so no amount of face work
+  // fixes that; the badge simply must not claim what it did not check.
+  const questions = mesh.openQuestions ?? [];
+  const fullyAccounted = unaccounted === 0 && questions.length === 0;
 
   return (
     <div className="space-y-3">
@@ -202,9 +210,9 @@ export default function FaceCoverageViewer({ mesh, loading, unavailableNote }: P
       {/* The headline: how much of this part the engine could not account for. */}
       <div className={cn(
         'flex gap-2 rounded-md p-2.5 border',
-        unaccounted > 0 ? 'bg-amber-500/10 border-amber-500/40' : 'bg-emerald-500/10 border-emerald-500/30'
+        !fullyAccounted ? 'bg-amber-500/10 border-amber-500/40' : 'bg-emerald-500/10 border-emerald-500/30'
       )}>
-        {unaccounted > 0
+        {!fullyAccounted
           ? <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
           : <CheckCircle2 size={14} className="text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />}
         <p className="text-[10px] text-muted-foreground leading-relaxed">
@@ -228,6 +236,19 @@ export default function FaceCoverageViewer({ mesh, loading, unavailableNote }: P
           )}
         </p>
       </div>
+
+      {/* Operations with no geometric signature. Listed separately from face
+          coverage because they are a different claim: these cannot be found by
+          looking at surfaces, however carefully. */}
+      {questions.map((q) => (
+        <div key={q.kind} className="flex gap-2 rounded-md p-2.5 border bg-amber-500/10 border-amber-500/40">
+          <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-[10px] text-muted-foreground leading-relaxed">
+            <strong className="text-amber-700 dark:text-amber-300">Not costed: {q.summary}</strong>{' '}
+            {q.detail}
+          </p>
+        </div>
+      ))}
 
       <div className="flex flex-wrap gap-1.5">
         {classes.map((row) => {

@@ -42,6 +42,7 @@ from OCP.Bnd import Bnd_Box
 from OCP.BRepBndLib import BRepBndLib
 
 from .milling import analyze_milling
+from .threads import find_thread_callouts, match_threads_to_holes
 
 ROT_TYPES = {GeomAbs_Cylinder, GeomAbs_Cone, GeomAbs_Torus, GeomAbs_Sphere}
 KNOWN_TYPES = ROT_TYPES | {GeomAbs_Plane}
@@ -243,6 +244,31 @@ def extract(path: str) -> dict:
     # Milled/prismatic analysis (the 3 AAG rules) — always computed so the app
     # has a full picture and can choose the cheaper machining route / machine.
     milled = analyze_milling(shape)
+
+    # THREADS. Not measurable from faces — a tapped hole is modelled as a plain
+    # cylinder at the tap-drill ⌀ — so the only signal in the file is the name the
+    # CAD system wrote. Both real parts needing taps carried it: 'M3 Tapped
+    # Hole1', 'M2x0.4 Tapped Hole2'. Reported as candidates to confirm, because a
+    # tree name records the LAST feature, not an inventory of every thread.
+    thread_callouts = match_threads_to_holes(
+        find_thread_callouts(path), milled.get("holeDiametersMm") or []
+    )
+    milled["threadCallouts"] = thread_callouts
+    # A question the FACES cannot answer, kept separate from face coverage so a
+    # green ledger can never stand in for "every operation is costed".
+    open_questions = []
+    if thread_callouts:
+        labels = ", ".join(c["callout"] for c in thread_callouts)
+        n = sum(c["matchedHoleCount"] for c in thread_callouts)
+        open_questions.append({
+            "kind": "threads",
+            "summary": f"{labels} thread callout in the model"
+                       + (f" — {n} hole(s) at the tap-drill ⌀" if n else " — no hole found at its tap-drill ⌀"),
+            "detail": "Threads have no geometric signature: CAD stores a tapped hole as a plain "
+                      "cylinder at the tap-drill diameter, so face analysis cannot see it and no "
+                      "tapping time is in this quote. Confirm against the drawing and add it.",
+        })
+    milled["openQuestions"] = open_questions
 
     return {
         "ok": True,

@@ -384,13 +384,19 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                 {coverage && (
                   <span className={cn(
                     'text-[10px] font-bold px-2 py-0.5 rounded-full border',
-                    (coverage.unaccountedFaces ?? 0) > 0
+                    (coverage.unaccountedFaces ?? 0) > 0 || (coverage.openQuestions?.length ?? 0) > 0
                       ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30'
                       : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
                   )}>
                     {(coverage.unaccountedFaces ?? 0) > 0
                       ? `${coverage.unaccountedFaces} unaccounted`
-                      : 'fully accounted'}
+                      : (coverage.openQuestions?.length ?? 0) > 0
+                        // Face coverage is not operation coverage. A tapped hole
+                        // is a plain cylinder in CAD, so every face can be
+                        // classified while the tap goes unquoted — the badge must
+                        // not say "fully accounted" over the top of that.
+                        ? 'check operations'
+                        : 'fully accounted'}
                   </span>
                 )}
               </h3>

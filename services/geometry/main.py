@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from app.extractor import extract
 from app.labelled_mesh import labelled_mesh
 from app.milling import analyze_milling
+from app.threads import find_thread_callouts, match_threads_to_holes
 
 app = FastAPI(title="QuoteForge Geometry Service", version="1.0.0")
 
@@ -96,11 +97,32 @@ def labelled_mesh_b64(payload: Base64Payload):
         from app.extractor import read_step
         shape = read_step(tmp.name)
         milled = analyze_milling(shape)
+        # Threads come from the file's NAMES, not its faces, so this endpoint has
+        # to read them too — it builds its own analysis and would otherwise show a
+        # green "fully accounted" badge over a part with untapped M3 holes.
+        callouts = match_threads_to_holes(
+            find_thread_callouts(tmp.name), milled.get("holeDiametersMm") or []
+        )
+        if callouts:
+            labels = ", ".join(c["callout"] for c in callouts)
+            n = sum(c["matchedHoleCount"] for c in callouts)
+            milled["openQuestions"] = [{
+                "kind": "threads",
+                "summary": f"{labels} thread callout in the model"
+                           + (f" — {n} hole(s) at the tap-drill ⌀" if n else " — no hole found at its tap-drill ⌀"),
+                "detail": "Threads have no geometric signature: CAD stores a tapped hole as a plain "
+                          "cylinder at the tap-drill diameter, so face analysis cannot see it and no "
+                          "tapping time is in this quote. Confirm against the drawing and add it.",
+            }]
         mesh = labelled_mesh(shape, milled.get("faceLabels"))
         mesh["ok"] = True
         mesh["faceLedger"] = milled.get("faceLedger")
         mesh["unaccountedFaces"] = milled.get("unaccountedFaces")
         mesh["unaccountedAreaShare"] = milled.get("unaccountedAreaShare")
+        # Questions the FACES cannot answer — threads, principally. Carried with
+        # the mesh so the overlay can never show a green badge while an operation
+        # with no geometric signature is missing from the quote.
+        mesh["openQuestions"] = milled.get("openQuestions") or []
         return JSONResponse(content=mesh)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=422, content={"ok": False, "error": str(exc)})
