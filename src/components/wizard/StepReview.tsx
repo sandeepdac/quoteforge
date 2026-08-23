@@ -254,6 +254,54 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
                   {cadAnalysis.machineRecommendation.bakeOffNote}
                 </p>
               )}
+
+              {/* WHY THIS MACHINE — on the quote, not only on the extraction step.
+                  Turned-vs-milled is the most consequential call the engine makes
+                  and the one a reviewer most needs to check, and it was reasoned
+                  out on a screen they had already left. A stepped ⌀20/17/16 stack
+                  routed to a 3-axis mill is either right or badly wrong, and the
+                  quote gave no way to tell which. */}
+              {(cadAnalysis?.machineRecommendation?.reasons?.length ?? 0) > 0 && (
+                <details className="mt-1 group">
+                  <summary className="text-[11px] text-primary cursor-pointer hover:underline list-none">
+                    Why this machine? {(cadAnalysis!.machineRecommendation!.bakeOff?.length ?? 0) > 1
+                      ? `${cadAnalysis!.machineRecommendation!.bakeOff!.length} machines costed`
+                      : 'reasoning'}
+                  </summary>
+                  <ul className="mt-1.5 space-y-1">
+                    {cadAnalysis!.machineRecommendation!.reasons.map((r, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-[10px] text-muted-foreground leading-relaxed">
+                        <span className="text-primary font-bold mt-px">•</span><span>{r}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {(cadAnalysis!.machineRecommendation!.bakeOff?.length ?? 0) > 1 && (
+                    <div className="mt-2 overflow-x-auto">
+                      <table className="w-full text-[10px]">
+                        <thead>
+                          <tr className="text-muted-foreground/70 text-left">
+                            <th className="font-semibold py-1 pr-2">Machine</th>
+                            <th className="font-semibold py-1 pr-2 text-right">Rate</th>
+                            <th className="font-semibold py-1 pr-2 text-right">Setups</th>
+                            <th className="font-semibold py-1 text-right">Per part</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {cadAnalysis!.machineRecommendation!.bakeOff!.map((b) => (
+                            <tr key={b.id} className={cn('border-t border-border/60',
+                              b.id === cadAnalysis!.machineRecommendation!.recommended && 'bg-emerald-500/10 font-semibold')}>
+                              <td className="py-1 pr-2 text-foreground">{b.name}</td>
+                              <td className="py-1 pr-2 text-right text-muted-foreground">{sym}{b.hourlyRate}/hr</td>
+                              <td className="py-1 pr-2 text-right text-muted-foreground" title={b.setupReason}>{b.setups}</td>
+                              <td className="py-1 text-right text-foreground">{sym}{b.totalPerPart.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </details>
+              )}
               {mc && mc.machineClass === 'mill' && (
                 <p className="text-[11px] text-muted-foreground">
                   {mc.fromBarStock

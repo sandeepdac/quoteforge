@@ -637,8 +637,14 @@ interface Offer {
  * end. Compound angles are free on the 5-axis machine and cost a fixture on the
  * 4-axis one, exactly as for milling.
  */
-function turnMillSetups(m: MachineSpec, barFed: boolean, angled: number): MachineSetupPlan {
-  const base = barFed ? 1 : 2;
+function turnMillSetups(m: MachineSpec, barFed: boolean, angled: number, faces = 2): MachineSetupPlan {
+  // "One chucking per end" is the normal case, but it must never exceed what the
+  // part actually demands. Part OLY014 — a stepped ⌀20/17/16 stack presenting a
+  // SINGLE access direction — was charged two chuckings against a mill's one,
+  // which made the turning route 1.8x the price and sent a textbook turned
+  // register to a 3-axis mill to be interpolated. A lathe does not flip a part
+  // that only has one side any more than a mill does.
+  const base = barFed ? 1 : Math.min(2, Math.max(1, Math.round(faces)));
   if (m.axes >= 5) {
     return {
       setups: base,
@@ -708,7 +714,7 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
       });
       reason = `Round ⌀${r0(fit!.widthMm)} × ${r0(fit!.lengthMm)} mm → ⌀${fit!.barDiameterMm} bar within its ${m.maxBarDiaMm} mm capacity; turned and milled in one clamp.`;
     } else if (chuckOk && lenOk) {
-      const plan = turnMillSetups(m, false, angled);
+      const plan = turnMillSetups(m, false, angled, faces);
       offers.push({
         machine: m, route: 'mill-turn', stockForm: 'billet',
         setups: plan.setups, setupReason: plan.reason, cost: price(m, plan),

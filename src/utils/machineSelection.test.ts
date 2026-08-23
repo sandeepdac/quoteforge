@@ -299,3 +299,45 @@ describe('total-cost bake-off', () => {
     expect(without.effectiveSetups!).toBeGreaterThan(withNtx.effectiveSetups!);
   });
 });
+
+// --- A chucked turn-mill must not invent a second holding ------------------
+// "One chucking per end" is the normal case for chucked turning, but it was
+// applied regardless of what the part demanded. Part OLY014 is a stepped
+// ⌀20/17/16 stack presenting a SINGLE access direction: it was charged two
+// chuckings against a mill's one, which made the turning route 1.8x the price
+// and sent a textbook turned register to a 3-axis mill to be interpolated.
+describe('chucked turning is costed against the part, not a convention', () => {
+  const oneSided = {
+    isTurned: false as const,
+    setupCount: 1, axisAlignedSetups: 1, angledSetups: 0, bossCount: 3,
+    partDimsMm: { x: 20, y: 20, z: 14.8 }, partVolumeCm3: 2.66,
+    onAxisTurnedFeatures: 3, quantity: 1,
+  };
+
+  it('a one-sided part chucks once, and the turned register goes to a lathe', () => {
+    const r = selectMachine(oneSided);
+    expect(MACHINE_CATALOG[r.recommended].kind).toBe('turn-mill');
+    expect(r.route).toBe('mill-turn');
+    expect(r.effectiveSetups).toBe(1);
+  });
+
+  it('a two-sided part still chucks each end', () => {
+    // The flange: features reached from both ends, so the second holding is real.
+    const r = selectMachine({
+      isTurned: false, setupCount: 2, axisAlignedSetups: 2, angledSetups: 0,
+      partDimsMm: { x: 40, y: 40, z: 22 }, partVolumeCm3: 25,
+      onAxisTurnedFeatures: 2, quantity: 1,
+    });
+    expect(r.effectiveSetups).toBe(2);
+  });
+
+  it('the phantom holding was what lost the bake-off, not the hourly rate', () => {
+    const r = selectMachine(oneSided);
+    const turnMill = r.bakeOff!.find((b) => MACHINE_CATALOG[b.id].kind === 'turn-mill')!;
+    const cheapestMill = r.bakeOff!.find((b) => MACHINE_CATALOG[b.id].kind === 'mill')!;
+    // It still costs more per hour — that is real and stays.
+    expect(turnMill.hourlyRate).toBeGreaterThan(cheapestMill.hourlyRate);
+    // ...but it no longer carries a clamp the part never asked for.
+    expect(turnMill.setups).toBe(cheapestMill.setups);
+  });
+});
