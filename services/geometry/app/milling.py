@@ -552,6 +552,25 @@ def analyze_milling(shape) -> dict:
     # size no sane corner fillet exceeds.
     corner_dia_max = max(12.0, 0.12 * max(diag, 1.0))
 
+    # ...and the same figure, clamped to what the part can physically carry, for
+    # EXTERNAL cylinders only.
+    #
+    # The 12 mm floor stops a ⌀8 boss on a 300 mm plate reading as a turned
+    # feature. But it is ABSOLUTE, and on a part smaller than 12 mm it dismisses
+    # the part itself. Lance's hollow arm bulkhead is 6.1 x 6.9 x 8.9 mm, so its
+    # own ⌀6.9 body scored under the floor, all 26 of its external cylinder faces
+    # were filed as corner rounds, and 55% of its surface was discarded — after
+    # which nothing was left to say it belonged on a spindle, and it was quoted
+    # as billet on a 3-axis mill. A corner round is small RELATIVE to the part.
+    #
+    # Deliberately NOT applied to the hole test above. Clamping that one too was
+    # measured, and it moved hole counts on five unrelated parts (one from 30 to
+    # 54) — a real price change on parts nobody asked about, to fix an external
+    # cylinder. Internal bores of a few mm are ordinary on any size of part;
+    # external cylinders are the ones whose meaning scales with the whole.
+    smallest_dim = min((bx, by, bz))
+    boss_corner_dia_max = min(corner_dia_max, 0.5 * max(smallest_dim, 1.0))
+
     def _is_real_circular_feature(g: dict) -> bool:
         if g["span"] >= 0.85 * FULL_TURN:
             return True
@@ -618,7 +637,28 @@ def analyze_milling(shape) -> dict:
     # A real spigot wraps most of the way round and is big enough to profile
     # around; small external radii are just corner rounds on the outside profile.
     round_bosses = [g for g in boss_groups
-                    if g["span"] >= 0.85 * FULL_TURN and 2.0 * g["radius"] > corner_dia_max]
+                    if g["span"] >= 0.85 * FULL_TURN and 2.0 * g["radius"] > boss_corner_dia_max]
+
+    # "Is this a boss to profile around?" and "is this a TURNED diameter?" are
+    # different questions, and answering both with the 0.85 wrap test lost the
+    # second one entirely.
+    #
+    # A spigot must survive nearly a full turn before a mill can profile it as an
+    # island — that is the test above, and for boss counting it stays. But a
+    # turned diameter does not have to survive to the finished part: you turn the
+    # full ⌀ on the spindle, then mill the flats, scallops or cut-out that
+    # interrupt it. Judging turning evidence by how much cylinder is LEFT
+    # afterwards discards exactly the parts a lathe suits. Lance's C-clamp is a
+    # ⌀50.8 outside wrapping ~210°; his hollow arm is a ⌀6.9 body cut by six
+    # scallops. He runs both on a spindle. Both reported zero turned features,
+    # and both were then quoted as billet on a 3-axis mill.
+    TURNED_OD_MIN_WRAP = 0.30 * FULL_TURN
+    turned_od_groups = [g for g in boss_groups
+                        if g["span"] >= TURNED_OD_MIN_WRAP and 2.0 * g["radius"] > boss_corner_dia_max]
+    # Identity, not equality: these dicts hold numpy arrays, so `g in round_bosses`
+    # raises "truth value of an array is ambiguous" the moment round_bosses is
+    # non-empty — which is every part that has a real spigot.
+    _spigot_ids = {id(g) for g in round_bosses}
     # External cylinders that did NOT survive that test produce no boss feature,
     # so leaving them labelled `boss` would have the ledger claim coverage it does
     # not have — the very failure this ledger exists to expose. On part 035838 that
@@ -757,9 +797,12 @@ def analyze_milling(shape) -> dict:
         [{"axis": g["axis"], "point": g["point"], "radius": g["maxRadius"], "kind": "bore",
           "length": max(0.0, g["axHi"] - g["axLo"])}
          for g in hole_groups]
-        + [{"axis": g["axis"], "point": g["point"], "radius": g["radius"], "kind": "spigot",
+        + [{"axis": g["axis"], "point": g["point"], "radius": g["radius"],
+            # A full wrap is a spigot the mill profiles around; a partial one is
+            # still a diameter the spindle turned before something interrupted it.
+            "kind": "spigot" if id(g) in _spigot_ids else "turned-od",
             "length": max(0.0, g["axHi"] - g["axLo"])}
-           for g in round_bosses]
+           for g in turned_od_groups]
     )
 
     def _line_gap(a: dict, b: dict) -> float:

@@ -125,7 +125,7 @@ export const GROUND_TRUTH_WITH_GEOMETRY = MACHINE_GROUND_TRUTH.filter((p) => p.s
  * Do not tune rates to close this gap — the rates are not what is wrong. Any fix
  * belongs at the capability gate, and must be re-scored here before it ships.
  */
-export const BACKTEST_BASELINE = { correct: 6, total: 8, recordedOn: '2026-08-24' } as const;
+export const BACKTEST_BASELINE = { correct: 7, total: 8, recordedOn: '2026-08-24' } as const;
 
 /**
  * 5/8 -> 6/8. The Drive Dog now routes to the SR32, because turnFit stopped
@@ -138,14 +138,23 @@ export const BACKTEST_BASELINE = { correct: 6, total: 8, recordedOn: '2026-08-24
  * tell a ⌀20 disc from a 26x25 block. Both score ~1.0 on cross-section balance.
  * The short-part relaxation now requires coaxial evidence as well.
  *
- * The two still missing are not a SELECTION problem — they are a DETECTION
- * problem. Both report zero coaxial turned features:
+ * 6/8 -> 7/8. The last two were a DETECTION problem, not a selection one: both
+ * reported zero coaxial turned features, so no routing rule could reach them.
+ * Two rules in milling.py were throwing away the parts' own outside diameters —
+ * see the comments there on `turned_od_groups` and `boss_corner_dia_max`.
  *
- *   035838        C-clamp, ⌀30 + ⌀24 coaxial bores  -> turnedFeatures []
- *   OLY014_01921  hollow arm, ⌀4.5/⌀6.9 body        -> turnedFeatures []
+ * WHAT IS STILL WRONG, precisely: OLY014_01921 goes to the Star SR-20; Lance
+ * runs it on the NTX. That is no longer the old failure — the route, the stock
+ * form and the setup count are now right, and it is a bar-fed spindle job rather
+ * than billet on a 3-axis mill. What is left is the choice between two spindle
+ * machines, and the engine has no evidence to make it: the part reports
+ * angledSetups = 0, so nothing asks for five axes, and the SR-20 is both cheaper
+ * (£52 vs £135) and the more accurate machine on paper (0.005 vs 0.01 mm).
  *
- * Nothing in machineSelection can route them to a spindle while the geometry
- * service reports nothing for a spindle to cut. That fix belongs in milling.py,
- * and OLY014_01921 is the same part whose surface is 55% discarded — its own
- * cylindrical form is thrown away before selection ever sees it.
+ * The likely reason is the compound-angle work the drawing shows — a 210° arc
+ * feature and a ⌀1 H7 that a sliding head cannot reach — which our angled-setup
+ * detection does not see. That detection feeds setupCount, the single most
+ * price-sensitive number in the engine (+1 setup moves a quote ~24%), so it is
+ * NOT something to adjust on a hunch to close a one-part gap. Ask Lance why the
+ * NTX first; if it is the B-axis, fix the detection and re-score here.
  */

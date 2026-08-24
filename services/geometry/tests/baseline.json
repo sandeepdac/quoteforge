@@ -2,23 +2,23 @@
   "029068._IssB.STEP": {
     "angledSetups": 0,
     "axisAlignedSetups": 1,
-    "bossCount": 0,
+    "bossCount": 1,
     "chamferCount": 0,
     "countersinkCount": 0,
     "deepPocketCount": 0,
     "drillPointCount": 0,
-    "facingCandidates": 0,
+    "facingCandidates": 4,
     "holeCount": 2,
     "partVolumeCm3": 0.2,
     "pocketCount": 0,
     "removedVolumeCm3": 0.184,
-    "roundBossCount": 0,
+    "roundBossCount": 1,
     "setupCount": 1,
     "steppedHoleCount": 1,
     "stockVolumeCm3": 0.384,
     "taperCount": 0,
     "threadCalloutCount": 0,
-    "turnedFeatureCount": 0,
+    "turnedFeatureCount": 2,
     "unaccountedFaces": 0
   },
   "031167A.STEP": {
@@ -62,7 +62,7 @@
     "stockVolumeCm3": 44.616,
     "taperCount": 0,
     "threadCalloutCount": 0,
-    "turnedFeatureCount": 2,
+    "turnedFeatureCount": 3,
     "unaccountedFaces": 0
   },
   "032736_01.step": {
@@ -95,7 +95,7 @@
     "countersinkCount": 2,
     "deepPocketCount": 0,
     "drillPointCount": 0,
-    "facingCandidates": 0,
+    "facingCandidates": 4,
     "holeCount": 4,
     "partVolumeCm3": 6.815,
     "pocketCount": 0,
@@ -106,7 +106,7 @@
     "stockVolumeCm3": 15.603,
     "taperCount": 0,
     "threadCalloutCount": 0,
-    "turnedFeatureCount": 0,
+    "turnedFeatureCount": 2,
     "unaccountedFaces": 0
   },
   "12630_Iss01.STEP": {
@@ -205,7 +205,7 @@
     "countersinkCount": 0,
     "deepPocketCount": 0,
     "drillPointCount": 2,
-    "facingCandidates": 0,
+    "facingCandidates": 5,
     "holeCount": 8,
     "partVolumeCm3": 0.064,
     "pocketCount": 0,
@@ -216,7 +216,7 @@
     "stockVolumeCm3": 0.372,
     "taperCount": 0,
     "threadCalloutCount": 0,
-    "turnedFeatureCount": 0,
+    "turnedFeatureCount": 3,
     "unaccountedFaces": 0
   },
   "RD_FGCP508__P5_Round_Top_Flag_ISS4.STEP": {
@@ -238,7 +238,7 @@
     "stockVolumeCm3": 84.45,
     "taperCount": 0,
     "threadCalloutCount": 0,
-    "turnedFeatureCount": 2,
+    "turnedFeatureCount": 3,
     "unaccountedFaces": 0
   },
   "TCL0893_BLOCK_SPOILER_GAG.STEP": {
@@ -348,7 +348,7 @@
     "stockVolumeCm3": 142136.661,
     "taperCount": 0,
     "threadCalloutCount": 0,
-    "turnedFeatureCount": 2,
+    "turnedFeatureCount": 3,
     "unaccountedFaces": 14
   },
   "nist_ftc_06_asme1_ap242e2.stp": {
@@ -447,7 +447,7 @@
     "countersinkCount": 0,
     "deepPocketCount": 2,
     "drillPointCount": 8,
-    "facingCandidates": 0,
+    "facingCandidates": 28,
     "holeCount": 41,
     "partVolumeCm3": 188.313,
     "pocketCount": 2,
@@ -458,7 +458,7 @@
     "stockVolumeCm3": 386.188,
     "taperCount": 0,
     "threadCalloutCount": 0,
-    "turnedFeatureCount": 0,
+    "turnedFeatureCount": 2,
     "unaccountedFaces": 54
   }
 }
