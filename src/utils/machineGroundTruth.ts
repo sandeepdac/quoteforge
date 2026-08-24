@@ -125,4 +125,27 @@ export const GROUND_TRUTH_WITH_GEOMETRY = MACHINE_GROUND_TRUTH.filter((p) => p.s
  * Do not tune rates to close this gap — the rates are not what is wrong. Any fix
  * belongs at the capability gate, and must be re-scored here before it ships.
  */
-export const BACKTEST_BASELINE = { correct: 5, total: 8, recordedOn: '2026-08-24' } as const;
+export const BACKTEST_BASELINE = { correct: 6, total: 8, recordedOn: '2026-08-24' } as const;
+
+/**
+ * 5/8 -> 6/8. The Drive Dog now routes to the SR32, because turnFit stopped
+ * letting a volume-fill PROXY veto direct evidence, and stopped demanding a
+ * length-to-diameter ratio that small bar work never has.
+ *
+ * Getting there cost one regression, which is the whole reason this file exists:
+ * relaxing the aspect rule on bounding-box shape alone bar-fed the Cold Stage
+ * Block — a rectangular copper block — to a sliding head, because a box cannot
+ * tell a ⌀20 disc from a 26x25 block. Both score ~1.0 on cross-section balance.
+ * The short-part relaxation now requires coaxial evidence as well.
+ *
+ * The two still missing are not a SELECTION problem — they are a DETECTION
+ * problem. Both report zero coaxial turned features:
+ *
+ *   035838        C-clamp, ⌀30 + ⌀24 coaxial bores  -> turnedFeatures []
+ *   OLY014_01921  hollow arm, ⌀4.5/⌀6.9 body        -> turnedFeatures []
+ *
+ * Nothing in machineSelection can route them to a spindle while the geometry
+ * service reports nothing for a spindle to cut. That fix belongs in milling.py,
+ * and OLY014_01921 is the same part whose surface is 55% discarded — its own
+ * cylindrical form is thrown away before selection ever sees it.
+ */

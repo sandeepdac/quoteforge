@@ -314,10 +314,16 @@ describe('chucked turning is costed against the part, not a convention', () => {
     onAxisTurnedFeatures: 3, quantity: 1,
   };
 
-  it('a one-sided part chucks once, and the turned register goes to a lathe', () => {
+  // This assertion used to demand a turn-mill. That was a guess of mine, and the
+  // drawing settles it: Lance runs OLY014_01297 on the SR32, a SLIDING HEAD. It
+  // is ⌀20 bar work parted off, not a chucked job. Ground truth outranks the
+  // reasoning that produced the original expectation.
+  it('the ⌀20 Drive Dog is bar work on a sliding head, as Lance runs it', () => {
     const r = selectMachine(oneSided);
-    expect(MACHINE_CATALOG[r.recommended].kind).toBe('turn-mill');
+    expect(r.recommended).toBe('star-sr32');
+    expect(MACHINE_CATALOG[r.recommended].kind).toBe('sliding-head');
     expect(r.route).toBe('mill-turn');
+    expect(r.stockForm).toBe('bar');
     expect(r.effectiveSetups).toBe(1);
   });
 

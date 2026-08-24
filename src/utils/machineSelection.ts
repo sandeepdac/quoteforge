@@ -306,7 +306,11 @@ const BAR_RADIAL_ALLOWANCE_MM = 2; // clean-up stock over the finished OD before
 const BAR_CROSS_BALANCE_MIN = 0.55; // cross-section must be roughly round/square (not a flat plate)
 const BAR_CORNER_FILL = 1.05;       // fills ≤ this fraction of a ⌀=width cylinder → fits that bar
 const BAR_MIN_FILL = 0.5;           // ...and ≥ this, or it is a block inside a notional cylinder
-const BAR_MIN_ASPECT = 1.2;         // bar work runs along its length: a disc is chucked, not bar-fed
+const BAR_MIN_ASPECT = 1.2;         // bar work runs along its length: a LARGE disc is chucked, not bar-fed
+// ...but below this ⌀, parting short parts off bar is normal practice rather than
+// waste. Set to the largest bar capacity on the floor (Star SR-32), so it means
+// "a machine here is built to eat this as bar" rather than being a free parameter.
+const BAR_SHORT_PART_MAX_DIA_MM = 32;
 
 /** The machines actually available, in catalog order. Unknown ids are ignored
  *  (older saved settings used a generic catalog), and an empty result means
@@ -354,14 +358,39 @@ function turnFit(input: MachineSelectionInput) {
   const cylFill = cylOfWidthCm3 > 0 && (input.partVolumeCm3 ?? 0) > 0
     ? (input.partVolumeCm3 as number) / cylOfWidthCm3
     : 0.7;
-  const roundEnough = cylFill <= BAR_CORNER_FILL && cylFill >= BAR_MIN_FILL;
+  // DIRECT EVIDENCE BEATS THE PROXY. The lower fill bound exists only because we
+  // otherwise cannot tell a block sitting inside a notional cylinder from a real
+  // body of revolution. When the geometry service has actually found coaxial
+  // turned features, we HAVE that evidence — and the fill test then does active
+  // harm, because the parts it rejects are precisely the ones turning suits best:
+  // a tube, a ring, a flange with a cut-out. Lance's Drive Dog is ⌀20 with a
+  // trilobe pocket, fills 50% of its cylinder, and was ruled "a block, not a body
+  // of revolution" while carrying three coaxial turned diameters.
+  // The UPPER bound still stands whatever the evidence: it is about stock sizing,
+  // and square corners really do need bar across the diagonal.
+  const coaxialEvidence = (input.onAxisTurnedFeatures ?? 0) >= 2;
+  const roundEnough = cylFill <= BAR_CORNER_FILL && (coaxialEvidence || cylFill >= BAR_MIN_FILL);
   const containDiaMm = roundEnough ? cs.widthMm : cs.diagonalMm;
   const barDiameterMm = nextStandardBar(containDiaMm + 2 * BAR_RADIAL_ALLOWANCE_MM);
   const barLike = cs.balance >= BAR_CROSS_BALANCE_MIN;
 
-  // Bar stock runs along its LENGTH. A disc or flange is chucked from a sawn
-  // slug, never bar-fed — you would buy a huge bar to part off a thin slice.
-  const elongated = cs.lengthMm >= BAR_MIN_ASPECT * cs.widthMm;
+  // Bar stock runs along its LENGTH, so a long part is obviously bar work. The
+  // reverse is NOT true, and treating it as a hard gate mis-routed short parts:
+  // the objection to bar-feeding a disc is WASTE — buying a ⌀200 bar to part off
+  // a 10 mm slice — and waste scales with diameter, not with aspect ratio. At
+  // small diameters, parting short components off bar is not a compromise, it is
+  // exactly what a sliding head does all day. So a small-⌀ part is bar work
+  // whatever its length; only large-⌀ discs must be chucked from a sawn slug.
+  // The short-part case needs the coaxial evidence too, and finding that out
+  // cost a regression: a bounding box cannot tell a ⌀20 disc from a 26×25 block,
+  // because BOTH score ~1.0 on cross-section balance. Relaxing the aspect rule on
+  // box shape alone bar-fed Lance's Cold Stage Block — a rectangular copper block
+  // — to a sliding head. For a LONG part the box plus the fill range is decent
+  // evidence of a bar; for a SHORT one we are asserting "disc parted off bar",
+  // and only real coaxial features can support that.
+  const elongated =
+    cs.lengthMm >= BAR_MIN_ASPECT * cs.widthMm ||
+    (coaxialEvidence && containDiaMm <= BAR_SHORT_PART_MAX_DIA_MM);
 
   return {
     ...cs,
