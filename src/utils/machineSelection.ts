@@ -783,7 +783,13 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
     } else if (!lenOk) {
       reason = `${r0(fit.lengthMm)} mm long exceeds its ${m.maxTurnLengthMm} mm turning length.`;
     } else if (!gripOk) {
-      reason = `⌀${r0(fit.containDiaMm)} exceeds its ${m.maxChuckDiaMm} mm chuck — cannot be held here at all.`;
+      // A sliding head has no chuck to exceed — work is fed through a collet and
+      // guide bush — so quoting one a "⌀undefined mm chuck" was both meaningless
+      // and, on the estimator's screen, visibly broken. Say what actually limits
+      // each machine: bar capacity for a bar machine, swing for a chucker.
+      reason = m.maxChuckDiaMm
+        ? `⌀${r0(fit.containDiaMm)} exceeds its ${m.maxChuckDiaMm} mm chuck — cannot be held here at all.`
+        : `⌀${r0(fit.containDiaMm)} exceeds its ${m.maxBarDiaMm ?? 0} mm bar capacity — a sliding head feeds bar through a collet, it has no chuck to hold this.`;
     } else if (!fit.barLike) {
       reason = `Flat/slab cross-section (${Math.round(fit.balance * 100)}% square) — not turning work, and with ${m.axes} axes it has no setup advantage over a machining centre.`;
     } else if (!fit.roundEnough) {
