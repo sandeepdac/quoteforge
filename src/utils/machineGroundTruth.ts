@@ -50,7 +50,8 @@ export const MACHINE_GROUND_TRUTH: GroundTruthPart[] = [
   {
     drawing: '035838', title: 'Bulkhead C Clamp — KF16/KF10 Vacuum Manifold',
     stepMatch: '035838', material: 'Aluminium 6082 (HE30)',
-    machines: ['ntx-1000', 'nl-2000'], handwritten: 'NTX OR NL',
+    machines: ['nl-2000', 'haas-vf2'], handwritten: 'NTX OR NL (note) / Mori + HAAS VF2 (router)',
+    router: 'Op10 Mori MILL OP1 setup 240 cycle 7; Op20 HAAS VF2 face+deburr setup 60 cycle 1.5; Op30 IN',
   },
   {
     drawing: '032736', title: 'Cold Stage Block',
@@ -138,7 +139,36 @@ export const GROUND_TRUTH_WITH_GEOMETRY = MACHINE_GROUND_TRUTH.filter((p) => p.s
  * Do not tune rates to close this gap — the rates are not what is wrong. Any fix
  * belongs at the capability gate, and must be re-scored here before it ships.
  */
-export const BACKTEST_BASELINE = { correct: 7, total: 8, recordedOn: '2026-08-24' } as const;
+export const BACKTEST_BASELINE = { correct: 3, total: 6, recordedOn: '2026-09-03' } as const;
+
+/**
+ * SCORED AGAINST THE ROUTERS — 3/6, and the 7/8 above is superseded.
+ *
+ * Lance sent seven quotes with his routers. Three contradict the machine written
+ * on the drawing corner (032736 VF2 -> NTX+MINI MILL; NAUT_01695 SR20 -> XD10;
+ * 035838 "NTX or NL" -> Mori + HAAS VF2). The routers win: a note is what someone
+ * remembered, a router is what ran.
+ *
+ *   035838-A      Mori + VF2       -> nl-2000     HIT
+ *   029068        SR20             -> star-sr20   HIT
+ *   OLY014_01297  SR#32            -> star-sr32   HIT
+ *   031169-A      Mori NL          -> hi-turner   MISS
+ *   032736        NTX + MINI MILL  -> haas-vf2    MISS
+ *   OLY014_01921  NTX + MINI MILL  -> star-sr20   MISS
+ *   NAUT_01695-C  XD10             -> hanwha      UNSCORED (XD10 not in catalog)
+ *
+ * THE CAUSE IS IN THE RATES, AND THE QUOTES PROVE IT. Lance prices at a FLAT
+ * rate: exactly £30.00/hr on every single-machining-op part (four independent
+ * confirmations, one of them a two-quantity solve that gave setup £29.96/hr and
+ * cycle £30.04/hr separately), and £36.67-£39.12/hr on the four two-op parts.
+ * The per-machine £40-£135/hr spread we carry does not exist in his pricing.
+ *
+ * So our bake-off rejects the NTX on a £135/hr penalty he never charges — and
+ * the NTX is exactly the machine he reaches for when it saves setups. Two of the
+ * three misses are that. Do not chase these with capability tweaks; flatten the
+ * rate first and re-score.
+ */
+export const ROUTER_BACKTEST = { correct: 3, total: 6, unscored: 1, source: 'routers' } as const;
 
 /**
  * 5/8 -> 6/8. The Drive Dog now routes to the SR32, because turnFit stopped

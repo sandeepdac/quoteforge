@@ -35,6 +35,7 @@ const GT = [
   // the note says VF2 while the router ran NTX1000 + MINI MILL, and on
   // NAUT_01695 the note says SR20 while the router ran XD10 — so the notes are
   // what someone remembered, and the routers are what the shop actually did.
+  ['035838-A',     ['nl-2000', 'haas-vf2'],         '035838',       'Bulkhead C Clamp'],
   ['031169-A',     ['nl-2000'],                     '031169',       'VOC Carbsorb Housing'],
   ['032736',       ['ntx-1000', 'h-mini-mill-300'], '032736',       'Cold Stage Block'],
   ['029068',       ['star-sr20'],                   '029068',       'Removable Collet Holding Block'],
