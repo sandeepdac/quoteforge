@@ -95,13 +95,17 @@ def load_baseline() -> dict:
 def diff(current: dict, baseline: dict) -> list:
     """Human-readable list of what moved, part by part."""
     lines = []
+    # Only parts present in BOTH are compared. The corpus lives outside the repo
+    # and is environment-dependent: a container that holds six of the twenty-one
+    # parts is a smaller corpus, not a regression, and failing the build for it
+    # trains people to ignore the brake. A part that is present and MOVED is the
+    # signal; a part that is absent is reported by main() and not asserted on.
     for part in sorted(set(current) | set(baseline)):
         cur, base = current.get(part), baseline.get(part)
         if base is None:
             lines.append(f"+ {part}: NEW (not in baseline)")
             continue
         if cur is None:
-            lines.append(f"- {part}: MISSING from this run")
             continue
         for k in sorted(set(cur) | set(base)):
             a, b = base.get(k), cur.get(k)
@@ -117,12 +121,27 @@ def main() -> int:
         return 2
     current = measure_all()
     if "--update" in sys.argv:
+        # MERGE, never replace. --update in a container holding six of the
+        # twenty-one parts would otherwise silently delete fifteen pinned parts,
+        # and the brake would come off exactly where nobody was looking.
+        merged = dict(load_baseline())
+        merged.update(current)
         with open(BASELINE_PATH, "w") as fh:
-            json.dump(current, fh, indent=2, sort_keys=True)
+            json.dump(merged, fh, indent=2, sort_keys=True)
             fh.write("\n")
-        print(f"Baseline written: {len(current)} parts -> {BASELINE_PATH}")
+        kept = len(merged) - len(current)
+        print(f"Baseline written: {len(current)} measured, {kept} kept from the "
+              f"previous file, {len(merged)} total -> {BASELINE_PATH}")
         return 0
-    changes = diff(current, load_baseline())
+    base = load_baseline()
+    absent = sorted(set(base) - set(current))
+    if absent:
+        print(f"note: {len(absent)} baseline part(s) not in this corpus, not compared:")
+        for a in absent[:6]:
+            print("    ", a)
+        if len(absent) > 6:
+            print(f"     ... and {len(absent) - 6} more")
+    changes = diff(current, base)
     if not changes:
         print(f"No change across {len(current)} parts.")
         return 0

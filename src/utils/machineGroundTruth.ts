@@ -37,6 +37,13 @@ export interface GroundTruthPart {
   machines: MachineId[];
   /** Verbatim, so a reader can check the mapping to catalog ids themselves. */
   handwritten: string;
+  /**
+   * His actual ROUTER, where we have the quote. This outranks `handwritten`:
+   * on 032736 the drawing corner says VF2 while the router runs NTX + MINI MILL,
+   * and on NAUT_01695 the note says SR20 while the router runs XD10. A note
+   * written on a drawing is what someone remembered; the router is what ran.
+   */
+  router?: string;
 }
 
 export const MACHINE_GROUND_TRUTH: GroundTruthPart[] = [
@@ -48,7 +55,10 @@ export const MACHINE_GROUND_TRUTH: GroundTruthPart[] = [
   {
     drawing: '032736', title: 'Cold Stage Block',
     stepMatch: '032736', material: 'Copper C103',
-    machines: ['haas-vf2'], handwritten: 'VF2',
+    // SUPERSEDED BY THE ROUTER. The drawing corner says VF2; his router runs
+    // Op10 NTX1000 + Op20 MINI MILL. The router is what the shop actually did.
+    machines: ['ntx-1000', 'h-mini-mill-300'], handwritten: 'VF2 (note) / NTX1000 + MINI MILL (router)',
+    router: 'Op10 NTX1000 setup 600 cycle 20; Op20 MINI MILL setup 210 cycle 5; Op25 SCPLAT gold; Op30 IN',
   },
   {
     drawing: '031581', title: 'Stage Spacer Block — PP3020',
@@ -83,7 +93,10 @@ export const MACHINE_GROUND_TRUTH: GroundTruthPart[] = [
   {
     drawing: 'NAUT_01695', title: 'Guide Rod',
     material: '416 stainless (Temper H)',
-    machines: ['star-sr20'], handwritten: 'SR20',
+    // SUPERSEDED BY THE ROUTER. The note says SR20; the router runs XD10, which
+    // is not a machine in MACHINE_CATALOG at all — we cannot pick it.
+    machines: [], handwritten: 'SR20 (note) / XD10 (router) — XD10 NOT IN CATALOG',
+    router: 'Op10 XD10 setup 180 cycle 1.5; Op20 CLEAN; Op25 SCHEAT harden; Op30 IN',
   },
   {
     drawing: 'OLY014_01297', title: 'Toolset Drive Unit — Drive Dog',

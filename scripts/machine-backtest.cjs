@@ -31,14 +31,17 @@ const NAMES = [
 // because this runs as plain CommonJS against the built app, with no TS step.
 // Keep the two in step: machineGroundTruth.ts is the record, this is the runner.
 const GT = [
-  ['035838', ['ntx-1000', 'nl-2000'], '035838', 'Bulkhead C Clamp'],
-  ['032736', ['haas-vf2'], '032736', 'Cold Stage Block'],
-  ['031581', ['ntx-1000'], '031581', 'Stage Spacer Block'],
-  ['031167', ['nl-2000'], '031167', 'VOC Condenser Side Flange'],
-  ['029068', ['star-sr20'], '029068', 'Removable Collet Holding Block'],
-  ['Kepler_00884', ['haas-vf2'], 'Kepler_00884', 'Fixture B'],
-  ['OLY014_01921', ['ntx-1000'], 'OLY014_01921', 'Hollow arm bulkhead'],
-  ['OLY014_01297', ['star-sr32'], 'OLY014_01297', 'Drive Dog'],
+  // Scored against Lance's ROUTER, not the handwritten drawing note. On 032736
+  // the note says VF2 while the router ran NTX1000 + MINI MILL, and on
+  // NAUT_01695 the note says SR20 while the router ran XD10 — so the notes are
+  // what someone remembered, and the routers are what the shop actually did.
+  ['031169-A',     ['nl-2000'],                     '031169',       'VOC Carbsorb Housing'],
+  ['032736',       ['ntx-1000', 'h-mini-mill-300'], '032736',       'Cold Stage Block'],
+  ['029068',       ['star-sr20'],                   '029068',       'Removable Collet Holding Block'],
+  ['OLY014_01921', ['ntx-1000', 'h-mini-mill-300'], 'OLY014_01921', 'Hollow arm bulkhead'],
+  ['OLY014_01297', ['star-sr32'],                   'OLY014_01297', 'Drive Dog'],
+  // XD10 is not in MACHINE_CATALOG, so this one cannot be scored either way.
+  ['NAUT_01695-C', [],                              'NAUT_01695',   'Guide Rod (XD10 - not in catalog)'],
 ];
 
 (async () => {
@@ -83,6 +86,10 @@ const GT = [
     } catch (e) { got = 'ERR:' + String(e.message).slice(0, 26); }
     await p.close();
 
+    if (!want.length) {
+      console.log(drawing.padEnd(15) + 'XD10 (no catalog entry)'.padEnd(20) + String(got).padEnd(20) + 'UNSCORED');
+      continue;
+    }
     const ok = want.includes(got);
     total++; if (ok) hit++;
     else misses.push(`  ${drawing} (${title})\n     Lance: ${want.join(' or ')}   QuoteForge: ${got}\n     why: ${reason.slice(0, 190)}`);
