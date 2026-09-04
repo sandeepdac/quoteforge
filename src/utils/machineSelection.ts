@@ -80,6 +80,19 @@ export interface MachineSpec {
   /** Best achievable tolerance (mm) — gates precision work. */
   accuracyMm?: number;
   /**
+   * Minutes to set this machine up for a FIRST operation.
+   *
+   * Calibrated against seven real Turncircuit job sheets. The finding was that
+   * setup is mostly a property of the MACHINE rather than of the part: dialling
+   * in a 5-axis mill-turn with twenty driven tools is a big job whatever is in
+   * the chuck, and a 2-axis lathe is a small one. Part complexity moves it, but
+   * far less than which machine it runs on.
+   *
+   * Values marked OBSERVED come from a job sheet. The rest are assumed from the
+   * machine's class and are the first thing a new quote should test.
+   */
+  setupCharacterMin: number;
+  /**
    * Charge-out rate per HOUR, in the shop's currency. This is a real cost
    * centre: a 5-axis mill-turn is not "10% more" than a VMC, it is a different
    * class of asset with a rate to match. DEFAULTS — confirm with the shop.
@@ -115,54 +128,63 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
   hanwha: spec({
     id: 'hanwha', name: 'Hanwha Sliding-Head', kind: 'sliding-head',
     liveTooling: true, axes: 5, maxBarDiaMm: 10, maxChuckDiaMm: 45,
+    setupCharacterMin: 240, // assumed: same class as the SR-20, untested
     accuracyMm: 0.01, hourlyRate: 48,
     note: 'Small bar-fed precision turning to ⌀10 bar (⌀45 turned). Driven tools: profiles, drilling, tapping, thread whirling.',
   }),
   'star-sr20': spec({
     id: 'star-sr20', name: 'Star SR-20 Sliding-Head', kind: 'sliding-head',
     liveTooling: true, axes: 5, maxBarDiaMm: 20, maxTurnLengthMm: 350,
+    setupCharacterMin: 240, // OBSERVED 240 (029068)
     accuracyMm: 0.005, hourlyRate: 52,
     note: 'Bar-fed to ⌀20 × 350 mm. Tightest tolerance on the floor (0.005 mm). Driven tools + thread whirling.',
   }),
   'star-sr32': spec({
     id: 'star-sr32', name: 'Star SR-32 Sliding-Head', kind: 'sliding-head',
     liveTooling: true, axes: 5, maxBarDiaMm: 32, maxTurnLengthMm: 310,
+    setupCharacterMin: 900, // OBSERVED 900 (OLY014_01297) - 3.75x the SR-20, unexplained
     accuracyMm: 0.01, hourlyRate: 58,
     note: 'Bar-fed to ⌀32 × 310 mm. Driven tools: profiles, drilling, tapping, thread whirling.',
   }),
   'ntx-1000': spec({
     id: 'ntx-1000', name: 'DMG Mori NTX 1000 (5-axis Mill-Turn)', kind: 'turn-mill',
     liveTooling: true, axes: 5, maxBarDiaMm: 65, maxChuckDiaMm: 125, maxTurnLengthMm: 200,
+    setupCharacterMin: 900, // OBSERVED 600 and 1200, mean 900 - the 2x spread is unmodelled
     accuracyMm: 0.01, hourlyRate: 135,
     note: 'The only 5-axis machine on the floor: B-axis milling spindle, turning and milling in one clamp. Also mills PRISMATIC work done-complete in soft jaws — the reason a compound-angle part belongs here and not on a VMC. Premium rate, repaid by eliminating setups.',
   }),
   'nl-2000': spec({
     id: 'nl-2000', name: 'Mori NL 2000 Mill-Turn', kind: 'turn-mill',
     liveTooling: true, axes: 4, maxBarDiaMm: 65, maxChuckDiaMm: 430, maxTurnLengthMm: 450,
+    setupCharacterMin: 210, // OBSERVED 180 and 240 (031169, 035838)
     accuracyMm: 0.01, hourlyRate: 88,
     note: 'Large-capacity mill-turn: ⌀65 bar, but chucks to ⌀430 × 450 mm. Driven tools with Y ±70 for off-axis work. One rotary axis, so a compound angle still needs fixturing.',
   }),
   'hi-turner': spec({
     id: 'hi-turner', name: 'Hi Turner CNC Lathe', kind: 'lathe',
     liveTooling: false, axes: 2, maxBarDiaMm: 38, maxChuckDiaMm: 250, maxTurnLengthMm: 250,
+    setupCharacterMin: 120, // assumed: 2-axis, the simplest setup on the floor
     hourlyRate: 42,
     note: 'Straightforward turning to ⌀250 × 250 mm. No live tooling — off-axis features need a separate milling op.',
   }),
   'haas-vf2': spec({
     id: 'haas-vf2', name: 'Haas VF-2 (4-axis VMC)', kind: 'mill',
     liveTooling: true, axes: 4, envelopeMm: { x: 762, y: 406, z: 508 },
+    setupCharacterMin: 240, // assumed as a FIRST op; observed 60 as a second op (035838)
     hourlyRate: 55,
     note: 'Vertical machining centre with a 4th axis — indexes around ONE axis to reach the faces about it without a re-fixture. A compound angle needs two rotations, so it still costs a tilted fixture here.',
   }),
   sabre: spec({
     id: 'sabre', name: 'Sabre Machining Centre', kind: 'mill',
     liveTooling: true, axes: 3, envelopeMm: { x: 2000, y: 500, z: 500 },
+    setupCharacterMin: 240, // assumed: 3-axis machining centre, untested
     hourlyRate: 58,
     note: 'Large-format milling to 2 m. Metals plus graphite, ABS, polycarbonate, nylon, POM and PEEK. Three axes: one clamp, one direction.',
   }),
   'h-mini-mill-300': spec({
     id: 'h-mini-mill-300', name: 'H Mini Mill 300', kind: 'mill',
     liveTooling: true, axes: 3, maxBarDiaMm: 60, envelopeMm: { x: 370, y: 300, z: 450 },
+    setupCharacterMin: 405, // OBSERVED 210 and 600 as SECOND ops, mean 405
     accuracyMm: 0.01, hourlyRate: 40,
     note: 'Small machining centre with ⌀10–60 collet / bar workholding, billet to 370 mm. CONFIRM its exact classification with the shop.',
   }),

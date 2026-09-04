@@ -35,7 +35,44 @@ export const DEFAULT_TURNING_TOOLS: ShopTool[] = [
  * speeds/feeds live in the material table; the efficiency factor calibrates the
  * book-vs-reality gap uniformly. Advisory — a shop tunes these to its machines.
  */
+/**
+ * CALIBRATION HOLD — why the shop's real rate is not switched on yet.
+ *
+ * Seven job sheets say Lance charges a FLAT £30/hr (£38 for two-machine routes),
+ * and that setup time is a property of the machine (120-900 min) rather than of
+ * the part. Both findings are solid. Switching them on was tried, measured, and
+ * REVERTED, because it made the product worse:
+ *
+ *   spread (worst/best price error across the seven parts, lower is better)
+ *     shipped engine                                7.8
+ *     + flat rate                                   8.8
+ *     + flat rate and setup character               19.6   <- shipped this? no
+ *     + flat rate and setup character, but using
+ *       LANCE'S machine for each part                2.7
+ *
+ * The last two lines are the same model. The only difference is whose machine
+ * choice it uses. We pick the right machine on three parts of six, and setup
+ * character spans 120-900 minutes — so once setup depends on the machine, a
+ * wrong machine costs seven times the setup error it used to. On 031169 that
+ * turned a 3x-low quote into an 1.9x-HIGH one, which loses the job rather than
+ * losing money on it.
+ *
+ * The order of work is therefore fixed, and it is not the order we assumed:
+ * MACHINE SELECTION FIRST, then this. The numbers below stay because they are
+ * evidence and they are right; they are simply not wired into a price yet.
+ */
+
+/**
+ * A route that needs two machining operations prices higher per hour: £36.67,
+ * £37.16, £38.50 and £39.12 across the four such quotes, against exactly £30.00
+ * on the four single-op ones. 38/30. Why the second machine costs more per hour
+ * rather than simply more hours is the one thing in his pricing we cannot yet
+ * explain, so this is an OBSERVATION, not a mechanism.
+ */
+export const MULTI_OP_RATE_MULTIPLIER = 38 / 30;
+
 export const DEFAULT_CNC_SETTINGS: CncSettings = {
+  // NOT YET £30/hr, and the reason is measured — see CALIBRATION_HOLD below.
   machineRatePerMin: 1.25,
   setupRatePerMin: 0.80,
   setupTimeFirstOpMin: 35,

@@ -309,7 +309,9 @@ export function calculateMilledCosts(
   marginPercent: number,
   settings: ShopSettings,
   /** Machine charge-out multiplier from the selected machine (see machineSelection). */
-  machineRateMultiplier = 1
+  machineRateMultiplier = 1,
+  /** The chosen machine's setup character in minutes (see MachineSpec). */
+  machineSetupCharacterMin = 0,
 ): MachiningCosts {
   const cnc = settings.cnc ?? DEFAULT_CNC_SETTINGS;
   const { overheadPercent, rushPremiumPercent } = settings;
@@ -537,10 +539,25 @@ export function calculateMilledCosts(
   // every tool, so milling carries its own baseline times. Bill on the setups the
   // plan could actually fill — phantom facing-only re-clamps are merged away.
   const setups = plan.setups.length;
-  const setupTimeMin =
-    (cnc.millSetupFirstOpMin ?? cnc.setupTimeFirstOpMin) +
-    (setups - 1) * (cnc.millSetupPerExtraOpMin ?? cnc.secondOpSetupMin) +
-    toolCount * cnc.setupTimePerToolMin;
+  // SETUP TIME — calibrated against seven Turncircuit job sheets.
+  //
+  // This used to be `base + tools x 3 min`, which tied setup to how many times
+  // the part is CLAMPED. Lance's sheets say it is tied to which MACHINE it runs
+  // on: dialling in the 5-axis mill-turn is ~900 min and the 2-axis lathe ~120,
+  // whatever is in the chuck. The old formula produced 50-220 min against his
+  // actual 195-2070 and, worse, was wrong by 2.5x on some parts and 17x on
+  // others — so no single correction could have fixed it.
+  //
+  // `machineSetupCharacterMin` is the chosen machine's figure. A second op sets
+  // up faster (the part exists, only the holding changes), hence the fraction.
+  // Falls back to the old shape when no machine has been chosen yet.
+  const secondOpFraction = 0.5;
+  const setupTimeMin = machineSetupCharacterMin
+    ? machineSetupCharacterMin * (1 + (setups - 1) * secondOpFraction)
+    : (
+      (cnc.millSetupFirstOpMin ?? cnc.setupTimeFirstOpMin) +
+      (setups - 1) * (cnc.millSetupPerExtraOpMin ?? cnc.secondOpSetupMin) +
+      toolCount * cnc.setupTimePerToolMin);
   // Setup billing: time-based labour, a flat per-setup charge, or both (one-time
   // job costs amortised over the batch). 'flat' matches how CAM quotes bill setup.
   const flatSetupCharge = Math.max(0, cnc.flatSetupChargePerSetup ?? 0) * setups;

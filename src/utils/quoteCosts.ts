@@ -65,14 +65,22 @@ export function resolveQuoteCosts(p: ResolveParams): ResolvedQuoteCosts {
   const { cadAnalysis, features: f, settings } = p;
   const isTurnedPart = !!(cadAnalysis?.isTurned && cadAnalysis?.turningProfile);
   const isMilledPart = !!(cadAnalysis?.milledProfile && !cadAnalysis?.isTurned);
+  // The rate no longer varies by MACHINE — Lance charges one rate whichever one
+  // runs the job. What does move it is how many machining operations the route
+  // needs: exactly £30/hr for one, ~£38/hr for two. So the multiplier now scales
+  // off the route's op count, and the machine contributes its SETUP TIME instead.
+  // Still the per-machine multiplier, and setup character is still 0. Both are
+  // waiting on machine selection — see CALIBRATION_HOLD in constants.ts, which
+  // records the measurement that says switching them on now makes prices worse.
   const rateMult = cadAnalysis?.machineRecommendation?.rateMultiplier ?? 1;
+  const setupCharacterMin = 0;
   const density = materialPropsFor(p.materialName).densityGCm3;
 
   if (isTurnedPart && cadAnalysis?.turningProfile) {
     const volumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : cadAnalysis.volumeCm3 ?? 0;
     const mc = calculateMachiningCosts(
       { isTurned: true, materialName: p.materialName, volumeCm3, profile: cadAnalysis.turningProfile, setups: cadAnalysis.setups ?? 1, materialPricePerKg: p.materialPricePerKg },
-      p.quantity, p.isRush, p.margin, settings, rateMult
+      p.quantity, p.isRush, p.margin, settings, rateMult, setupCharacterMin
     );
     const unitPrice = mc.subtotal + mc.overhead + mc.marginAmount;
     return { costs: machiningToQuoteCosts(mc), lineItems: mc.lineItems, unitPrice, grandTotal: unitPrice * p.quantity + mc.rushPremium, machiningCosts: mc, machineClass: mc.machineClass ?? 'turn' };
@@ -84,7 +92,7 @@ export function resolveQuoteCosts(p: ResolveParams): ResolvedQuoteCosts {
     const profile = { ...base, partVolumeCm3, removedVolumeCm3: Math.max(0, base.stockVolumeCm3 - partVolumeCm3) };
     const mc = calculateMilledCosts(
       { materialName: p.materialName, profile, materialPricePerKg: p.materialPricePerKg },
-      p.quantity, p.isRush, p.margin, settings, rateMult
+      p.quantity, p.isRush, p.margin, settings, rateMult, setupCharacterMin
     );
     const unitPrice = mc.subtotal + mc.overhead + mc.marginAmount;
     return { costs: machiningToQuoteCosts(mc), lineItems: mc.lineItems, unitPrice, grandTotal: unitPrice * p.quantity + mc.rushPremium, machiningCosts: mc, machineClass: 'mill' };
