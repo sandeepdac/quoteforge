@@ -381,3 +381,49 @@ def test_a_thread_callout_stops_the_part_reading_as_fully_accounted():
     assert m["unaccountedFaces"] == 0            # every face IS classified
     assert m["openQuestions"], "a tapped part must not look fully accounted"
     assert m["openQuestions"][0]["kind"] == "threads"
+
+
+def test_polygonal_bar_is_detected_with_its_across_flats():
+    """
+    A hex flange reads as a handful of ordinary planar faces, so nothing noticed
+    it. On Lance's Carbsorb Housing that cost twice over: the stock was priced as
+    ROUND bar (you cannot turn a hex from round — he buys hex), and the part
+    looked like plain 2-axis turning.
+
+    Two of the seven quoted parts are hex and five are not, so this asserts both
+    directions: the across-flats must come out at the drawing figure, and the
+    round parts must not report a polygon.
+    """
+    import os
+    from tests.baseline import corpus_files
+    from app.extractor import read_step
+
+    files = corpus_files()
+    if not files:
+        import pytest
+        pytest.skip("no corpus")
+
+    def measure(match):
+        f = [x for x in files if match in os.path.basename(x)]
+        if not f:
+            return None
+        m = analyze_milling(read_step(f[0]))
+        return m.get("polygonFlatCount", 0), m.get("acrossFlatsMm", 0.0)
+
+    # Drawing 031169-A: hex across-flats 25.40 mm.
+    hexes = measure("031169")
+    if hexes:
+        assert hexes[0] == 6
+        assert abs(hexes[1] - 25.4) < 0.2
+
+    # Drawing NAUT_01695-C: "4 AF" hex on the guide rod.
+    rod = measure("NAUT_01695")
+    if rod:
+        assert rod[0] == 6
+        assert abs(rod[1] - 4.0) < 0.2
+
+    # Round / prismatic parts must not claim a polygon.
+    for match in ("029068", "032736", "OLY014_01297", "OLY014_01921", "035838"):
+        r = measure(match)
+        if r:
+            assert r[0] == 0, f"{match} is not polygonal but reported {r[0]} flats"

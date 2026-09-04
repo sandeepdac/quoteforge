@@ -856,6 +856,48 @@ def analyze_milling(shape) -> dict:
             if n is not None and abs(float(np.dot(n, best_axis))) > 0.98:
                 facing_candidates += 1
 
+    # --- Polygonal bar: hex or square across-flats --------------------------
+    #
+    # A hex flange reads as a handful of ordinary planar faces, so nothing ever
+    # noticed it. That cost twice on Lance's Carbsorb Housing: the stock was
+    # priced as ROUND bar (material came out 6x under his figure, because you
+    # cannot turn a hex from round — he buys hex) and the part looked like plain
+    # 2-axis turning, so it routed to a lathe with no live tooling instead of the
+    # mill-turn he actually uses.
+    #
+    # The signature is unambiguous and cheap to test: three or more planar faces
+    # whose normals are PERPENDICULAR to the turning axis, all lying the same
+    # distance from it. That is a regular polygon and nothing else is.
+    polygon_flat_count = 0
+    across_flats_mm = 0.0
+    if best_axis is not None and best_group:
+        axis_pt = best_group[0]["point"]
+        # Distinct flat directions around the axis, with their offset from it.
+        dirs: List[tuple] = []   # (normal, distance)
+        for face in planar_faces:
+            n = _planar_normal(face)
+            if n is None or abs(float(np.dot(n, best_axis))) > 0.10:
+                continue         # not parallel to the axis -> not a flat
+            d = abs(float(np.dot(n, _face_centroid(face) - axis_pt)))
+            if d < 0.5:
+                continue         # a face through the axis is a cut, not a flat
+            for i, (n0, d0) in enumerate(dirs):
+                if float(np.dot(n0, n)) > 0.98 and abs(d0 - d) < 0.15:
+                    break        # same flat seen again (e.g. one per flange)
+            else:
+                dirs.append((n, d))
+        # A regular polygon has every flat at the SAME radius. Take the largest
+        # set that agrees, so a stray planar face cannot break the detection.
+        if len(dirs) >= 3:
+            best_set: List[tuple] = []
+            for _, d in dirs:
+                grp = [x for x in dirs if abs(x[1] - d) < 0.15]
+                if len(grp) > len(best_set):
+                    best_set = grp
+            if len(best_set) >= 3:
+                polygon_flat_count = len(best_set)
+                across_flats_mm = round(2.0 * best_set[0][1], 3)
+
     turned_features.sort(key=lambda f: -f["diameterMm"])
     milled_features.sort(key=lambda f: -f["diameterMm"])
     # A round spigot is an island to profile around exactly like a planar boss,
@@ -1090,6 +1132,8 @@ def analyze_milling(shape) -> dict:
         # --- turned vs milled (the first question on a mill-turn) -----------
         "turningAxis": [round(float(x), 4) for x in best_axis.tolist()] if best_axis is not None else None,
         # Circular features the SPINDLE can cut (coaxial with the turning axis).
+        "polygonFlatCount": polygon_flat_count,
+        "acrossFlatsMm": across_flats_mm,
         "turnedFeatures": turned_features,
         "turnedFeatureCount": len(turned_features),
         # Circular features off that axis — driven tools / milling.
