@@ -4,6 +4,7 @@ import {
   impliedRatePerHour, solveSetupAndCycle,
 } from './quotes';
 import { scoreParts } from './score';
+import { flatRatePerHour, SETUP_CHARACTER_MIN, SECOND_OP_SETUP_FRACTION, MEASURED } from './candidates';
 
 // The shipped engine, measured against Lance's quotes at his own quantities.
 // This is the incumbent. A new model has to beat it on SPREAD to be worth having.
@@ -99,5 +100,58 @@ describe('the incumbent model, so a replacement has something to beat', () => {
     const scaled = scoreParts(V0.map((r) => ({ ...r, modelPrice: (r.modelPrice ?? 0) * 2.9 })), 'v0 x2.9');
     expect(scaled.centralRatio).toBeCloseTo(1.0, 1);   // average now looks right...
     expect(scaled.spread).toBeCloseTo(s.spread, 5);    // ...and nothing improved
+  });
+});
+
+describe('candidate models, compared', () => {
+  // Rebuilds every candidate from the evidence so the recorded scores in
+  // candidates.ts cannot drift away from what the code actually produces.
+  const build = (which: 'v0' | 'v1' | 'v2' | 'v3') => {
+    const rows: any[] = [];
+    for (const p of QUOTED_PARTS) {
+      const ops = machiningOps(p).length;
+      const rate = flatRatePerHour(ops);
+      for (const q of p.pricing) {
+        const v0 = V0.find((r) => r.drawing === p.drawing && r.qty === q.qty)
+          ?? V0.find((r) => r.drawing === p.drawing)!;
+        const externals = q.materialCost + q.subconCost + q.miscCost;
+        const price = (proc: number) => (proc + externals) / (1 - q.marginPercent / 100);
+        if (which === 'v0') { rows.push({ ...v0, qty: q.qty }); continue; }
+        const setup = which === 'v3' ? totalSetupMin(p)
+          : which === 'v2'
+            ? machiningOps(p).reduce((a, o, i) => a + (SETUP_CHARACTER_MIN[o.centre] ?? 240)
+                * (i === 0 ? 1 : SECOND_OP_SETUP_FRACTION), 0)
+            : v0.modelSetupMin;
+        const cycle = which === 'v3' ? cycleMinPerPart(p) : v0.modelCycleMin;
+        rows.push({
+          drawing: p.drawing, qty: q.qty, modelSetupMin: setup, modelCycleMin: cycle,
+          modelPrice: price((setup / q.qty + cycle) * rate / 60),
+        });
+      }
+    }
+    return rows;
+  };
+
+  it('the ORACLE reproduces every quoted price, so the pricing structure is right', () => {
+    const s = scoreParts(build('v3'), 'v3');
+    expect(s.centralRatio).toBeCloseTo(1.0, 1);
+    expect(s.spread).toBeLessThan(1.2);
+    // The consequence: every remaining error in the shipped engine is TIME.
+    for (const p of s.parts) expect(Math.abs((p.priceRatio ?? 0) - 1)).toBeLessThan(0.05);
+  });
+
+  it('the flat rate alone does not fix it — rate and time must move together', () => {
+    const s = scoreParts(build('v1'), 'v1');
+    expect(s.spread).toBeLessThan(MEASURED.v0.spread);   // helps
+    expect(s.spread).toBeGreaterThan(MEASURED.v2.spread); // but nowhere near enough
+    expect(s.systematic).toBe(true);                      // still a missing term
+  });
+
+  it('machine setup-character beats the incumbent on SPREAD, which is the test', () => {
+    const s = scoreParts(build('v2'), 'v2');
+    const v0 = scoreParts(build('v0'), 'v0');
+    expect(s.spread).toBeLessThan(v0.spread / 2.5);
+    // And the errors stop all pointing one way: no single term is missing now.
+    expect(s.systematic).toBe(false);
   });
 });
