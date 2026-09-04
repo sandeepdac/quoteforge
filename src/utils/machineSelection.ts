@@ -319,6 +319,8 @@ export interface MachineRecommendation {
    * estimator argue with the answer.
    */
   bakeOff?: MachineCostEstimate[];
+  /** The full sequence of operations, which may name more than one machine. */
+  machineRoute?: MachineRoute;
   /** How the winner compares with the cheapest-rate machine that could do it. */
   bakeOffNote?: string;
 }
@@ -560,8 +562,115 @@ function fitsEnvelope(spec: MachineSpec, dims?: { x: number; y: number; z: numbe
 
 const r0 = (v: number) => v.toFixed(0);
 
+
+// ---------------------------------------------------------------------------
+// Routes: a part is made by a SEQUENCE of operations, not by one machine
+// ---------------------------------------------------------------------------
+
+/**
+ * Four of Lance's seven quoted parts run on TWO machines, and until now we could
+ * only ever name one. That is not a scoring inconvenience, it is a modelling
+ * error with two consequences: we were judged against "did you pick THE machine"
+ * when the shop picks two, and setup time could only ever be one machine's
+ * character stretched by a fudge factor instead of the sum of the real ops.
+ *
+ * His pattern is consistent across every multi-machine job: a PRIMARY machine
+ * does the bulk, then a SECOND OP finishes the face that was being held.
+ *
+ *   031169   Mori     -> Mori        "m/c thread and face"
+ *   035838   Mori     -> HAAS VF2    "face mill to length and deburr edges"
+ *   032736   NTX1000  -> MINI MILL   "skim ends and m/c finished"
+ *   01921    NTX1000  -> MINI MILL   "m/c op 2"
+ *
+ * Second-op work is simple — facing, skimming, deburring — which is why it lands
+ * on a simpler machine than the primary whenever the primary is the expensive
+ * one. Where the primary is a turning machine that can flip the part in its own
+ * sub-spindle, the second op stays where it is.
+ */
+export type RouteRole = 'primary' | 'second-op';
+
+export interface RouteOp {
+  machine: MachineId;
+  machineName: string;
+  role: RouteRole;
+  /** Holdings on THIS machine. */
+  setups: number;
+  /** Minutes to set this machine, from its catalog character. */
+  setupMin: number;
+  reason: string;
+}
+
+export interface MachineRoute {
+  ops: RouteOp[];
+  /** Every machine named, primary first — the set to compare with a real router. */
+  machines: MachineId[];
+  /** Sum of each op's setup character. Replaces one machine x a fudge factor. */
+  totalSetupMin: number;
+}
+
+/**
+ * Split a chosen machine and a setup count into a real route.
+ *
+ * A second op is only added when the part genuinely needs more than one holding.
+ * It stays on the primary when that machine can turn the part around itself (a
+ * turn-mill or sliding head with a sub-spindle); otherwise it goes to the
+ * cheapest capable milling machine, because the work is facing and deburring.
+ */
+export function buildRoute(
+  primary: MachineSpec,
+  setups: number,
+  dims?: { x: number; y: number; z: number },
+  owned?: MachineId[],
+  stockForm?: StockForm,
+): MachineRoute {
+  const first: RouteOp = {
+    machine: primary.id, machineName: primary.name, role: 'primary', setups: 1,
+    setupMin: primary.setupCharacterMin,
+    reason: `Bulk of the work on the ${primary.name}.`,
+  };
+  const extra = Math.max(0, Math.round(setups) - 1);
+  if (extra === 0) {
+    return { ops: [first], machines: [primary.id], totalSetupMin: first.setupMin };
+  }
+
+  // A spindle machine flips the part itself — but only when the part is BAR-FED,
+  // where a sub-spindle picks it off and presents the back end. A turn-mill
+  // holding prismatic work in soft jaws has no such trick: that part is
+  // unclamped and re-fixtured, and if the second op is facing and deburring it
+  // is cheaper to do it on a mill. That is precisely Lance's 035838 — the Mori
+  // for the bulk, then the VF2 to face to length and deburr.
+  const canTurnAround =
+    (primary.kind === 'turn-mill' || primary.kind === 'sliding-head') && stockForm === 'bar';
+  const pool = (owned ?? (Object.keys(MACHINE_CATALOG) as MachineId[])).map((id) => MACHINE_CATALOG[id]);
+  const secondOpMill = pool
+    .filter((m) => m.kind === 'mill' && fitsEnvelope(m, dims))
+    .sort((a, b) => a.setupCharacterMin - b.setupCharacterMin)[0];
+
+  const second: MachineSpec = canTurnAround || !secondOpMill ? primary : secondOpMill;
+  const op: RouteOp = {
+    machine: second.id, machineName: second.name, role: 'second-op', setups: extra,
+    // A second op is quicker to set than a first: the part exists and only the
+    // holding changes. Lance's second ops run 30-210 min against 180-1200 first.
+    setupMin: Math.round(second.setupCharacterMin * SECOND_OP_SETUP_FRACTION) * extra,
+    reason: second.id === primary.id
+      ? `Turned around in the ${primary.name}'s own sub-spindle to reach the back face.`
+      : `Back face, skim to length and deburr — simple work, so it goes to the ${second.name}.`,
+  };
+  return {
+    ops: [first, op],
+    machines: second.id === primary.id ? [primary.id] : [primary.id, second.id],
+    totalSetupMin: first.setupMin + op.setupMin,
+  };
+}
+
+/** A second holding sets faster than the first: the part exists already. */
+export const SECOND_OP_SETUP_FRACTION = 0.5;
+
 export function selectMachine(input: MachineSelectionInput): MachineRecommendation {
-  return input.isTurned ? selectTurningMachine(input) : selectMilledPartMachine(input);
+  const rec = input.isTurned ? selectTurningMachine(input) : selectMilledPartMachine(input);
+  const spec = MACHINE_CATALOG[rec.recommended];
+  const machineRoute = buildRoute(spec, rec.effectiveSetups ?? 1, input.partDimsMm, input.ownedMachines, rec.stockForm);
+  return { ...rec, machineRoute };
 }
 
 /** Build the recommendation object for a chosen spec. */

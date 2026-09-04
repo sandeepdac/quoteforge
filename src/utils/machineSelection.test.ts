@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectMachine, setupsOnMachine, MACHINE_CATALOG, REFERENCE_HOURLY_RATE, MachineId } from './machineSelection';
+import { selectMachine, setupsOnMachine, MACHINE_CATALOG, REFERENCE_HOURLY_RATE, MachineId, buildRoute } from './machineSelection';
 
 // These tests are written against Turncircuit's REAL plant list, so a failure
 // means "the shop could not actually make it that way", not "a heuristic moved".
@@ -398,5 +398,49 @@ describe('bar work can reach the sliding heads', () => {
     });
     expect(MACHINE_CATALOG[r.recommended].kind).not.toBe('sliding-head');
     expect(MACHINE_CATALOG[r.recommended].kind).not.toBe('lathe');
+  });
+});
+
+// --- Routes: a part is made by a sequence of ops, not by one machine --------
+// Four of Lance's seven quoted parts run on TWO machines. Until routes existed
+// we could only ever name one, which made both the machine score and the setup
+// model wrong for structural reasons rather than because a rule was bad.
+describe('multi-machine routes', () => {
+  const spec = (id: MachineId) => MACHINE_CATALOG[id];
+
+  it('one holding is one machine, and its setup is that machine\'s character', () => {
+    const r = buildRoute(spec('star-sr20'), 1);
+    expect(r.machines).toEqual(['star-sr20']);
+    expect(r.totalSetupMin).toBe(MACHINE_CATALOG['star-sr20'].setupCharacterMin);
+  });
+
+  it('BAR work turns around in its own sub-spindle and stays put', () => {
+    const r = buildRoute(spec('star-sr32'), 2, undefined, undefined, 'bar');
+    expect(r.machines).toEqual(['star-sr32']);
+    expect(r.ops[1].reason).toMatch(/sub-spindle/i);
+  });
+
+  it('soft-jaw work on a turn-mill goes OFF the machine for its second op', () => {
+    // 035838: Lance runs the Mori for the bulk, then the VF2 to face to length
+    // and deburr. A turn-mill holding prismatic work in soft jaws has no
+    // sub-spindle trick — the part is unclamped, so the cheap-to-set mill wins.
+    const r = buildRoute(spec('nl-2000'), 2, { x: 50.8, y: 32.4, z: 9.2 }, undefined, 'billet');
+    expect(r.machines).toEqual(['nl-2000', 'haas-vf2']);
+    expect(r.ops[1].role).toBe('second-op');
+  });
+
+  it('a second op sets faster than a first, because the part already exists', () => {
+    const r = buildRoute(spec('nl-2000'), 2, { x: 50.8, y: 32.4, z: 9.2 }, undefined, 'billet');
+    const first = r.ops[0].setupMin;
+    const second = r.ops[1].setupMin;
+    expect(second).toBeLessThan(first);
+    expect(r.totalSetupMin).toBe(first + second);
+  });
+
+  it('respects the machines a shop actually owns', () => {
+    // With no VF2 on the floor the second op has to fall to what is left.
+    const r = buildRoute(spec('nl-2000'), 2, { x: 50.8, y: 32.4, z: 9.2 },
+      ['nl-2000', 'h-mini-mill-300'], 'billet');
+    expect(r.machines).toEqual(['nl-2000', 'h-mini-mill-300']);
   });
 });
