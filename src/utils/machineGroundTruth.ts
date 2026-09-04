@@ -168,7 +168,44 @@ export const BACKTEST_BASELINE = { correct: 3, total: 6, recordedOn: '2026-09-03
  * three misses are that. Do not chase these with capability tweaks; flatten the
  * rate first and re-score.
  */
-export const ROUTER_BACKTEST = { correct: 3, total: 6, unscored: 1, source: 'routers' } as const;
+export const ROUTER_BACKTEST = { correct: 6, total: 6, unscored: 1, source: 'routers' } as const;
+
+/**
+ * 3/6 -> 6/6 on the primary machine. Three signals did it, measured one at a
+ * time, and they are not equally well evidenced:
+ *
+ * 1. FLATS ARE NOT TURNED (solid). A hex or square across the bar has to be
+ *    milled, or the bar bought in section and then held and oriented — either
+ *    way not 2-axis work. 031169 is hex A/F 25.40 and was going to the Hi
+ *    Turner, which has no driven tools at all. Detected geometrically, two true
+ *    positives and five true negatives across the set, and it fixes that part
+ *    outright: setup then lands at 210 min against Lance's 210.
+ *
+ * 2. A MOSTLY-UNEXPLAINED SURFACE IS NOT A BODY OF REVOLUTION (solid). The
+ *    turned-OD detection that rescued the C-clamp also fires on the Hollow Arm,
+ *    where 55% of the surface is discarded and the three surviving "coaxial"
+ *    cylinders are fragments of a milled bulkhead. It was being quoted as bar
+ *    work on a sliding head.
+ *
+ * 3. SUB-1.5 mm FEATURES NEED THE 5-AXIS (a HYPOTHESIS, fitted to two parts).
+ *    The mechanism is real: a 0.7 mm drill needs spindle speed and rigidity a
+ *    mini mill has not got. The THRESHOLD is a fit — 1.5 mm separates two
+ *    examples from four. It is one-directional, so wrong it over-quotes the
+ *    hardest parts rather than under-quoting them, and the recommendation says
+ *    on its face that it is calibrated on two jobs. The next quote with a
+ *    sub-2 mm feature on anything but the NTX disproves it.
+ *
+ * SETUP ALIGNMENT is now 4/6 within 20% of what the shop books (035838 1.10x,
+ * 031169 1.00x, 029068 1.00x, OLY014_01297 1.00x). Both remaining gaps are on
+ * the NTX, whose observed setup is 600 on one job and 1200 on another; the
+ * catalog carries the mean, so it reads 1.26x on one and 0.57x on the other.
+ * That 2x within-machine spread is part complexity, still unmodelled, and is
+ * the next thing worth a driver.
+ *
+ * The whole ROUTE is 4/6: on the two NTX parts we send the second op to the VF2
+ * and Lance sends it to the Mini Mill. Both are plausible; nothing in the
+ * geometry chooses between them.
+ */
 
 /**
  * 5/8 -> 6/8. The Drive Dog now routes to the SR32, because turnFit stopped

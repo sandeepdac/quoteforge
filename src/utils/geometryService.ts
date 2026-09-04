@@ -73,6 +73,10 @@ export interface GeometryMilled {
   holeCount: number;
   /** Measured hole diameters (mm) — for per-size drilling operations. */
   holeDiametersMm?: number[];
+  /** Flats around the turning axis — hex or square bar (see milling.py). */
+  polygonFlatCount?: number;
+  /** Across-flats of that polygon, mm. */
+  acrossFlatsMm?: number;
   /** Total cylindrical faces (incl. fillets/rounds) — a superset of holeCount. */
   roundFaceCount?: number;
   /** Part fills a small fraction of its bbox → a solid billet is the wrong stock. */

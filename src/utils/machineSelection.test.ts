@@ -444,3 +444,65 @@ describe('multi-machine routes', () => {
     expect(r.machines).toEqual(['nl-2000', 'h-mini-mill-300']);
   });
 });
+
+// --- The three signals that took machine selection from 3/6 to 6/6 ----------
+// Each is asserted on its own, because they were measured on their own and one
+// of them (fine features) is a hypothesis fitted to two parts.
+describe('signals that decide the machine', () => {
+  it('flats are not turned, so a hex bar part needs live tooling', () => {
+    // 031169: hex A/F 25.40 with a through bore. Without this it went to the
+    // Hi Turner, which has no driven tools; Lance runs it on the Mori.
+    const hexBar = {
+      isTurned: true as const, odMm: 29.3, barDiameterMm: 36, lengthMm: 70,
+      polygonFlatCount: 6,
+    };
+    const r = selectMachine(hexBar);
+    expect(MACHINE_CATALOG[r.recommended].liveTooling).toBe(true);
+    const noLiveTooling = r.candidates.find((c) => c.id === 'hi-turner')!;
+    expect(noLiveTooling.capable).toBe(false);
+    // ...and a round bar of the same size is still fine on the plain lathe.
+    const round = selectMachine({ ...hexBar, polygonFlatCount: 0 });
+    expect(round.candidates.find((c) => c.id === 'hi-turner')!.capable).toBe(true);
+  });
+
+  it('a mostly-unexplained surface is not evidence of turning', () => {
+    // OLY014_01921: three coaxial cylinders survive, but 55% of the surface was
+    // discarded — they are fragments of a milled bulkhead, not a body of
+    // revolution, and it was being sent to a sliding head as bar work.
+    const base = {
+      isTurned: false as const, setupCount: 2, axisAlignedSetups: 2,
+      partDimsMm: { x: 6.1, y: 6.9, z: 8.9 }, partVolumeCm3: 0.064,
+      onAxisTurnedFeatures: 3,
+    };
+    const explained = selectMachine({ ...base, discardedAreaShare: 0.05 });
+    const mostlyNot = selectMachine({ ...base, discardedAreaShare: 0.55 });
+    expect(explained.stockForm).toBe('bar');
+    expect(mostlyNot.stockForm).not.toBe('bar');
+  });
+
+  it('sub-1.5 mm features send NON-BAR work to the 5-axis, and say it is a guess', () => {
+    // FITTED TO TWO PARTS. Kept separate so the next quote can disprove it.
+    const block = {
+      isTurned: false as const, setupCount: 4, axisAlignedSetups: 4,
+      partDimsMm: { x: 26.5, y: 25, z: 14.3 }, partVolumeCm3: 4.4,
+    };
+    const coarse = selectMachine({ ...block, smallestFeatureMm: 6 });
+    const fine = selectMachine({ ...block, smallestFeatureMm: 1.0 });
+    expect(fine.recommended).toBe('ntx-1000');
+    expect(coarse.recommended).not.toBe('ntx-1000');
+    // The recommendation must admit the threshold is thinly evidenced.
+    expect(fine.reasons.join(' ')).toMatch(/CONFIRM|two jobs/i);
+  });
+
+  it('it can only move work TO the best machine, never away from it', () => {
+    // One-directional by construction: wrong, it over-quotes the hardest parts,
+    // which are the ones the engine currently under-quotes worst.
+    const bar = {
+      isTurned: false as const, setupCount: 1, axisAlignedSetups: 1,
+      partDimsMm: { x: 8, y: 8, z: 40 }, partVolumeCm3: 1.5,
+      onAxisTurnedFeatures: 3, discardedAreaShare: 0.02,
+    };
+    const fine = selectMachine({ ...bar, smallestFeatureMm: 0.8 });
+    expect(fine.stockForm).toBe('bar'); // bar work is left alone entirely
+  });
+});

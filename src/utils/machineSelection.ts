@@ -235,6 +235,25 @@ export interface MachineSelectionInput {
    * of physical clamps depending on its kinematics.
    */
   axisAlignedSetups?: number;
+  /**
+   * Flats around the turning axis — hex or square bar. Detected geometrically
+   * (see polygonFlatCount in milling.py). A flat is not a turnable surface, so a
+   * part carrying them is not plain 2-axis work however round the rest of it is.
+   */
+  polygonFlatCount?: number;
+  /**
+   * Smallest feature diameter on the part, in mm. Drives nothing on bar work,
+   * where a sliding head's guide bush already provides the rigidity; on chucked
+   * or milled work it is the tell that a job needs a real high-speed spindle.
+   */
+  smallestFeatureMm?: number;
+  /**
+   * Fraction of the part's surface the analyser SAW AND DISCARDED as blend or
+   * outside radius rather than a feature. A genuine body of revolution is almost
+   * entirely explained; a high share means the coaxial cylinders that survived
+   * are fragments of a milled form, not evidence of turning.
+   */
+  discardedAreaShare?: number;
   /** Batch size — decides whether setups or spindle rate dominates the choice. */
   quantity?: number;
   /**
@@ -392,7 +411,16 @@ function turnFit(input: MachineSelectionInput) {
   // of revolution" while carrying three coaxial turned diameters.
   // The UPPER bound still stands whatever the evidence: it is about stock sizing,
   // and square corners really do need bar across the diagonal.
-  const coaxialEvidence = (input.onAxisTurnedFeatures ?? 0) >= 2;
+  // ...but only where the part is mostly EXPLAINED. The turned-OD detection that
+  // rescued the C-clamp also fires on Lance's Hollow Arm, whose ⌀6.9 body is cut
+  // by six scallops and a 210° arc: 55% of its surface is discarded, and the
+  // three "coaxial" cylinders left are fragments of a milled bulkhead. A body of
+  // revolution does not look like that, and treating one as bar work sends it to
+  // a sliding head when the shop mills it.
+  const MOSTLY_UNEXPLAINED = 0.5;
+  const coaxialEvidence =
+    (input.onAxisTurnedFeatures ?? 0) >= 2 &&
+    (input.discardedAreaShare ?? 0) < MOSTLY_UNEXPLAINED;
   const roundEnough = cylFill <= BAR_CORNER_FILL && (coaxialEvidence || cylFill >= BAR_MIN_FILL);
   const containDiaMm = roundEnough ? cs.widthMm : cs.diagonalMm;
   const barDiameterMm = nextStandardBar(containDiaMm + 2 * BAR_RADIAL_ALLOWANCE_MM);
@@ -696,13 +724,25 @@ function recommend(
 // Turned parts (bodies of revolution)
 // ---------------------------------------------------------------------------
 
+/**
+ * FLATS ARE NOT TURNED. A hex or square across the bar has to be milled, or the
+ * bar bought in that section and then held and oriented — either way it is not
+ * something a 2-axis lathe does. Lance's Carbsorb Housing is hex A/F 25.40 and
+ * we were sending it to the Hi Turner, which has no driven tools at all; he runs
+ * it on the Mori. Treating detected flats as off-axis work fixes that part
+ * outright, and its setup time then lands at 210 min against his 210.
+ */
+function needsLiveTooling(input: MachineSelectionInput): boolean {
+  return !!input.crossFeatures || (input.polygonFlatCount ?? 0) >= 3;
+}
+
 function selectTurningMachine(input: MachineSelectionInput): MachineRecommendation {
   const machines = availableMachines(input.ownedMachines);
   const od = Math.max(0, input.odMm ?? input.barDiameterMm ?? 0);
   const bar = Math.max(od, input.barDiameterMm ?? od);
   const len = Math.max(0, input.lengthMm ?? 0);
   const slenderness = od > 0 ? len / od : 0;
-  const cross = !!input.crossFeatures;
+  const cross = needsLiveTooling(input);
 
   const lathes = machines.filter((m) => m.kind !== 'mill');
   const candidates: MachineCandidate[] = lathes.map((m) => {
@@ -985,6 +1025,34 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
   // openly when one exists and is close, and SAY that the bake-off had another
   // machine marginally cheaper. The full table ships with the recommendation, so
   // an estimator who disagrees can see exactly what was traded away.
+  // FINE FEATURES AND THE 5-AXIS MACHINE — a HYPOTHESIS, fitted to two parts.
+  //
+  // Two of Lance's jobs go to the NTX where the bake-off picks something cheaper,
+  // and the only thing separating them from the four we get right is feature
+  // size: the Cold Stage Block has a 1.0 mm hole and M2 taps, the Hollow Arm has
+  // 0.7 mm holes and M0.9 threads. Everything else on the floor bottoms out at
+  // 5.5 mm or is bar work, where a guide bush already provides the rigidity.
+  //
+  // The mechanism is real — a 0.7 mm drill needs spindle speed and stiffness a
+  // mini mill has not got, and snapping one scraps the part. The THRESHOLD is
+  // not: 1.5 mm is chosen to separate two examples from four, and that is a fit.
+  // It is here rather than buried because it is the single most likely thing in
+  // this module to be wrong, and the next quote carrying a sub-2 mm feature on
+  // anything other than the NTX disproves it outright.
+  //
+  // Deliberately one-directional: it can only move work TO the most capable
+  // machine, never away. Wrong, it over-quotes the hardest parts, which are the
+  // ones we currently under-quote worst.
+  const FINE_FEATURE_MM = 1.5;
+  const fine = (input.smallestFeatureMm ?? Infinity) < FINE_FEATURE_MM;
+  const fiveAxisOffer = ranked.find((o) => o.machine.axes >= 5 && o.machine.kind === 'turn-mill');
+  if (fine && fiveAxisOffer && fiveAxisOffer !== winner && winner.stockForm !== 'bar') {
+    reasons.push(
+      `Smallest feature is ⌀${(input.smallestFeatureMm ?? 0).toFixed(2)} mm. The ${winner.machine.name} is cheaper per part, but a cutter that size needs the spindle speed and rigidity of the ${fiveAxisOffer.machine.name} — CONFIRM this: the size threshold behind it is calibrated on only two jobs.`
+    );
+    winner = fiveAxisOffer;
+  }
+
   const TURN_ROUTE_TOLERANCE = 1.5;
   const turnOffer = ranked.find((o) => o.route === 'mill-turn');
   if (turnOffer && turnOffer !== winner && turnOffer.cost.totalPerPart <= winner.cost.totalPerPart * TURN_ROUTE_TOLERANCE) {

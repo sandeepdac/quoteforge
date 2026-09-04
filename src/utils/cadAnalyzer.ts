@@ -449,6 +449,23 @@ async function analyzeSolid(
       // Coaxial round features are the evidence that a prismatic-looking part is
       // really chucking work — without them a hollowed block reads as "round".
       onAxisTurnedFeatures: milledProfile?.turnedFeatures?.length,
+      // Hex/square across the bar. A flat is not a turnable surface, so a part
+      // carrying them is not plain 2-axis work however round the rest of it is.
+      polygonFlatCount: (svc?.milled as any)?.polygonFlatCount,
+      // Smallest thing a cutter has to enter. On chucked or milled work this is
+      // the tell that the job needs a real high-speed spindle.
+      smallestFeatureMm: (() => {
+        const d = [...(milledProfile?.holeDiametersMm ?? []),
+                   ...(turningProfile?.boreDiaMm ? [turningProfile.boreDiaMm] : [])]
+          .filter((x) => x > 0);
+        return d.length ? Math.min(...d) : undefined;
+      })(),
+      // How much of the surface was seen and DISCARDED. A body of revolution is
+      // almost entirely explained; a high share means the coaxial cylinders that
+      // survived are fragments of a milled form, not evidence of turning.
+      discardedAreaShare: ((svc?.milled as any)?.faceLedger ?? [])
+        .filter((r: { label: string }) => r.label === 'ignored')
+        .reduce((a: number, r: { areaShare: number }) => a + r.areaShare, 0),
       ownedMachines: opts.machines,
     });
 
