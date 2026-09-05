@@ -587,7 +587,7 @@ async function analyzeSolid(
               ? `Central bore ⌀${turningProfile.boreDiaMm} × ${turningProfile.boreDepthMm} mm → drill + bore.`
               : `Solid part — no central bore detected.`,
             crossFeatures
-              ? `Off-axis feature(s) detected — flagged as requiring a second op / live tooling and NOT included in the cycle-time estimate.`
+              ? `Off-axis feature(s) detected — a second op / live tooling, measured off the solid and priced as driven-tool work.`
               : `No off-axis features detected.`,
             `Estimates cycle time only — this does not generate toolpaths (your CAM stays in place).`,
           ]

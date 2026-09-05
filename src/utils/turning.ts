@@ -39,11 +39,9 @@ export interface TurningProfile {
    * them. A boolean alone could not say WHAT the second op is for, so the plan
    * showed an empty "Setup 2" costing nothing and a real feature — a ⌀1 drill
    * breaking through the OD — looked like something the engine had missed.
-   * These are NOT in the turned cycle time; naming them is what makes that
-   * exclusion visible rather than silent.
-   *
-   * Superseded by `crossFeatureList`, which carries the LENGTH as well and is
-   * costed. Kept for payloads that predate it.
+   * Diameters alone cannot be costed — a feature's time depends on how far the
+   * tool has to travel — so this list is now only used to NAME the second op.
+   * `crossFeatureList` carries the length as well and is what gets priced.
    */
   crossFeatureDiametersMm?: number[];
   /**

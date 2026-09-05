@@ -560,7 +560,7 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                   <AlertCircle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                   <p className="text-[10px] text-muted-foreground leading-relaxed">
                     Off-axis features detected (cross-holes / flats). These need <strong className="text-foreground">live tooling or a second op</strong> and
-                    are <strong className="text-foreground">not</strong> in the cycle-time estimate — add them manually.
+                    are <strong className="text-foreground">priced</strong> as driven-tool work — see &ldquo;Off-axis features&rdquo; in the cost breakdown.
                   </p>
                 </div>
               )}

@@ -149,7 +149,7 @@ export function analyzeCncDfm(input: CncDfmInput): DfmReport {
 
   // 8) Cross features → second op / live tooling.
   if (input.crossFeatures) {
-    findings.push({ id: 'cross-features', severity: 'info', title: `Off-axis features require a second op / live tooling`, detail: `Cross-holes, flats or keyways can't be produced in a single turning cycle. On a turn-mill they run with driven tools; otherwise a second op is needed. These features are flagged and NOT included in the cycle-time estimate — add them manually.`, rule: 'Off-axis features = live tooling or 2nd op' });
+    findings.push({ id: 'cross-features', severity: 'info', title: `Off-axis features require a second op / live tooling`, detail: `Cross-holes, flats or keyways can't be produced in a single turning cycle. On a turn-mill they run with driven tools; otherwise a second op is needed. Each one is measured off the solid and priced as driven-tool work — spindle orient, tool in, cut, retract — and appears in the breakdown as "Off-axis features".`, rule: 'Off-axis features = live tooling or 2nd op' });
   } else if (input.setups >= MANY_SETUPS) {
     findings.push({ id: 'setups', severity: 'info', title: `${input.setups} setups required`, detail: `Features at both ends mean a turn-around (second op), adding setup time and a tolerance stack between setups.`, rule: 'Fewer setups = lower cost & tighter stack-up' });
   }
