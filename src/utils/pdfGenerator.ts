@@ -179,9 +179,21 @@ export function buildQuotePdf(input: QuotePdfInput): Blob {
         y += 11; lines++;
       }
     }
-    for (const key of ['noncut', 'setup', 'setupCharge', 'fixture', 'tooling']) {
-      const li = quote.machiningCosts?.lineItems?.find((l) => l.key === key);
-      if (li && li.value > 0.005 && lines < cap + 6) { lineFor(li.name, li.value); lines++; }
+    // Everything the PLAN did not already show, listed by exclusion rather than
+    // by a whitelist. A whitelist silently drops any cost added later — that is
+    // how CAM programming and the whole secondary-operations bill (plating,
+    // passivate, FAI) came to be inside the customer's total but absent from the
+    // lines that are supposed to explain it. Defaulting to "show it" means a new
+    // cost term is visible on the invoice from the day it exists.
+    const shownByPlan = new Set([
+      'material', 'facing', 'rough', 'finish', 'drill', 'bore', 'groove',
+      'thread', 'parting', 'cross', 'turning', 'edge', 'deep',
+    ]);
+    for (const li of quote.machiningCosts?.lineItems ?? []) {
+      if (shownByPlan.has(li.key) || li.value <= 0.005) continue;
+      if (lines >= cap + 8) break;
+      lineFor(li.name, li.value);
+      lines++;
     }
   } else {
     const items = quote.machiningCosts?.lineItems ?? [];

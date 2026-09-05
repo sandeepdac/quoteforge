@@ -112,7 +112,14 @@ export function calculateMachiningCosts(
   });
   // Per-op actual seconds and cost (efficiency applied to cutting/air alike).
   const ratePerSec = machineRatePerMin / 60;
-  const opCost = (sec: number) => (sec / eff) * ratePerSec;
+  // The feedrate override slows CUTTING; it does not slow a rapid or a turret
+  // index. Keeping the two apart matters because `cycleTimeSec` below already
+  // applies it that way — when the line items did not, Settings -> Feedrate
+  // moved the price without moving any row that explained it, and the
+  // breakdown stopped adding up to the subtotal it is supposed to account for.
+  const cutSec = (sec: number) => (sec * feedMult) / eff;
+  const opCost = (sec: number) => cutSec(sec) * ratePerSec;
+  const airCost = (sec: number) => (sec / eff) * ratePerSec;
   const cycleTimeSec = (t.cuttingSec * feedMult) / eff + t.airSec / eff + cnc.barLoadSec;
   const machineCost = (cycleTimeSec / 60) * machineRatePerMin;
 
@@ -172,7 +179,7 @@ export function calculateMachiningCosts(
   const rushPremium = isRush ? quoteTotal * rushPremiumPercent : 0;
 
   // --- Traceable line items (each shows its driver, incl. actual time) -----
-  const secStr = (sec: number) => `${r1(sec / eff)} s`;
+  const secStr = (sec: number) => `${r1(cutSec(sec))} s`;
   const lineItems: CostLineItem[] = [
     { key: 'material', name: 'Bar stock', driver: `⌀${barDiameterMm} × ${r1(barLengthMm)} mm ${m.label} — ${stockWeightKg.toFixed(3)} kg @ $${input.materialPricePerKg.toFixed(2)}/kg`, value: materialCost, color: COLORS.material },
     { key: 'facing', name: 'Facing', driver: `${input.profile.faceCount} face${input.profile.faceCount === 1 ? '' : 's'} — ${secStr(t.facingSec)}`, value: opCost(t.facingSec), color: COLORS.facing },
@@ -183,6 +190,9 @@ export function calculateMachiningCosts(
     { key: 'groove', name: 'Grooving', driver: `${input.profile.grooveCount} groove${input.profile.grooveCount === 1 ? '' : 's'} — ${secStr(t.grooveSec)}`, value: opCost(t.grooveSec), color: COLORS.groove },
     { key: 'thread', name: 'Threading', driver: `${input.profile.threadCount} thread${input.profile.threadCount === 1 ? '' : 's'} — ${secStr(t.threadSec)}`, value: opCost(t.threadSec), color: COLORS.thread },
     { key: 'parting', name: 'Part-off', driver: `${secStr(t.partingSec)}`, value: opCost(t.partingSec), color: COLORS.parting },
+    // Off-axis work is inside `machineCost`, so without this row the breakdown
+    // stops adding up to the subtotal it is supposed to explain.
+    { key: 'cross', name: 'Off-axis features (driven tool)', driver: `${input.profile.crossFeatureList?.length ?? 0} feature${(input.profile.crossFeatureList?.length ?? 0) === 1 ? '' : 's'} off the turning axis — ${secStr(t.crossSec)}`, value: opCost(t.crossSec), color: COLORS.drill },
     { key: 'noncut', name: 'Tool changes / load', driver: `${t.toolCount} tool changes, rapids + ${cnc.barLoadSec}s load`, value: (t.airSec / eff + cnc.barLoadSec) * ratePerSec, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
@@ -220,10 +230,10 @@ export function calculateMachiningCosts(
     // disagreed and the drill looked un-costed. It never was: the seconds are in
     // the cycle either way — only the display dropped them.
     .filter((o) => o.sec > 0.01)
-    .map((o) => ({ name: o.name, tool: o.tool, seconds: o.sec / eff, cost: opCost(o.sec), driver: o.driver, color: o.color }));
+    .map((o) => ({ name: o.name, tool: o.tool, seconds: cutSec(o.sec), cost: opCost(o.sec), driver: o.driver, color: o.color }));
   const changeSec = t.toolCount * cnc.toolChangeSec;
   const setup1Sec = planOps.reduce((a, o) => a + o.seconds, 0) + changeSec / eff + cnc.barLoadSec;
-  const setup1Cost = planOps.reduce((a, o) => a + o.cost, 0) + opCost(changeSec) + cnc.barLoadSec * ratePerSec;
+  const setup1Cost = planOps.reduce((a, o) => a + o.cost, 0) + airCost(changeSec) + cnc.barLoadSec * ratePerSec;
   const planSetups = [
     { index: 1, name: setups > 1 ? 'Setup 1 — main turning' : 'Setup 1', operations: planOps, seconds: setup1Sec, cost: setup1Cost, toolChanges: t.toolCount },
   ];

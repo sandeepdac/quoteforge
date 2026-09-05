@@ -28,6 +28,8 @@ import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
 import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
 import { MACHINE_CATALOG } from '../../utils/machineSelection';
 import { cn } from '../../utils/cn';
+import { resolveQuoteCosts } from '../../utils/quoteCosts';
+import type { SecondaryOperation } from '../../utils/secondaryOps';
 
 interface StepReviewProps {
   data: any;
@@ -35,8 +37,8 @@ interface StepReviewProps {
   /** Rendered still of the 3D model captured on the extraction step (real part image). */
   partImage?: string;
   quoteNumber: string;
-  onSend: (opts: { margin: number; notes: string }) => void;
-  onSaveDraft: (opts: { margin: number; notes: string }) => void;
+  onSend: (opts: { margin: number; notes: string; secondaryOps: SecondaryOperation[] }) => void;
+  onSaveDraft: (opts: { margin: number; notes: string; secondaryOps: SecondaryOperation[] }) => void;
   onBack: () => void;
   onUpdate?: (updater: (prev: any) => any) => void;
 }
@@ -66,64 +68,24 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
   const sym = currencySymbol(settings.currency);
   const money = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+  // Priced through the SAME resolver the save path uses. This screen used to
+  // duplicate the estimator dispatch, and the duplicate fell behind: it never
+  // passed the route's setup minutes, so the price a customer approved here was
+  // between 1.3x and 2.7x below the price that got stored when they hit Send.
+  // There is only one way to price a quote, and this is it.
   const { costs, lineItems } = useMemo(() => {
-    if (isTurnedPart && cadAnalysis?.turningProfile) {
-      const density = materialPropsFor(material.name).densityGCm3;
-      const volumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : cadAnalysis.volumeCm3 ?? 0;
-      const mc = calculateMachiningCosts(
-        {
-          isTurned: true,
-          materialName: material.name,
-          volumeCm3,
-          profile: cadAnalysis.turningProfile,
-          setups: cadAnalysis.setups ?? 1,
-          materialPricePerKg: material.pricePerKg,
-          secondaryOps: selectedSecondaryOps,
-        },
-        data.config.quantity,
-        data.config.isRush,
-        margin,
-        settings,
-        cadAnalysis.machineRecommendation?.rateMultiplier ?? 1
-      );
-      return { costs: mc, lineItems: mc.lineItems };
-    }
-
-    if (isMilledPart && cadAnalysis?.milledProfile) {
-      const density = materialPropsFor(material.name).densityGCm3;
-      const base = cadAnalysis.milledProfile;
-      const partVolumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : base.partVolumeCm3;
-      const profile = {
-        ...base,
-        partVolumeCm3,
-        removedVolumeCm3: Math.max(0, base.stockVolumeCm3 - partVolumeCm3),
-      };
-      const mc = calculateMilledCosts(
-        { materialName: material.name, profile, materialPricePerKg: material.pricePerKg, secondaryOps: selectedSecondaryOps },
-        data.config.quantity,
-        data.config.isRush,
-        margin,
-        settings,
-        cadAnalysis.machineRecommendation?.rateMultiplier ?? 1
-      );
-      return { costs: mc, lineItems: mc.lineItems };
-    }
-    const qc = calculateQuoteCosts(
-      f,
-      data.config.quantity,
-      data.config.isRush,
+    const r = resolveQuoteCosts({
+      cadAnalysis,
+      features: f,
+      materialName: material.name,
+      materialPricePerKg: material.pricePerKg,
+      quantity: data.config.quantity,
+      isRush: data.config.isRush,
       margin,
-      material.pricePerKg,
-      settings
-    );
-    const items: CostLineItem[] = [
-      { key: 'material', name: 'Material Cost', driver: `${f.weightKg.toFixed(2)}kg @ ${sym}${material.pricePerKg.toFixed(2)}/kg`, value: qc.materialCost, color: '#2563eb' },
-      { key: 'laser', name: 'Laser Cutting', driver: `${f.perimeterMm}mm perimeter, ${f.pierceCount} pierces`, value: qc.laserCost, color: '#3b82f6' },
-      { key: 'bending', name: 'Bending & Forming', driver: `${f.bendCount} bends, ${f.isSimpleBending ? 'Simple' : 'Compound'}`, value: qc.bendCost, color: '#60a5fa' },
-      { key: 'weld', name: 'Welding & Assembly', driver: `${f.weldLengthMm}mm welding, ${f.holeCount} holes`, value: qc.weldCost + qc.assemblyCost, color: '#8b5cf6' },
-      { key: 'finish', name: 'Finishing (Applied)', driver: `${f.surfaceAreaM2.toFixed(3)}m² surface area`, value: qc.finishCost, color: '#93c5fd' },
-    ].filter((li) => li.value > 0.005);
-    return { costs: qc, lineItems: items };
+      settings,
+      secondaryOps: selectedSecondaryOps,
+    });
+    return { costs: r.machiningCosts ?? r.costs, lineItems: r.lineItems };
   }, [data, settings, material, margin, isTurnedPart, isMilledPart, cadAnalysis, f, secondaryIds]);
 
   const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
@@ -172,10 +134,10 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
             </p>
           </div>
           <div className="flex flex-col gap-2 shrink-0">
-            <button onClick={() => onSend({ margin, notes })} className="flex items-center justify-center gap-2 px-5 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-shadow shadow">
+            <button onClick={() => onSend({ margin, notes, secondaryOps: selectedSecondaryOps })} className="flex items-center justify-center gap-2 px-5 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-shadow shadow">
               <Send size={15} /> Send to Customer
             </button>
-            <button onClick={() => onSaveDraft({ margin, notes })} className="flex items-center justify-center gap-2 px-5 py-2 rounded-md text-sm font-medium border border-border hover:bg-accent transition-colors">
+            <button onClick={() => onSaveDraft({ margin, notes, secondaryOps: selectedSecondaryOps })} className="flex items-center justify-center gap-2 px-5 py-2 rounded-md text-sm font-medium border border-border hover:bg-accent transition-colors">
               <Save size={15} /> Save Draft
             </button>
           </div>

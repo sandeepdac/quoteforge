@@ -510,13 +510,16 @@ def analyze_milling(shape) -> dict:
                 d = pt - g["point"]
                 perp = d - float(np.dot(d, g["axis"])) * g["axis"]
                 if float(np.linalg.norm(perp)) < 0.25:  # mm — same axis line
+                    f_lo, f_hi = (a_lo, a_hi) if align > 0 else (-a_hi, -a_lo)
                     # Same ⌀ (within a hair) → the same surface; otherwise a step.
                     step = next((st for st in g["steps"] if abs(st["radius"] - r) < 0.05), None)
                     if step is None:
-                        g["steps"].append({"radius": r, "span": span, "faces": 1})
+                        g["steps"].append({"radius": r, "span": span, "faces": 1,
+                                           "extents": [(f_lo, f_hi)]})
                     else:
                         step["span"] += span
                         step["faces"] += 1
+                        step["extents"].append((f_lo, f_hi))
                     g["maxRadius"] = max(g["maxRadius"], r)
                     g["minRadius"] = min(g["minRadius"], r)
                     g["span"] += span
@@ -530,7 +533,6 @@ def analyze_milling(shape) -> dict:
                     # bore land on opposite sides of the origin and the span
                     # comes out as their distance from it: the VOC housing, 70 mm
                     # long, reported a hole 125 mm deep.
-                    f_lo, f_hi = (a_lo, a_hi) if align > 0 else (-a_hi, -a_lo)
                     g["axLo"] = min(g["axLo"], f_lo)
                     g["axHi"] = max(g["axHi"], f_hi)
                     g["faceIdx"].append(fidx)
@@ -540,7 +542,8 @@ def analyze_milling(shape) -> dict:
             hole_groups.append({"axis": ax, "point": pt, "maxRadius": r,
                                 "minRadius": r, "span": span, "faces": 1,
                                 "axLo": a_lo, "axHi": a_hi, "faceIdx": [fidx],
-                                "steps": [{"radius": r, "span": span, "faces": 1}]})
+                                "steps": [{"radius": r, "span": span, "faces": 1,
+                                           "extents": [(a_lo, a_hi)]}]})
 
     # Which circular features are real machining operations?
     #
@@ -608,6 +611,35 @@ def analyze_milling(shape) -> dict:
                 if st["span"] >= 0.85 * FULL_TURN
                 or (st["span"] >= PARTIAL_MIN_WRAP and 2.0 * st["radius"] > corner_dia_max)]
 
+    def _largest_run(extents: List[tuple], gap_tol: float) -> float:
+        """Longest CONTIGUOUS axial run across a set of face extents.
+
+        Faces at the same ⌀ on one axis are not necessarily one feature. Lance's
+        VOC housing has a ⌀11.8 counterbore in EACH END of a 70 mm body, 42 mm
+        apart: spanning min to max reports a single 70 mm hole and bills the shop
+        for drilling five times what it drills. Anything separated by solid
+        material starts a new run, and the deepest run is the feature. The
+        tolerance only closes the seam between two halves of one cylinder.
+
+        TWO KNOWN LIMITS, both of which understate rather than overstate:
+          - Two counterbores at opposite ends are one entry of one depth, so the
+            second one is not billed. The hole COUNT has always worked this way;
+            this only makes the depth honest about which run it describes.
+          - A hole interrupted by a cross feature wide enough to open a real gap
+            reads as its longest surviving section, not its full travel.
+        Both were preferred to the alternative, which was a real part being
+        charged for a 70 mm plunge it never receives.
+        """
+        if not extents:
+            return 0.0
+        runs: List[list] = []
+        for lo, hi in sorted(extents):
+            if runs and lo <= runs[-1][1] + gap_tol:
+                runs[-1][1] = max(runs[-1][1], hi)
+            else:
+                runs.append([lo, hi])
+        return max(hi - lo for lo, hi in runs)
+
     hole_diameters: List[float] = []
     # Paired depth for each diameter above. A hole's depth is the axial extent of
     # the cylinder faces that make it up — a fact from the model, where the
@@ -615,20 +647,20 @@ def analyze_milling(shape) -> dict:
     # stock. That assumption costs a 1 mm hole the same as a 20 mm one and gives
     # a blind 2 mm hole the depth of the whole billet.
     #
-    # HONEST LIMIT: on a STEPPED hole the group extent is shared by every step,
-    # so a counterbore is reported with the depth of the whole hole rather than
-    # its own. That overstates counterbore time and is visible here rather than
-    # hidden; splitting it needs per-step axial extents, which the grouping does
-    # not currently carry.
+    # Each STEP is measured on its own faces, so a counterbore is charged for its
+    # own short plunge rather than for the length of the hole it sits on.
     hole_depths: List[float] = []
     stepped_holes = 0
+    gap_tol = max(0.05, 0.01 * max(diag, 1.0))
     for g in hole_groups:
-        steps = _real_steps(g) or [{"radius": g["maxRadius"]}]
+        steps = _real_steps(g) or [{"radius": g["maxRadius"], "extents": []}]
         if len(steps) > 1:
             stepped_holes += 1
-        depth = round(max(0.0, float(g["axHi"] - g["axLo"])), 3)
+        group_depth = _largest_run(
+            [e for st in g.get("steps", []) for e in st.get("extents", [])], gap_tol)
         for st in steps:
             hole_diameters.append(round(2.0 * st["radius"], 3))
+            depth = round(_largest_run(st.get("extents", []), gap_tol) or group_depth, 3)
             hole_depths.append(depth)
     # Sort the two together so index i of one matches index i of the other.
     if hole_diameters:
@@ -660,9 +692,9 @@ def analyze_milling(shape) -> dict:
                     # above: flip a face's extent into the group's frame before
                     # merging, or the two halves of one spigot read as a length
                     # equal to their distance from the origin.
-                    f_lo, f_hi = (a_lo, a_hi) if align > 0 else (-a_hi, -a_lo)
-                    g["axLo"] = min(g["axLo"], f_lo)
-                    g["axHi"] = max(g["axHi"], f_hi)
+                    b_lo, b_hi = (a_lo, a_hi) if align > 0 else (-a_hi, -a_lo)
+                    g["axLo"] = min(g["axLo"], b_lo)
+                    g["axHi"] = max(g["axHi"], b_hi)
                     g["faceIdx"].append(fidx)
                     placed = True
                     break

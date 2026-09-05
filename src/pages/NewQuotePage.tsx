@@ -10,6 +10,7 @@ import { useSettings } from '../context/SettingsContext';
 import { Quote, Part } from '../types';
 import { calculateWinProbability } from '../utils/estimator';
 import { resolveQuoteCosts } from '../utils/quoteCosts';
+import type { SecondaryOperation } from '../utils/secondaryOps';
 import { generateQuoteNumber, generateId } from '../utils/idGenerator';
 import { generatePartThumbnail } from '../utils/partThumbnail';
 import { ExtractedCadAnalysis, stripCadForStorage } from '../utils/cadAnalyzer';
@@ -156,7 +157,7 @@ export default function NewQuotePage() {
     document.querySelector('main')?.scrollTo({ top: 0 });
   }, [currentStep]);
 
-  const handleFinalize = (isDraft: boolean, opts?: { margin?: number; notes?: string }) => {
+  const handleFinalize = (isDraft: boolean, opts?: { margin?: number; notes?: string; secondaryOps?: SecondaryOperation[] }) => {
     const material = materials.find(m => m.id === quoteData.features.materialId) || materials[0];
     // Use the margin chosen on the Review step (falls back to the shop default), and
     // the shop's live settings — so the saved quote matches what was previewed.
@@ -174,6 +175,9 @@ export default function NewQuotePage() {
       isRush: quoteData.config.isRush,
       margin,
       settings,
+      // The plating / passivate / FAI the user ticked on Review. Without this
+      // they were priced in the preview and then silently dropped on save.
+      secondaryOps: opts?.secondaryOps,
     });
     const { costs, unitPrice, grandTotal, machiningCosts, machineClass } = resolved;
     const persistedCad = cadAnalysis ? stripCadForStorage(cadAnalysis) : undefined;

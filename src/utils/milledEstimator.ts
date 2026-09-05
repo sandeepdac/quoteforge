@@ -558,6 +558,9 @@ export function calculateMilledCosts(
   // re-clamp — without changing the calibrated total.
   const sortedDims = [p.stockMm.x, p.stockMm.y, p.stockMm.z].sort((a, b) => a - b);
   const plan = buildMilledPlan({
+    holeDepthsMm: p.holeDepthsMm,
+    crossSec,
+    crossFeatures: extraCross,
     m,
     minPlaneDimMm: sortedDims[1], // the smaller in-plane dimension (not the thickness)
     facingSec,

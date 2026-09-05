@@ -20,6 +20,7 @@ import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
 import { currencySymbol } from '../../utils/currency';
 import { dimsDesc } from '../../utils/dims';
+import { resolveQuoteCosts } from '../../utils/quoteCosts';
 
 interface StepQuantityProps {
   data: any;
@@ -44,69 +45,22 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
   const isMachining = isTurnedPart || isMilledPart;
   const sym = currencySymbol(settings.currency);
 
+  // Priced through the SAME resolver the Review step and the save path use, so
+  // the batch curve a quantity is chosen from is the curve that gets quoted.
+  // Weight edits still flow through: the resolver derives volume from
+  // features.weightKg exactly as this screen used to.
   const { costs, lineItems } = useMemo(() => {
-    if (isTurnedPart && cadAnalysis?.turningProfile) {
-      // Respect user edits: derive volume from the (possibly edited) weight so
-      // tweaks in the extraction step flow into the cycle-time price.
-      const density = materialPropsFor(currentMaterial.name).densityGCm3;
-      const volumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : cadAnalysis.volumeCm3 ?? 0;
-      const mc = calculateMachiningCosts(
-        {
-          isTurned: true,
-          materialName: currentMaterial.name,
-          volumeCm3,
-          profile: cadAnalysis.turningProfile,
-          setups: cadAnalysis.setups ?? 1,
-          materialPricePerKg: currentMaterial.pricePerKg,
-        },
-        data.config.quantity,
-        data.config.isRush,
-        settings.defaultMargin,
-        settings,
-        cadAnalysis.machineRecommendation?.rateMultiplier ?? 1
-      );
-      return { costs: mc, lineItems: mc.lineItems };
-    }
-
-    if (isMilledPart && cadAnalysis?.milledProfile) {
-      // Respect edits: recompute part/removed volume from the (possibly edited) weight.
-      const density = materialPropsFor(currentMaterial.name).densityGCm3;
-      const base = cadAnalysis.milledProfile;
-      const partVolumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : base.partVolumeCm3;
-      const profile = {
-        ...base,
-        partVolumeCm3,
-        removedVolumeCm3: Math.max(0, base.stockVolumeCm3 - partVolumeCm3),
-      };
-      const mc = calculateMilledCosts(
-        { materialName: currentMaterial.name, profile, materialPricePerKg: currentMaterial.pricePerKg },
-        data.config.quantity,
-        data.config.isRush,
-        settings.defaultMargin,
-        settings,
-        cadAnalysis.machineRecommendation?.rateMultiplier ?? 1
-      );
-      return { costs: mc, lineItems: mc.lineItems };
-    }
-
-    const qc = calculateQuoteCosts(
-      f,
-      data.config.quantity,
-      data.config.isRush,
-      settings.defaultMargin,
-      currentMaterial.pricePerKg,
-      settings
-    );
-    // Each process cost tied back to the measured feature that drives it.
-    const items: CostLineItem[] = [
-      { key: 'material', name: 'Material', driver: `${f.weightKg} kg × ${sym}${currentMaterial.pricePerKg.toFixed(2)}/kg (+${(settings.scrapFactor * 100).toFixed(0)}% scrap)`, value: qc.materialCost, color: '#2563eb' },
-      { key: 'laser', name: 'Laser cutting', driver: `${Math.round(f.perimeterMm)} mm cut path · ${f.pierceCount} pierces`, value: qc.laserCost, color: '#3b82f6' },
-      { key: 'bending', name: 'Press brake', driver: f.bendCount > 0 ? `${f.bendCount} bend${f.bendCount > 1 ? 's' : ''} (${f.isSimpleBending ? 'simple' : 'compound'}) + setup` : 'no bends', value: qc.bendCost, color: '#60a5fa' },
-      { key: 'welding', name: 'Welding', driver: `${Math.round(f.weldLengthMm)} mm · ${f.weldCount} joint${f.weldCount === 1 ? '' : 's'}`, value: qc.weldCost, color: '#8b5cf6' },
-      { key: 'handling', name: 'Handling / assembly', driver: `${f.holeCount} hole${f.holeCount === 1 ? '' : 's'} + base handling`, value: qc.assemblyCost, color: '#a78bfa' },
-      { key: 'finish', name: 'Finishing', driver: `${f.surfaceAreaM2.toFixed(3)} m² surface`, value: qc.finishCost, color: '#93c5fd' },
-    ].filter((li) => li.value > 0.005);
-    return { costs: qc, lineItems: items };
+    const r = resolveQuoteCosts({
+      cadAnalysis,
+      features: f,
+      materialName: currentMaterial.name,
+      materialPricePerKg: currentMaterial.pricePerKg,
+      quantity: data.config.quantity,
+      isRush: data.config.isRush,
+      margin: settings.defaultMargin,
+      settings,
+    });
+    return { costs: r.machiningCosts ?? r.costs, lineItems: r.lineItems };
   }, [data, settings, currentMaterial, isTurnedPart, isMilledPart, cadAnalysis, f]);
 
   const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;

@@ -18,6 +18,7 @@ import { calculateMachiningCosts } from './cncEstimator';
 import { calculateMilledCosts } from './milledEstimator';
 import { materialPropsFor } from './materials';
 import type { ExtractedCadAnalysis } from './cadAnalyzer';
+import type { SecondaryOperation } from './secondaryOps';
 
 export interface ResolvedQuoteCosts {
   /** QuoteCosts-shaped totals (subtotal/overhead/margin/rush always correct). */
@@ -40,6 +41,15 @@ export interface ResolveParams {
   isRush: boolean;
   margin: number;
   settings: ShopSettings;
+  /**
+   * Plating, passivate, FAI and the rest, as chosen on the Review step.
+   *
+   * These were priced into the preview and then dropped on the way to storage,
+   * because this resolver had nowhere to put them: a quote with £200 of gold
+   * plating in it was saved without the plating, and the job traveller that
+   * reads its line items found no subcontract operation to send the part out on.
+   */
+  secondaryOps?: SecondaryOperation[];
 }
 
 /** Map a machining breakdown onto the QuoteCosts shape (totals preserved exactly). */
@@ -82,7 +92,7 @@ export function resolveQuoteCosts(p: ResolveParams): ResolvedQuoteCosts {
   if (isTurnedPart && cadAnalysis?.turningProfile) {
     const volumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : cadAnalysis.volumeCm3 ?? 0;
     const mc = calculateMachiningCosts(
-      { isTurned: true, materialName: p.materialName, volumeCm3, profile: cadAnalysis.turningProfile, setups: cadAnalysis.setups ?? 1, materialPricePerKg: p.materialPricePerKg },
+      { isTurned: true, materialName: p.materialName, volumeCm3, profile: cadAnalysis.turningProfile, setups: cadAnalysis.setups ?? 1, materialPricePerKg: p.materialPricePerKg, secondaryOps: p.secondaryOps },
       p.quantity, p.isRush, p.margin, settings, rateMult, routeSetupMin
     );
     const unitPrice = mc.subtotal + mc.overhead + mc.marginAmount;
@@ -94,7 +104,7 @@ export function resolveQuoteCosts(p: ResolveParams): ResolvedQuoteCosts {
     const partVolumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : base.partVolumeCm3;
     const profile = { ...base, partVolumeCm3, removedVolumeCm3: Math.max(0, base.stockVolumeCm3 - partVolumeCm3) };
     const mc = calculateMilledCosts(
-      { materialName: p.materialName, profile, materialPricePerKg: p.materialPricePerKg },
+      { materialName: p.materialName, profile, materialPricePerKg: p.materialPricePerKg, secondaryOps: p.secondaryOps },
       p.quantity, p.isRush, p.margin, settings, rateMult, routeSetupMin
     );
     const unitPrice = mc.subtotal + mc.overhead + mc.marginAmount;

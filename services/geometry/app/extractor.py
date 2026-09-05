@@ -181,7 +181,13 @@ def extract(path: str) -> dict:
                 # Extent along the CYLINDER'S OWN axis — the distance a tool has
                 # to travel to make this feature, which is not the same as its
                 # extent along the part's turning axis.
-                own = _face_vertices_axial(face, cloc, cdir)
+                #
+                # Measured from the WORLD origin, not from this face's own seat.
+                # Two faces of one hole rarely share a seat, and the group below
+                # matches them on |dot| so they need not share a direction
+                # either; projecting each from its own origin would make their
+                # extents incomparable and the merged length meaningless.
+                own = _face_vertices_axial(face, np.zeros(3), cdir)
                 entry["_axis"] = cdir
                 entry["_loc"] = cloc
                 entry["_isBore"] = face.Orientation() == TopAbs_REVERSED
@@ -213,7 +219,23 @@ def extract(path: str) -> dict:
         same = [c for c in bore_cyls if abs(c["radiusMm"] - r_main) <= max(0.05, 0.02 * r_main)]
         # Every zStart/zEnd here is already projected on the part's own turning
         # axis from a common origin, so these are directly comparable.
-        bore_depth = round(max(c["zEndMm"] for c in same) - min(c["zStartMm"] for c in same), 3)
+        #
+        # Merge only faces that actually TOUCH. Spanning min to max across every
+        # same-⌀ face would treat a part with a blind ⌀8 hole in each end as one
+        # hole running its whole length — drilling a 100 mm bore where the shop
+        # drills two of 10 mm. Sort by start, walk, and break the run wherever
+        # there is solid material between one face and the next; the deepest run
+        # is the main bore. A small tolerance absorbs the seam between two halves
+        # of the same cylinder.
+        gap_tol = max(0.05, 0.01 * max(axis_length, 1.0))
+        runs: List[tuple] = []
+        for c in sorted(same, key=lambda c: c["zStartMm"]):
+            lo, hi = c["zStartMm"], c["zEndMm"]
+            if runs and lo <= runs[-1][1] + gap_tol:
+                runs[-1] = (runs[-1][0], max(runs[-1][1], hi))
+            else:
+                runs.append((lo, hi))
+        bore_depth = round(max(hi - lo for lo, hi in runs), 3) if runs else 0.0
     else:
         bore_depth = 0.0
 
@@ -247,7 +269,8 @@ def extract(path: str) -> dict:
         r = c["radiusMm"]
         placed = False
         for g in cross_groups:
-            if abs(float(np.dot(ax, g["axis"]))) <= 0.98:
+            align = float(np.dot(ax, g["axis"]))
+            if abs(align) <= 0.98:
                 continue
             if abs(r - g["radiusMm"]) > max(0.05, 0.02 * r):
                 continue
@@ -255,8 +278,14 @@ def extract(path: str) -> dict:
             if _dist_point_to_line(loc, g["point"], g["axis"]) > max(0.2, 0.02 * r):
                 continue
             g["faces"] += 1
-            g["lo"] = min(g["lo"], c["_lo"])
-            g["hi"] = max(g["hi"], c["_hi"])
+            # A face whose axis points the other way measures its extent along
+            # the other way too, so it has to be flipped into the group's frame
+            # before it can be merged. Without this the two halves of one cross
+            # hole straddle the origin and the feature reads as twice its real
+            # length — and that length is now billed as tool travel.
+            f_lo, f_hi = (c["_lo"], c["_hi"]) if align > 0 else (-c["_hi"], -c["_lo"])
+            g["lo"] = min(g["lo"], f_lo)
+            g["hi"] = max(g["hi"], f_hi)
             placed = True
             break
         if not placed:

@@ -152,6 +152,15 @@ export interface HoleGroup {
   count: number;
   /** True when the hole is too big to drill from solid — interpolate/bore instead. */
   interpolate: boolean;
+  /**
+   * The measured depths of the holes in this group, when they were supplied.
+   *
+   * Carried through grouping so a caller can weight each operation by the time
+   * it actually takes. Splitting a total by hole COUNT stopped being defensible
+   * once per-hole time started depending on diameter and depth: a ⌀1 hole 25 mm
+   * deep and a ⌀6 hole 1.5 mm deep are not two equal halves of the drilling.
+   */
+  depthsMm?: number[];
 }
 
 /**
@@ -160,23 +169,31 @@ export interface HoleGroup {
  * (helical/bore), not drilled. Falls back to a single generic group when the
  * per-hole diameters weren't measured.
  */
-export function groupHoles(holeDiametersMm: number[] | undefined, holeCount: number, maxDrillMm = 20): HoleGroup[] {
-  const dias = (holeDiametersMm ?? []).filter((d) => d > 0);
+export function groupHoles(
+  holeDiametersMm: number[] | undefined,
+  holeCount: number,
+  maxDrillMm = 20,
+  holeDepthsMm?: number[],
+): HoleGroup[] {
+  const paired = (holeDiametersMm ?? []).map((d, i) => ({ d, z: holeDepthsMm?.[i] }))
+    .filter((h) => h.d > 0);
+  const dias = paired.map((h) => h.d);
   if (dias.length === 0) {
     if (holeCount <= 0) return [];
     return [{ drillMm: 6, count: holeCount, interpolate: false }];
   }
   const map = new Map<number, number>();
-  for (const d of dias) {
-    if (d > maxDrillMm) {
-      const k = Math.round(d * 10) / 10; // keep big bores at their real size
-      map.set(-k, (map.get(-k) ?? 0) + 1); // negative key flags interpolate
-    } else {
-      const k = nearestDrill(d);
-      map.set(k, (map.get(k) ?? 0) + 1);
-    }
+  const depths = new Map<number, number[]>();
+  for (const { d, z } of paired) {
+    // negative key flags interpolate; big bores keep their real size
+    const k = d > maxDrillMm ? -(Math.round(d * 10) / 10) : nearestDrill(d);
+    map.set(k, (map.get(k) ?? 0) + 1);
+    if (z !== undefined && z > 0) depths.set(k, [...(depths.get(k) ?? []), z]);
   }
   return [...map.entries()]
-    .map(([k, count]) => ({ drillMm: Math.abs(k), count, interpolate: k < 0 }))
+    .map(([k, count]) => ({
+      drillMm: Math.abs(k), count, interpolate: k < 0,
+      depthsMm: depths.get(k),
+    }))
     .sort((a, b) => a.drillMm - b.drillMm);
 }

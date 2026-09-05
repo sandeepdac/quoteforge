@@ -11,6 +11,7 @@
  */
 import type { MaterialProps } from './materials';
 import type { MachiningPlan, PlanOperation, PlanSetup } from '../types';
+import { drillHoleSec } from './drilling';
 import {
   millingToolsFor,
   faceMill,
@@ -35,6 +36,11 @@ export interface MilledPlanInput {
   roughComplexSec: number;
   finishComplexSec: number;
   drillSec: number;
+  /** Measured hole depths, index-matched to holeDiametersMm. */
+  holeDepthsMm?: number[];
+  /** Seconds of OFF-AXIS (driven-tool) work, and the features it covers. */
+  crossSec?: number;
+  crossFeatures?: Array<{ diameterMm: number; lengthMm: number }>;
   removedVolCm3: number;
   millMrr: number;
   finishAreaCm2: number;
@@ -186,10 +192,23 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   });
 
   // --- Drilling: one operation per hole size (like a CAM plan) -------------
-  const groups = groupHoles(inp.holeDiametersMm, inp.holeCount, inp.maxDrillMm);
+  const groups = groupHoles(inp.holeDiametersMm, inp.holeCount, inp.maxDrillMm, inp.holeDepthsMm);
   const totalHoles = groups.reduce((a, g) => a + g.count, 0) || 1;
-  for (const g of groups) {
-    const secShare = inp.drillSec * (g.count / totalHoles);
+  // Share the drilling total out by the TIME each group takes, not by how many
+  // holes it has. Per-hole time now depends on diameter and depth, so a ⌀1 hole
+  // 25 mm deep and a ⌀6 hole 1.5 mm deep are not two equal halves of the
+  // drilling — attributing by count put most of the minutes on the wrong row of
+  // the traveller. Weights are normalised, so the plan still totals exactly what
+  // the estimator billed.
+  const weightOf = (g: typeof groups[number]) => {
+    const depths = g.depthsMm?.length ? g.depthsMm : null;
+    if (!depths) return g.count;
+    return depths.reduce((a, z) => a + drillHoleSec({ diameterMm: g.drillMm, depthMm: z }, inp.m), 0);
+  };
+  const weights = groups.map(weightOf);
+  const totalWeight = weights.reduce((a, w) => a + w, 0) || totalHoles;
+  for (const [i, g] of groups.entries()) {
+    const secShare = inp.drillSec * (weights[i] / totalWeight);
     if (g.interpolate) {
       addSub({
         name: `Bore / interpolate ⌀${r1(g.drillMm)}`,
@@ -207,6 +226,24 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
         color: c.drill,
       });
     }
+  }
+
+  // --- Off-axis features: driven-tool work, billed and previously unlisted --
+  // These seconds are inside the estimator's cycle time. Without this operation
+  // the traveller's run minutes and the cost table disagreed with the price.
+  if ((inp.crossSec ?? 0) > 0) {
+    const feats = inp.crossFeatures ?? [];
+    addSub({
+      name: 'Off-axis features (driven tool)',
+      tool: 'Driven tool (live tooling)',
+      sec: inp.crossSec ?? 0,
+      driver: feats.length
+        ? `${feats.length} feature${feats.length === 1 ? '' : 's'} off the turning axis — `
+          + feats.slice(0, 3).map((f) => `⌀${r1(f.diameterMm)}×${r1(f.lengthMm)}`).join(', ')
+          + (feats.length > 3 ? ` +${feats.length - 3} more` : '')
+        : 'off the turning axis',
+      color: c.drill,
+    });
   }
 
   // --- Countersinks: a MEASURED operation with its own tool ----------------
