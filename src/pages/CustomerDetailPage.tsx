@@ -22,6 +22,7 @@ import {
   ResponsiveContainer 
 } from 'recharts';
 import { useQuotes } from '../context/QuoteContext';
+import { useMoney } from '../utils/useMoney';
 import StatusPill from '../components/common/StatusPill';
 import { cn } from '../utils/cn';
 
@@ -29,6 +30,7 @@ export default function CustomerDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { getCustomerById, quotes, parts } = useQuotes();
+  const { symbol } = useMoney();
 
   const customer = getCustomerById(id || '');
   if (!customer) {
@@ -36,15 +38,36 @@ export default function CustomerDetailPage() {
   }
 
   const customerQuotes = quotes.filter(q => q.customerId === customer.id).sort((a, b) => new Date(b.createdDate).getTime() - new Date(a.createdDate).getTime());
-  const winRate = customer.totalQuotes > 0 ? (customer.wonQuotes / customer.totalQuotes) * 100 : 0;
 
-  // Mock chart data
-  const trendData = [
-    { name: 'Jan', winRate: 35 },
-    { name: 'Feb', winRate: 48 },
-    { name: 'Mar', winRate: 42 },
-    { name: 'Apr', winRate: winRate },
-  ];
+  // Everything below is derived from the customer's REAL quotes, not the stored
+  // seed aggregates (which drift out of sync as quotes are added/edited/deleted).
+  const totalQuotes = customerQuotes.length;
+  const wonQuotes = customerQuotes.filter(q => q.status === 'won');
+  const lostQuotes = customerQuotes.filter(q => q.status === 'lost');
+  const decided = wonQuotes.length + lostQuotes.length;
+  const winRate = decided > 0 ? (wonQuotes.length / decided) * 100 : 0;
+  const totalRevenue = wonQuotes.reduce((s, q) => s + q.grandTotal, 0);
+  const avgLeadDays = totalQuotes > 0
+    ? customerQuotes.reduce((s, q) => s + (q.leadTimeDays || 0), 0) / totalQuotes
+    : 0;
+  const firstYear = totalQuotes > 0
+    ? new Date(customerQuotes[customerQuotes.length - 1].createdDate).getFullYear()
+    : new Date().getFullYear();
+
+  // Real trend: quoted value grouped by month (last 6 with activity).
+  const byMonth = new Map<string, number>();
+  for (const q of customerQuotes) {
+    const d = new Date(q.createdDate);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    byMonth.set(key, (byMonth.get(key) ?? 0) + q.grandTotal);
+  }
+  const trendData = [...byMonth.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-6)
+    .map(([key, value]) => ({
+      name: new Date(`${key}-01`).toLocaleDateString(undefined, { month: 'short' }),
+      value: Math.round(value),
+    }));
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -55,7 +78,7 @@ export default function CustomerDetailPage() {
         <div>
           <h1 className="text-2xl font-bold">{customer.name}</h1>
           <p className="text-sm text-muted-foreground flex items-center gap-2">
-            <span className="inline-block w-2 h-2 rounded-full bg-green-500"></span> Active account since 2024
+            <span className="inline-block w-2 h-2 rounded-full bg-green-500"></span> Active account since {firstYear}
           </p>
         </div>
         <div className="flex-1"></div>
@@ -75,27 +98,33 @@ export default function CustomerDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatsCard icon={FileText} label="Total Quotes" value={customer.totalQuotes} />
-            <StatsCard icon={TrendingUp} label="Win Rate" value={`${winRate.toFixed(0)}%`} color={winRate > 40 ? 'text-green-600' : 'text-blue-600'} />
-            <StatsCard icon={DollarSign} label="Total Revenue" value={`$${(customer.totalRevenue / 1000).toFixed(0)}k`} />
-            <StatsCard icon={Calendar} label="Avg. Cycle" value="4.2d" />
+            <StatsCard icon={FileText} label="Total Quotes" value={totalQuotes} />
+            <StatsCard icon={TrendingUp} label="Win Rate" value={decided > 0 ? `${winRate.toFixed(0)}%` : '—'} color={winRate > 40 ? 'text-green-600' : 'text-blue-600'} />
+            <StatsCard icon={DollarSign} label="Won Revenue" value={`${symbol}${(totalRevenue / 1000).toFixed(1)}k`} />
+            <StatsCard icon={Calendar} label="Avg. Lead" value={totalQuotes > 0 ? `${avgLeadDays.toFixed(0)}d` : '—'} />
           </div>
 
           <div className="bg-card border border-border p-6 rounded-lg space-y-6">
             <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 border-b border-border pb-3">
-              <TrendingUp size={14} /> Win/Loss Trend
+              <TrendingUp size={14} /> Quoted Value by Month
             </h3>
-            <div className="h-[250px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={trendData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                  <YAxis axisLine={false} tickLine={false} />
-                  <RechartsTooltip />
-                  <Line type="monotone" dataKey="winRate" stroke="var(--primary)" strokeWidth={3} dot={{ r: 4, fill: 'var(--primary)', strokeWidth: 0 }} activeDot={{ r: 6 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+            {trendData.length > 0 ? (
+              <div className="h-[250px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trendData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} />
+                    <YAxis axisLine={false} tickLine={false} tickFormatter={(v) => `${symbol}${(v / 1000).toFixed(0)}k`} />
+                    <RechartsTooltip formatter={(v: number) => [`${symbol}${v.toLocaleString()}`, 'Quoted']} />
+                    <Line type="monotone" dataKey="value" stroke="var(--primary)" strokeWidth={3} dot={{ r: 4, fill: 'var(--primary)', strokeWidth: 0 }} activeDot={{ r: 6 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-[250px] flex items-center justify-center text-sm text-muted-foreground">
+                No quotes yet for this customer.
+              </div>
+            )}
           </div>
 
           <div className="bg-card border border-border rounded-lg overflow-hidden">
@@ -115,6 +144,13 @@ export default function CustomerDetailPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
+                    {customerQuotes.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-10 text-center text-sm text-muted-foreground">
+                          No quotes yet for this customer.
+                        </td>
+                      </tr>
+                    )}
                     {customerQuotes.map(q => {
                       const part = parts.find(p => p.id === q.partId);
                       return (
@@ -123,7 +159,7 @@ export default function CustomerDetailPage() {
                             <Link to={`/quotes/${q.id}`} className="text-sm font-medium text-primary hover:underline">{q.quoteNumber}</Link>
                           </td>
                           <td className="px-6 py-4 text-sm font-medium">{part?.name}</td>
-                          <td className="px-6 py-4 text-sm font-mono">${q.grandTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                          <td className="px-6 py-4 text-sm font-mono">{symbol}{q.grandTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                           <td className="px-6 py-4 text-sm text-muted-foreground">{new Date(q.createdDate).toLocaleDateString()}</td>
                           <td className="px-6 py-4"><StatusPill status={q.status} /></td>
                         </tr>

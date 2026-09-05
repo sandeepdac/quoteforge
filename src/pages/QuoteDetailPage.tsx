@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { 
   ArrowLeft, 
@@ -14,9 +14,15 @@ import {
   XCircle,
   History,
   Info,
-  Copy
+  Copy,
+  Pencil,
+  ClipboardList
 } from 'lucide-react';
 import { useQuotes } from '../context/QuoteContext';
+import { useJobs } from '../context/JobContext';
+import { useMoney } from '../utils/useMoney';
+import { dimsDesc } from '../utils/dims';
+import { useSettings } from '../context/SettingsContext';
 import StatusPill from '../components/common/StatusPill';
 import { cn } from '../utils/cn';
 import { downloadQuotePDF } from '../utils/pdfGenerator';
@@ -25,8 +31,14 @@ export default function QuoteDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { getQuoteById, getCustomerById, getPartById, getMaterialById, deleteQuote, updateQuote } = useQuotes();
+  const { createJobFromQuote, getJobByQuoteId } = useJobs();
+  const { settings } = useSettings();
+  const { symbol } = useMoney();
 
   const quote = getQuoteById(id || '');
+  const [actualCostInput, setActualCostInput] = useState(
+    quote?.actualCost != null ? String(quote.actualCost) : ''
+  );
   if (!quote) {
     return (
       <div className="text-center py-20">
@@ -39,6 +51,7 @@ export default function QuoteDetailPage() {
   const customer = getCustomerById(quote.customerId);
   const part = getPartById(quote.partId);
   const material = part ? getMaterialById(part.materialId) : undefined;
+  const mc = quote.machiningCosts;
 
   const handleDelete = () => {
     if (confirm('Are you sure you want to delete this quote?')) {
@@ -52,12 +65,40 @@ export default function QuoteDetailPage() {
   };
 
   const handleClone = () => {
-    navigate('/quotes/new', { state: { cloneData: quote, partData: part } });
+    navigate('/quotes/new', { state: { cloneData: quote, partData: part, cloneCad: quote.cadAnalysis } });
+  };
+
+  const handleEdit = () => {
+    navigate('/quotes/new', { state: { editQuote: quote, editPart: part, editCad: quote.cadAnalysis } });
   };
 
   const handleDownload = () => {
-    downloadQuotePDF(quote, customer, part);
+    downloadQuotePDF(quote, customer, part, material, settings);
   };
+
+  // Convert a won quote into a shop work order. One job per quote: if it has
+  // already been converted, jump to the existing job rather than creating a
+  // duplicate work order for the same order.
+  const existingJob = getJobByQuoteId(quote.id);
+  const handleConvertToJob = () => {
+    if (existingJob) {
+      navigate(`/jobs/${existingJob.id}`);
+      return;
+    }
+    const poNumber = prompt('Customer PO number (optional):') ?? undefined;
+    const job = createJobFromQuote(quote, { settings, poNumber: poNumber || undefined });
+    navigate(`/jobs/${job.id}`);
+  };
+
+  const estFactoryCost = (quote.costs.subtotal + quote.costs.overhead) * quote.quantity;
+  const saveActualCost = () => {
+    const val = parseFloat(actualCostInput);
+    updateQuote({ ...quote, actualCost: Number.isFinite(val) && val > 0 ? val : undefined });
+  };
+  const costVariancePct =
+    quote.actualCost != null && estFactoryCost > 0
+      ? ((quote.actualCost - estFactoryCost) / estFactoryCost) * 100
+      : null;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -76,14 +117,14 @@ export default function QuoteDetailPage() {
 
       <div className="flex flex-wrap gap-3 pb-6 border-b border-border">
         {quote.status === 'draft' && (
-          <>
-            <button onClick={() => setStatus('sent')} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-all">
-              <Send size={16} /> Send Quote
-            </button>
-            <button className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
-              Edit
-            </button>
-          </>
+          <button onClick={() => setStatus('sent')} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-all">
+            <Send size={16} /> Send Quote
+          </button>
+        )}
+        {(quote.status === 'draft' || quote.status === 'sent') && (
+          <button onClick={handleEdit} className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
+            <Pencil size={16} /> Edit
+          </button>
         )}
         {quote.status === 'sent' && (
           <>
@@ -94,6 +135,19 @@ export default function QuoteDetailPage() {
               <XCircle size={16} /> Mark as Lost
             </button>
           </>
+        )}
+        {quote.status === 'won' && (
+          <button
+            onClick={handleConvertToJob}
+            className={cn(
+              'flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all',
+              existingJob
+                ? 'border border-border hover:bg-accent'
+                : 'bg-primary text-primary-foreground hover:bg-primary/90'
+            )}
+          >
+            <ClipboardList size={16} /> {existingJob ? `View job ${existingJob.jobNumber}` : 'Convert to Job'}
+          </button>
         )}
         <button onClick={handleClone} className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-all">
           <Copy size={16} /> Clone Quote
@@ -160,35 +214,42 @@ export default function QuoteDetailPage() {
               <div className="flex-1 space-y-6">
                 <div>
                   <Link to={`/parts/${part?.id}`} className="text-lg font-semibold text-primary hover:underline">{part?.name}</Link>
-                  <p className="text-sm text-muted-foreground">{material?.name} {material?.thicknessMm}mm</p>
+                  <p className="text-sm text-muted-foreground">
+                    {material?.name}
+                    {quote.machineClass
+                      ? ` · ${quote.machineClass === 'turn' ? 'Turned' : 'Milled'} part`
+                      : ` ${material?.thicknessMm}mm`}
+                  </p>
                 </div>
-                
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
-                  <div>
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Perimeter</p>
-                    <p className="text-sm font-medium">{part?.features.perimeterMm} mm</p>
+
+                {quote.machineClass ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
+                    <Feature label="Setups" value={mc?.setups ?? '—'} />
+                    <Feature label="Holes" value={mc?.holeCount ?? part?.features.holeCount ?? 0} />
+                    <Feature
+                      label="Stock"
+                      value={mc?.fromBarStock && mc?.barDiameterMm
+                        ? `⌀${mc.barDiameterMm} round bar`
+                        : mc?.stockMm
+                          ? `${dimsDesc(mc.stockMm)} mm`
+                          : mc?.barDiameterMm
+                            ? `⌀${mc.barDiameterMm} bar`
+                            : '—'}
+                    />
+                    <Feature label="Cycle time" value={mc?.cycleTimeSec != null ? `${mc.cycleTimeSec} s` : '—'} />
+                    <Feature label="Material yield" value={mc?.buyToFlyRatio != null ? `${Math.round(mc.buyToFlyRatio * 100)}%` : '—'} />
+                    <Feature label="Weight" value={`${part?.features.weightKg.toFixed(2)} kg`} />
                   </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Bends</p>
-                    <p className="text-sm font-medium">{part?.features.bendCount}</p>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
+                    <Feature label="Perimeter" value={`${part?.features.perimeterMm} mm`} />
+                    <Feature label="Bends" value={part?.features.bendCount ?? 0} />
+                    <Feature label="Pierces" value={part?.features.pierceCount ?? 0} />
+                    <Feature label="Welding" value={`${part?.features.weldLengthMm} mm`} />
+                    <Feature label="Holes" value={part?.features.holeCount ?? 0} />
+                    <Feature label="Weight" value={`${part?.features.weightKg.toFixed(2)} kg`} />
                   </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Pierces</p>
-                    <p className="text-sm font-medium">{part?.features.pierceCount}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Welding</p>
-                    <p className="text-sm font-medium">{part?.features.weldLengthMm} mm</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Holes</p>
-                    <p className="text-sm font-medium">{part?.features.holeCount}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Weight</p>
-                    <p className="text-sm font-medium">{part?.features.weightKg.toFixed(2)} kg</p>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
@@ -209,11 +270,22 @@ export default function QuoteDetailPage() {
                    <History size={14} /> Version History
                  </p>
                  <div className="space-y-4 border-l-2 border-border ml-2 pl-4 py-2">
-                   <div className="relative">
-                      <div className="absolute -left-[24px] top-1.5 w-3 h-3 rounded-full bg-primary ring-4 ring-background"></div>
-                      <p className="text-xs font-bold">Today, 10:24 AM</p>
-                      <p className="text-xs text-muted-foreground">Quote created by AI extraction</p>
-                   </div>
+                   {(quote.revisions && quote.revisions.length > 0
+                     ? quote.revisions
+                     : [{ at: quote.createdDate, summary: 'Quote created from CAD extraction', unitPrice: quote.totalUnitPrice, grandTotal: quote.grandTotal }]
+                   )
+                     .slice()
+                     .reverse()
+                     .map((rev, i) => (
+                       <div className="relative" key={rev.at + i}>
+                         <div className={cn('absolute -left-[24px] top-1.5 w-3 h-3 rounded-full ring-4 ring-background', i === 0 ? 'bg-primary' : 'bg-muted-foreground/40')}></div>
+                         <div className="flex items-baseline justify-between gap-3">
+                           <p className="text-xs font-bold">{new Date(rev.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</p>
+                           <span className="text-[11px] font-mono text-muted-foreground">{symbol}{rev.unitPrice.toFixed(2)}/ea</span>
+                         </div>
+                         <p className="text-xs text-muted-foreground">{rev.summary}</p>
+                       </div>
+                     ))}
                  </div>
               </div>
             </div>
@@ -225,12 +297,12 @@ export default function QuoteDetailPage() {
              <div className="space-y-4">
                <div>
                   <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Grand Total</p>
-                  <p className="text-3xl font-black text-foreground">${quote.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  <p className="text-3xl font-black text-foreground">{symbol}{quote.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                </div>
                <div className="pt-4 space-y-3 border-t border-border">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Unit Price</span>
-                    <span className="font-bold">${quote.totalUnitPrice.toFixed(2)}</span>
+                    <span className="font-bold">{symbol}{quote.totalUnitPrice.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Quantity</span>
@@ -246,11 +318,26 @@ export default function QuoteDetailPage() {
              <div className="pt-4 space-y-4">
                 <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Cost Breakdown</h4>
                 <div className="space-y-2">
-                  <BreakdownRow label="Material" value={quote.costs.materialCost} />
-                  <BreakdownRow label="Laser Processing" value={quote.costs.laserCost} />
-                  <BreakdownRow label="Fabrication/Bending" value={quote.costs.bendCost + quote.costs.weldCost} />
-                  <BreakdownRow label="Assembly & Finish" value={quote.costs.assemblyCost + quote.costs.finishCost} />
-                  <BreakdownRow label="Overhead" value={quote.costs.overhead} />
+                  {quote.machineClass ? (
+                    <>
+                      <BreakdownRow label="Material / stock" value={quote.costs.materialCost} />
+                      <BreakdownRow label="Machine time (cycle)" value={quote.costs.laserCost} />
+                      <BreakdownRow label="Setup (amortised)" value={quote.costs.bendCost} />
+                      <BreakdownRow label="Tooling / fixture" value={quote.costs.assemblyCost} />
+                      <BreakdownRow label="Overhead" value={quote.costs.overhead} />
+                    </>
+                  ) : (
+                    <>
+                      <BreakdownRow label="Material" value={quote.costs.materialCost} />
+                      <BreakdownRow label="Laser Processing" value={quote.costs.laserCost} />
+                      <BreakdownRow label="Fabrication/Bending" value={quote.costs.bendCost + quote.costs.weldCost} />
+                      <BreakdownRow label="Assembly & Finish" value={quote.costs.assemblyCost + quote.costs.finishCost} />
+                      <BreakdownRow label="Overhead" value={quote.costs.overhead} />
+                    </>
+                  )}
+                  {quote.costs.rushPremium > 0 && (
+                    <BreakdownRow label="Rush Premium (order)" value={quote.costs.rushPremium} />
+                  )}
                 </div>
              </div>
           </div>
@@ -266,13 +353,52 @@ export default function QuoteDetailPage() {
             <p className="text-[10px] text-muted-foreground uppercase font-bold">Confidence: Medium</p>
           </div>
           
+          {quote.status === 'won' && (
+            <div className="bg-card border border-border p-5 rounded-lg space-y-3">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Estimator Accuracy</h3>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Estimated factory cost</span>
+                <span className="font-mono font-medium">{symbol}{estFactoryCost.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Actual production cost ($)</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    value={actualCostInput}
+                    onChange={(e) => setActualCostInput(e.target.value)}
+                    placeholder="Enter actual…"
+                    className="flex-1 bg-background border border-border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <button
+                    onClick={saveActualCost}
+                    className="px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-xs font-bold hover:bg-primary/90 transition-colors"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+              {costVariancePct !== null && (
+                <div className="flex justify-between text-sm pt-1 border-t border-border">
+                  <span className="text-muted-foreground">Variance vs estimate</span>
+                  <span className={cn('font-bold', costVariancePct > 0 ? 'text-red-500' : 'text-green-600')}>
+                    {costVariancePct > 0 ? '+' : ''}{costVariancePct.toFixed(1)}%
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
           {quote.status === 'lost' && (
             <div className="p-5 bg-red-100/30 border border-red-200 dark:bg-red-900/10 dark:border-red-900/30 rounded-lg space-y-3">
               <div className="flex items-center gap-2 text-red-700 dark:text-red-400 font-bold text-xs uppercase tracking-widest">
-                <Info size={14} /> AI Loss Analysis
+                <Info size={14} /> Loss Analysis
               </div>
               <p className="text-xs text-red-700/80 dark:text-red-400/80 leading-relaxed">
-                Quote was likely lost due to price being 15% above market average for Aluminum 5052 chassis components.
+                {quote.lossReason
+                  ? `Marked lost — reason: ${quote.lossReason}.`
+                  : 'Marked lost. No specific reason was recorded.'}
+                {` ${part?.name ?? 'This part'} in ${material?.name ?? 'the selected material'} was quoted at ${symbol}${quote.totalUnitPrice.toFixed(2)}/ea over ${quote.leadTimeDays} days.`}
               </p>
             </div>
           )}
@@ -282,11 +408,21 @@ export default function QuoteDetailPage() {
   );
 }
 
+function Feature({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-[10px] text-muted-foreground font-bold uppercase">{label}</p>
+      <p className="text-sm font-medium">{value}</p>
+    </div>
+  );
+}
+
 function BreakdownRow({ label, value }: { label: string; value: number }) {
+  const { symbol } = useMoney();
   return (
     <div className="flex justify-between text-xs">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono text-foreground font-medium">${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      <span className="font-mono text-foreground font-medium">{symbol}{value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
     </div>
   );
 }

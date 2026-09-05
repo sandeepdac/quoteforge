@@ -2,13 +2,29 @@ import React, { useState } from 'react';
 import { Search, Filter, Plus, Users, UserPlus, ArrowRight, TrendingUp, Mail, Phone } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuotes } from '../context/QuoteContext';
+import { useMoney } from '../utils/useMoney';
 import { cn } from '../utils/cn';
 
 export default function CustomersPage() {
-  const { customers } = useQuotes();
+  const { customers, quotes } = useQuotes();
+  const { symbol } = useMoney();
   const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredCustomers = customers.filter(c => 
+  // Per-customer activity is computed LIVE from real quotes, not stored aggregates.
+  const statsFor = (customerId: string) => {
+    const cq = quotes.filter(q => q.customerId === customerId);
+    const won = cq.filter(q => q.status === 'won');
+    const decided = won.length + cq.filter(q => q.status === 'lost').length;
+    const lastQuoteDate = cq.reduce<string | undefined>((m, q) => (!m || q.createdDate > m ? q.createdDate : m), undefined);
+    return {
+      totalQuotes: cq.length,
+      winRate: decided > 0 ? (won.length / decided) * 100 : 0,
+      totalRevenue: won.reduce((s, q) => s + q.grandTotal, 0),
+      lastQuoteDate,
+    };
+  };
+
+  const filteredCustomers = customers.filter(c =>
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.contactName.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -58,7 +74,7 @@ export default function CustomersPage() {
             </thead>
             <tbody className="divide-y divide-border">
               {filteredCustomers.map((customer) => {
-                const winRate = customer.totalQuotes > 0 ? (customer.wonQuotes / customer.totalQuotes) * 100 : 0;
+                const { totalQuotes, winRate, totalRevenue, lastQuoteDate } = statsFor(customer.id);
                 return (
                   <tr key={customer.id} className="hover:bg-muted/30 transition-colors group">
                     <td className="px-6 py-4">
@@ -84,12 +100,12 @@ export default function CustomersPage() {
                          </div>
                        </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-foreground">{customer.totalQuotes}</td>
+                    <td className="px-6 py-4 text-sm text-foreground">{totalQuotes}</td>
                     <td className="px-6 py-4 text-sm font-medium text-foreground">
-                      ${customer.totalRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      {symbol}{totalRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                     </td>
                     <td className="px-6 py-4 text-sm text-muted-foreground">
-                      {customer.lastQuoteDate ? new Date(customer.lastQuoteDate).toLocaleDateString() : 'Never'}
+                      {lastQuoteDate ? new Date(lastQuoteDate).toLocaleDateString() : 'Never'}
                     </td>
                     <td className="px-6 py-4 text-right">
                        <Link to={`/customers/${customer.id}`} className="text-muted-foreground hover:text-primary transition-colors inline-block">

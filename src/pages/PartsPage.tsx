@@ -23,10 +23,10 @@ export default function PartsPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Parts Library</h1>
           <p className="text-muted-foreground">Manage your reusable parts and extraction history.</p>
         </div>
-        <button className="flex items-center justify-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm">
+        <Link to="/quotes/new" className="flex items-center justify-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm">
           <Plus size={18} />
           Create Part
-        </button>
+        </Link>
       </div>
 
       <div className="flex flex-col md:flex-row gap-4">
@@ -77,7 +77,7 @@ export default function PartsPage() {
                 return (
                   <tr key={part.id} className="hover:bg-muted/30 transition-colors group">
                     <td className="px-6 py-4">
-                      <Link to={`/parts/${part.id}`} className="font-semibold text-[#0a0a0a] hover:text-primary transition-colors">
+                      <Link to={`/parts/${part.id}`} className="font-semibold text-foreground hover:text-primary transition-colors">
                         {part.name}
                       </Link>
                     </td>

@@ -1,0 +1,9 @@
+# QuoteForge geometry service — turned-profile extraction from STEP solids.
+# OCP is the OpenCASCADE Python binding (same core the browser uses via WASM),
+# but with full B-Rep topology access that the WASM build doesn't expose.
+cadquery-ocp>=7.7,<7.9
+numpy>=1.24
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pytest>=8  # dev/tests only

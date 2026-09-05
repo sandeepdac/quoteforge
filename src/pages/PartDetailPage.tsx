@@ -2,6 +2,7 @@ import React from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Plus, Calendar, Hammer, Layers, Ruler, Weight, History, FileText, Zap } from 'lucide-react';
 import { useQuotes } from '../context/QuoteContext';
+import { useMoney } from '../utils/useMoney';
 import StatusPill from '../components/common/StatusPill';
 import { cn } from '../utils/cn';
 
@@ -9,6 +10,7 @@ export default function PartDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { getPartById, getMaterialById, quotes, customers } = useQuotes();
+  const { symbol } = useMoney();
 
   const part = getPartById(id || '');
   if (!part) {
@@ -29,8 +31,9 @@ export default function PartDetailPage() {
           <p className="text-sm text-muted-foreground">Internal Part ID: {part.id.toUpperCase()}</p>
         </div>
         <div className="flex-1"></div>
-        <Link 
+        <Link
           to="/quotes/new"
+          state={{ partData: part }}
           className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-shadow shadow"
         >
           <Plus size={18} /> New Quote for this Part
@@ -104,7 +107,7 @@ export default function PartDetailPage() {
                           </td>
                           <td className="px-6 py-4 text-sm font-medium">{customer?.name}</td>
                           <td className="px-6 py-4 text-sm underline-offset-4">{q.quantity}</td>
-                          <td className="px-6 py-4 text-sm font-mono">${q.totalUnitPrice.toFixed(2)}</td>
+                          <td className="px-6 py-4 text-sm font-mono">{symbol}{q.totalUnitPrice.toFixed(2)}</td>
                           <td className="px-6 py-4"><StatusPill status={q.status} /></td>
                         </tr>
                       );
@@ -133,8 +136,8 @@ export default function PartDetailPage() {
                  <div>
                     <p className="text-xs text-muted-foreground mb-1 uppercase leading-none">Avg. Quote Value</p>
                     <p className="text-xl font-bold text-foreground">
-                      ${partQuotes.length > 0 
-                        ? (partQuotes.reduce((acc, q) => acc + q.grandTotal, 0) / partQuotes.length).toLocaleString(undefined, { maximumFractionDigits: 0 }) 
+                      {symbol}{partQuotes.length > 0
+                        ? (partQuotes.reduce((acc, q) => acc + q.grandTotal, 0) / partQuotes.length).toLocaleString(undefined, { maximumFractionDigits: 0 })
                         : 0}
                     </p>
                  </div>
@@ -143,10 +146,12 @@ export default function PartDetailPage() {
            
            <div className="bg-primary/5 border border-primary/20 p-5 rounded-lg space-y-3">
               <div className="flex items-center gap-2 text-primary font-bold text-xs uppercase tracking-widest leading-snug">
-                <Zap size={14} fill="currentColor" /> Feature Consistency
+                <Zap size={14} fill="currentColor" /> Reusable Part
               </div>
               <p className="text-xs text-primary/80 leading-relaxed">
-                This part has high feature extraction consistency (98%). AI models have identified this geometry in 4 other client repositories.
+                Geometry measured from CAD: {part.features.holeCount} holes, {part.features.bendCount} bends,
+                {' '}{part.features.weightKg.toFixed(2)} kg. Quoted {part.quoteCount}× — start a new quote to reuse
+                these features without re-uploading.
               </p>
            </div>
         </div>

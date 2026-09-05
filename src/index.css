@@ -30,22 +30,23 @@
 
 @layer base {
   :root {
-    --bg: #fafaf9;
-    --fg: #0a0a0a;
+    /* Cool slate neutrals that pair with the blue primary (precision/technical feel). */
+    --bg: #f8fafc;        /* slate-50 */
+    --fg: #0f172a;        /* slate-900 */
     --card: #ffffff;
-    --card-fg: #0a0a0a;
+    --card-fg: #0f172a;
     --primary: #2563eb;
     --primary-fg: #ffffff;
-    --secondary: #fafaf9;
-    --secondary-fg: #0a0a0a;
-    --muted: #fafaf9;
-    --muted-fg: #71717a;
-    --accent: #2563eb1a; /* 10% primary */
+    --secondary: #f1f5f9; /* slate-100 */
+    --secondary-fg: #0f172a;
+    --muted: #f1f5f9;
+    --muted-fg: #64748b;  /* slate-500 */
+    --accent: #2563eb14;  /* ~8% primary */
     --accent-fg: #2563eb;
     --destructive: #dc2626;
     --destructive-fg: #fafafa;
-    --border: #e5e5e5;
-    --input: #e5e5e5;
+    --border: #e2e8f0;    /* slate-200 */
+    --input: #e2e8f0;
     --ring: #2563eb;
   }
 

@@ -20,6 +20,23 @@ export default function StatusPill({ status, className }: StatusPillProps) {
         return "bg-[#525252]/10 text-[#525252]";
       case 'expired':
         return "bg-[#a3a3a3]/10 text-[#a3a3a3]";
+      // --- job (work order) statuses ---
+      case 'complete':
+      case 'shipped':
+        return "bg-[#16a34a]/10 text-[#16a34a]";
+      case 'in-progress':
+        return "bg-[#f59e0b]/10 text-[#b45309]";
+      case 'released':
+        return "bg-[#2563eb]/10 text-[#2563eb]";
+      case 'planned':
+        return "bg-[#8b5cf6]/10 text-[#7c3aed]";
+      case 'invoiced':
+      case 'closed':
+        return "bg-[#0891b2]/10 text-[#0e7490]";
+      case 'on-hold':
+        return "bg-[#f97316]/10 text-[#c2410c]";
+      case 'cancelled':
+        return "bg-[#dc2626]/10 text-[#dc2626]";
       default:
         return "bg-[#525252]/10 text-[#525252]";
     }

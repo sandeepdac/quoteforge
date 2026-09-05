@@ -7,86 +7,147 @@ import {
   Calendar, 
   Hammer,
   Zap,
-  Info,
+  AlertTriangle,
   ChevronRight
 } from 'lucide-react';
 import { useQuotes } from '../../context/QuoteContext';
 import { useSettings } from '../../context/SettingsContext';
-import { calculateQuoteCosts, calculateWinProbability } from '../../utils/estimator';
-import { PartFeatures } from '../../types';
+import { calculateQuoteCosts } from '../../utils/estimator';
+import { calculateMachiningCosts } from '../../utils/cncEstimator';
+import { calculateMilledCosts } from '../../utils/milledEstimator';
+import { materialPropsFor } from '../../utils/materials';
+import { currencySymbol } from '../../utils/currency';
+import { dimsDesc } from '../../utils/dims';
+import { DEFAULT_SECONDARY_OPS } from '../../constants';
+import { generatePartThumbnail } from '../../utils/partThumbnail';
+import { generateTurningToolpath } from '../../utils/toolpath';
+import ToolpathPreview from '../cad/ToolpathPreview';
+import MachiningCostTable from '../quote/MachiningCostTable';
+import MilledOperationStrategy from '../quote/MilledOperationStrategy';
+import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
+import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
+import { MACHINE_CATALOG } from '../../utils/machineSelection';
 import { cn } from '../../utils/cn';
+import { resolveQuoteCosts } from '../../utils/quoteCosts';
+import type { SecondaryOperation } from '../../utils/secondaryOps';
 
 interface StepReviewProps {
   data: any;
-  onSend: () => void;
-  onSaveDraft: () => void;
+  cadAnalysis?: ExtractedCadAnalysis;
+  /** Rendered still of the 3D model captured on the extraction step (real part image). */
+  partImage?: string;
+  quoteNumber: string;
+  onSend: (opts: { margin: number; notes: string; secondaryOps: SecondaryOperation[] }) => void;
+  onSaveDraft: (opts: { margin: number; notes: string; secondaryOps: SecondaryOperation[] }) => void;
   onBack: () => void;
+  onUpdate?: (updater: (prev: any) => any) => void;
 }
 
-export default function StepReview({ data, onSend, onSaveDraft, onBack }: StepReviewProps) {
+export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, onSend, onSaveDraft, onBack, onUpdate }: StepReviewProps) {
   const { customers, materials } = useQuotes();
   const { settings } = useSettings();
   const [margin, setMargin] = useState(settings.defaultMargin);
+  const [notes, setNotes] = useState('');
+
+  // Secondary operations (finishing / inspection) the shop offers, and which
+  // ones the estimator applies to this quote.
+  const secondaryCatalog = settings.secondaryOps ?? DEFAULT_SECONDARY_OPS;
+  const [secondaryIds, setSecondaryIds] = useState<string[]>([]);
+  const selectedSecondaryOps = secondaryCatalog.filter((o) => secondaryIds.includes(o.id));
+  const toggleSecondary = (id: string) =>
+    setSecondaryIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
 
   const customer = customers.find(c => c.id === data.config.customerId);
   const material = materials.find(m => m.id === data.features.materialId) || materials[0];
 
-  const costs = useMemo(() => {
-    return calculateQuoteCosts(
-      data.features as PartFeatures,
-      data.config.quantity,
-      data.config.isRush,
+  const f = data.features as PartFeatures;
+  const isTurnedPart = !!(cadAnalysis?.isTurned && cadAnalysis?.turningProfile);
+  const isMilledPart = !!(cadAnalysis?.milledProfile && !cadAnalysis?.isTurned);
+  const isMachining = isTurnedPart || isMilledPart;
+
+  const sym = currencySymbol(settings.currency);
+  const money = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Priced through the SAME resolver the save path uses. This screen used to
+  // duplicate the estimator dispatch, and the duplicate fell behind: it never
+  // passed the route's setup minutes, so the price a customer approved here was
+  // between 1.3x and 2.7x below the price that got stored when they hit Send.
+  // There is only one way to price a quote, and this is it.
+  const { costs, lineItems } = useMemo(() => {
+    const r = resolveQuoteCosts({
+      cadAnalysis,
+      features: f,
+      materialName: material.name,
+      materialPricePerKg: material.pricePerKg,
+      quantity: data.config.quantity,
+      isRush: data.config.isRush,
       margin,
-      material.pricePerKg,
-      settings
-    );
-  }, [data, settings, material, margin]);
+      settings,
+      secondaryOps: selectedSecondaryOps,
+    });
+    return { costs: r.machiningCosts ?? r.costs, lineItems: r.lineItems };
+  }, [data, settings, material, margin, isTurnedPart, isMilledPart, cadAnalysis, f, secondaryIds]);
 
   const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
-  const winProb = calculateWinProbability(margin, data.config.leadTimeDays);
+  const mc = isMachining ? (costs as MachiningCosts) : null;
 
-  const getWinProbColor = (prob: number) => {
-    if (prob > 80) return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
-    if (prob > 60) return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
-    if (prob > 40) return "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400";
-    return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
-  };
+  // Reference turning toolpath (preview + downloadable G-code) for turned parts.
+  const toolpath = useMemo(() => {
+    if (!isTurnedPart || !cadAnalysis?.turningProfile) return null;
+    const bar = cadAnalysis.barDiameterMm ?? cadAnalysis.turningProfile.odMm + 4;
+    return generateTurningToolpath(
+      cadAnalysis.turningProfile,
+      bar,
+      materialPropsFor(material.name),
+      undefined,
+      settings.cnc?.toolLibrary
+    );
+  }, [isTurnedPart, cadAnalysis, material, settings.cnc?.toolLibrary]);
 
-  const quoteNumber = "Q-2026-0248";
   const validUntil = new Date();
   validUntil.setDate(validUntil.getDate() + 30);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8 animate-in zoom-in-95 duration-500">
-      <div className="flex flex-col md:flex-row justify-between gap-6 pb-6 border-b border-border">
-        <div className="space-y-1">
+    <div className="max-w-5xl mx-auto space-y-6 animate-in zoom-in-95 duration-500">
+      {/* Price-forward header — the quote total is the first thing you see. */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 bg-card border border-border rounded-2xl p-5 shadow-sm">
+        <div className="space-y-1.5">
           <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-bold">{quoteNumber}</h2>
+            <h2 className="text-xl font-bold">{quoteNumber}</h2>
             <span className="bg-muted text-muted-foreground px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest">Draft</span>
           </div>
-          <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-            <div className="flex items-center gap-1"><Calendar size={14} /> Created: {new Date().toLocaleDateString()}</div>
-            <div className="flex items-center gap-1"><Calendar size={14} /> Valid Until: {validUntil.toLocaleDateString()}</div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1"><Hammer size={13} /> {customer?.name ?? 'No customer selected'}</span>
+            <span className="flex items-center gap-1"><Calendar size={13} /> Valid until {validUntil.toLocaleDateString()}</span>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <button onClick={onSaveDraft} className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium border border-border hover:bg-accent transition-colors">
-            <Save size={16} /> Save Draft
-          </button>
-          <button className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium border border-border hover:bg-accent transition-colors">
-            <Download size={16} /> PDF
-          </button>
-          <button onClick={onSend} className="flex items-center gap-2 px-6 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-shadow shadow">
-            <Send size={16} /> Send to Customer
-          </button>
+        <div className="flex items-center gap-5">
+          <div className="text-right leading-tight">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Grand Total</p>
+            <p className="text-3xl font-black text-primary">{sym}{money(grandTotal)}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              {sym}{money(unitPrice)}/unit × {data.config.quantity}
+              {mc && mc.repeatUnitPrice < unitPrice - 0.01 && (
+                <span className="text-emerald-600 dark:text-emerald-400"> · repeat {sym}{money(mc.repeatUnitPrice)}</span>
+              )}
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 shrink-0">
+            <button onClick={() => onSend({ margin, notes, secondaryOps: selectedSecondaryOps })} className="flex items-center justify-center gap-2 px-5 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-shadow shadow">
+              <Send size={15} /> Send to Customer
+            </button>
+            <button onClick={() => onSaveDraft({ margin, notes, secondaryOps: selectedSecondaryOps })} className="flex items-center justify-center gap-2 px-5 py-2 rounded-md text-sm font-medium border border-border hover:bg-accent transition-colors">
+              <Save size={15} /> Save Draft
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
           {/* Customer & Part Info */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-card border border-border p-5 rounded-lg space-y-4">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2 border-b border-border pb-3">
                 <MapPin size={14} /> Customer Details
@@ -109,10 +170,14 @@ export default function StepReview({ data, onSend, onSaveDraft, onBack }: StepRe
               </h3>
               <div className="flex gap-4">
                 <div className="w-16 h-16 bg-muted rounded border border-border overflow-hidden">
-                  <img src="https://picsum.photos/seed/quote/200/200" alt="Part" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  <img
+                    src={partImage || generatePartThumbnail(data.partName || 'Custom Machined Part', data.features)}
+                    alt={data.partName || 'Part'}
+                    className="w-full h-full object-cover"
+                  />
                 </div>
                 <div className="space-y-1">
-                  <p className="text-sm font-semibold">Custom Fabricated Part</p>
+                  <p className="text-sm font-semibold">{data.partName || 'Custom Machined Part'}</p>
                   <p className="text-xs text-muted-foreground">{material.name} {material.thicknessMm}mm</p>
                   <p className="text-xs text-muted-foreground">{data.features.lengthMm} x {data.features.widthMm} x {data.features.heightMm} mm</p>
                 </div>
@@ -122,61 +187,234 @@ export default function StepReview({ data, onSend, onSaveDraft, onBack }: StepRe
 
           {/* Cost breakdown table */}
           <div className="bg-card border border-border rounded-lg overflow-hidden">
-            <div className="p-4 bg-muted/30 border-b border-border">
+            <div className="p-4 bg-muted/30 border-b border-border space-y-1">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Detailed Cost Breakdown</h3>
+              <p className="text-[11px] text-muted-foreground">
+                {isMachining
+                  ? 'Grouped by setup — each operation shows the cutter from your shop tool library, its time and cost.'
+                  : 'Each line is priced from a dimension measured from your CAD file.'}
+              </p>
+              {!isMachining && (
+                <div className="flex gap-2 bg-amber-500/10 border border-amber-500/40 rounded-md p-2.5 mt-1">
+                  <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    <strong className="text-amber-700 dark:text-amber-300">Priced as fabrication, not machining.</strong>{' '}
+                    No turned or milled profile could be measured from this input, so the quote fell back to
+                    laser / brake / weld costing rather than cycle time on a machine. For a CNC part that is the wrong
+                    model — re-upload a STEP file if you have one, or treat this number as a placeholder.
+                  </p>
+                </div>
+              )}
+              {cadAnalysis?.machineRecommendation && (
+                <p className="text-[11px] text-muted-foreground">
+                  <strong className="text-foreground">Machine:</strong> {cadAnalysis.machineRecommendation.recommendedName}
+                  <span className="text-muted-foreground/70"> · {MACHINE_CATALOG[cadAnalysis.machineRecommendation.recommended]?.hourlyRate ?? '—'}/hr</span>
+                </p>
+              )}
+              {cadAnalysis?.machineRecommendation?.bakeOffNote && (
+                <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
+                  {cadAnalysis.machineRecommendation.bakeOffNote}
+                </p>
+              )}
+
+              {/* WHY THIS MACHINE — on the quote, not only on the extraction step.
+                  Turned-vs-milled is the most consequential call the engine makes
+                  and the one a reviewer most needs to check, and it was reasoned
+                  out on a screen they had already left. A stepped ⌀20/17/16 stack
+                  routed to a 3-axis mill is either right or badly wrong, and the
+                  quote gave no way to tell which. */}
+              {(cadAnalysis?.machineRecommendation?.reasons?.length ?? 0) > 0 && (
+                <details className="mt-1 group">
+                  <summary className="text-[11px] text-primary cursor-pointer hover:underline list-none">
+                    Why this machine? {(cadAnalysis!.machineRecommendation!.bakeOff?.length ?? 0) > 1
+                      ? `${cadAnalysis!.machineRecommendation!.bakeOff!.length} machines costed`
+                      : 'reasoning'}
+                  </summary>
+                  <ul className="mt-1.5 space-y-1">
+                    {cadAnalysis!.machineRecommendation!.reasons.map((r, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-[10px] text-muted-foreground leading-relaxed">
+                        <span className="text-primary font-bold mt-px">•</span><span>{r}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {(cadAnalysis!.machineRecommendation!.bakeOff?.length ?? 0) > 1 && (
+                    <div className="mt-2 overflow-x-auto">
+                      <table className="w-full text-[10px]">
+                        <thead>
+                          <tr className="text-muted-foreground/70 text-left">
+                            <th className="font-semibold py-1 pr-2">Machine</th>
+                            <th className="font-semibold py-1 pr-2 text-right">Rate</th>
+                            <th className="font-semibold py-1 pr-2 text-right">Setups</th>
+                            <th className="font-semibold py-1 text-right">Per part</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {cadAnalysis!.machineRecommendation!.bakeOff!.map((b) => (
+                            <tr key={b.id} className={cn('border-t border-border/60',
+                              b.id === cadAnalysis!.machineRecommendation!.recommended && 'bg-emerald-500/10 font-semibold')}>
+                              <td className="py-1 pr-2 text-foreground">{b.name}</td>
+                              <td className="py-1 pr-2 text-right text-muted-foreground">{sym}{b.hourlyRate}/hr</td>
+                              <td className="py-1 pr-2 text-right text-muted-foreground" title={b.setupReason}>{b.setups}</td>
+                              <td className="py-1 text-right text-foreground">{sym}{b.totalPerPart.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </details>
+              )}
+              {mc && mc.machineClass === 'mill' && (
+                <p className="text-[11px] text-muted-foreground">
+                  {mc.fromBarStock
+                    ? `Mill-turn from ⌀${mc.barDiameterMm} round bar`
+                    : `Milled from ${mc.stockMm ? dimsDesc(mc.stockMm) : '—'} billet`} · ~{mc.cycleTimeSec}s cycle @ {Math.round(mc.efficiencyFactor * 100)}% efficiency
+                  · <strong className="text-foreground">{Math.round(mc.buyToFlyRatio * 100)}% material yield</strong> · {mc.setups} setup{mc.setups > 1 ? 's' : ''}
+                  · {mc.pocketCount ?? 0} pocket{(mc.pocketCount ?? 0) === 1 ? '' : 's'}{(mc.deepPocketCount ?? 0) > 0 ? ` (${mc.deepPocketCount} deep)` : ''} · {mc.holeCount ?? 0} hole{(mc.holeCount ?? 0) === 1 ? '' : 's'}.
+                </p>
+              )}
+              {mc && mc.machineClass !== 'mill' && (
+                <p className="text-[11px] text-muted-foreground">
+                  Turned from ⌀{mc.barDiameterMm} bar · ~{mc.cycleTimeSec}s cycle @ {Math.round(mc.efficiencyFactor * 100)}% efficiency
+                  · <strong className="text-foreground">{Math.round(mc.buyToFlyRatio * 100)}% material yield</strong> · {mc.setups} setup{mc.setups > 1 ? 's' : ''}.
+                </p>
+              )}
+              {cadAnalysis?.formedPart && (
+                <div className="flex gap-2 mt-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2">
+                  <AlertTriangle size={13} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Formed part — perimeter &amp; area are from the folded shape, so laser/finishing under-estimate the flat-blank cut.
+                    Upload the flat DXF or drawing for an accurate cut cost.
+                  </p>
+                </div>
+              )}
             </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                  <th className="px-4 py-3 font-medium">Operation / Item</th>
-                  <th className="px-4 py-3 font-medium text-right">Details</th>
-                  <th className="px-4 py-3 font-medium text-right">Ext. Price</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                <tr>
-                  <td className="px-4 py-3">Material Cost</td>
-                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.weightKg.toFixed(2)}kg @ ${material.pricePerKg.toFixed(2)}/kg</td>
-                  <td className="px-4 py-3 text-right font-medium">${costs.materialCost.toFixed(2)}</td>
-                </tr>
-                <tr>
-                  <td className="px-4 py-3">Laser Cutting</td>
-                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.perimeterMm}mm perimeter, {data.features.pierceCount} pierces</td>
-                  <td className="px-4 py-3 text-right font-medium">${costs.laserCost.toFixed(2)}</td>
-                </tr>
-                <tr>
-                  <td className="px-4 py-3">Bending & Forming</td>
-                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.bendCount} bends, {data.features.isSimpleBending ? 'Simple' : 'Compound'}</td>
-                  <td className="px-4 py-3 text-right font-medium">${costs.bendCost.toFixed(2)}</td>
-                </tr>
-                <tr>
-                  <td className="px-4 py-3">Welding & Assembly</td>
-                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.weldLengthMm}mm welding, {data.features.holeCount} holes</td>
-                  <td className="px-4 py-3 text-right font-medium">${(costs.weldCost + costs.assemblyCost).toFixed(2)}</td>
-                </tr>
-                <tr>
-                  <td className="px-4 py-3">Finishing (Applied)</td>
-                  <td className="px-4 py-3 text-right text-muted-foreground">{data.features.surfaceAreaM2.toFixed(3)}m² surface area</td>
-                  <td className="px-4 py-3 text-right font-medium">${costs.finishCost.toFixed(2)}</td>
-                </tr>
-                <tr className="bg-muted/10 font-semibold">
-                  <td className="px-4 py-3" colSpan={2}>Factory Subtotal (incl. {settings.overheadPercent*100}% overhead)</td>
-                  <td className="px-4 py-3 text-right">${(costs.subtotal + costs.overhead).toFixed(2)}</td>
-                </tr>
-              </tbody>
-            </table>
+            {isMachining && secondaryCatalog.length > 0 && (
+              <div className="px-4 py-3 border-b border-border bg-muted/10">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+                  Secondary operations <span className="font-normal normal-case tracking-normal">— finishing &amp; inspection, added to the quote</span>
+                </p>
+                {/* A STEP file carries geometry only — plating, anodising and
+                    inspection live on the DRAWING, so they can never be measured
+                    from the solid. Nothing used to say so, and a plated part
+                    quoted as bare metal looks entirely plausible. */}
+                {cadAnalysis?.measurementSource === 'solid' && secondaryIds.length === 0 && (
+                  <p className="text-[10px] text-amber-700 dark:text-amber-300 mb-2 leading-relaxed">
+                    <strong>No surface finish selected.</strong> A STEP file carries geometry only — plating,
+                    anodising and inspection are called out on the drawing, so they cannot be detected here.
+                    If the drawing specifies one, add it now or the quote will price bare metal.
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {secondaryCatalog.map((op) => {
+                    const on = secondaryIds.includes(op.id);
+                    const sym = currencySymbol(settings.currency);
+                    return (
+                      <button
+                        key={op.id}
+                        onClick={() => toggleSecondary(op.id)}
+                        className={cn(
+                          'text-left rounded-md border px-3 py-1.5 text-xs transition-colors',
+                          on
+                            ? 'border-teal-500 bg-teal-500/10 text-foreground'
+                            : 'border-border bg-background text-muted-foreground hover:border-teal-500/50 hover:text-foreground'
+                        )}
+                        title={op.leadTimeDays ? `~${op.leadTimeDays} day turnaround` : undefined}
+                      >
+                        <span className={cn('inline-block w-2 h-2 rounded-full mr-2 align-middle', on ? 'bg-teal-500' : 'bg-muted-foreground/30')} />
+                        <span className="font-semibold">{op.name}</span>
+                        <span className="block text-[10px] text-muted-foreground mt-0.5">
+                          {op.lotCharge > 0 ? `${sym}${op.lotCharge.toFixed(0)} lot` : ''}{op.lotCharge > 0 && op.perPartCost > 0 ? ' + ' : ''}{op.perPartCost > 0 ? `${sym}${op.perPartCost.toFixed(2)}/part` : ''}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {isMachining && mc?.plan && mc.plan.setups.length > 0 ? (
+              <MachiningCostTable costs={mc} overheadPercent={settings.overheadPercent} currency={currencySymbol(settings.currency)} />
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                    <th className="px-4 py-3 font-medium">Operation / Item</th>
+                    <th className="px-4 py-3 font-medium text-right">Details</th>
+                    <th className="px-4 py-3 font-medium text-right">Ext. Price</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {lineItems.map((li) => (
+                    <tr key={li.key}>
+                      <td className="px-4 py-3">{li.name}</td>
+                      <td className="px-4 py-3 text-right text-muted-foreground">{li.driver}</td>
+                      <td className="px-4 py-3 text-right font-medium">{sym}{li.value.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-muted/10 font-semibold">
+                    <td className="px-4 py-3" colSpan={2}>{isMachining ? 'Machining' : 'Factory'} Subtotal (incl. {settings.overheadPercent*100}% overhead)</td>
+                    <td className="px-4 py-3 text-right">{sym}{(costs.subtotal + costs.overhead).toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
           </div>
+
+          {mc && mc.machineClass === 'mill' && mc.stockMm && (
+            <MilledOperationStrategy
+              stockMm={mc.stockMm}
+              counts={{
+                pocketCount: mc.pocketCount ?? 0,
+                bossCount: mc.bossCount ?? 0,
+                deepPocketCount: mc.deepPocketCount ?? 0,
+                holeCount: mc.holeCount ?? 0,
+              }}
+              removedVolumeCm3={mc.removedVolumeCm3}
+            />
+          )}
+
+          {toolpath && (
+            <ToolpathPreview
+              toolpath={toolpath}
+              partName={data.partName}
+              materialName={material.name}
+              crossFeatureDiametersMm={cadAnalysis?.turningProfile?.crossFeatureDiametersMm}
+            />
+          )}
 
           <div className="space-y-3">
             <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Notes for customer</label>
-            <textarea 
-              placeholder="Add any specific assumptions or notes for this quote..." 
+            <textarea
+              placeholder="Add any specific assumptions or notes for this quote..."
               className="w-full bg-background border border-border rounded-md p-4 text-sm min-h-[100px] focus:outline-none focus:ring-1 focus:ring-primary"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
             ></textarea>
           </div>
         </div>
 
         <div className="space-y-6">
+          {/* Material confirm — last chance to correct before the quote is sent */}
+          {onUpdate && (
+            <div className="bg-card border border-border p-4 rounded-xl shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Material</h3>
+                {isMachining && <span className="text-[10px] text-muted-foreground">drives cutting speeds &amp; cost</span>}
+              </div>
+              <select
+                value={material?.id}
+                onChange={(e) => onUpdate((prev) => ({ ...prev, features: { ...prev.features, materialId: e.target.value } }))}
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                {materials.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}{typeof m.pricePerKg === 'number' ? ` — ${sym}${m.pricePerKg.toFixed(2)}/kg` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Pricing Controls */}
           <div className="bg-card border border-border p-6 rounded-xl shadow-sm space-y-6">
             <div className="space-y-4">
@@ -202,45 +440,44 @@ export default function StepReview({ data, onSend, onSaveDraft, onBack }: StepRe
             <div className="space-y-4 pt-6 border-t border-border">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Unit Cost</span>
-                <span className="font-medium font-mono">${(costs.subtotal + costs.overhead).toFixed(2)}</span>
+                <span className="font-medium font-mono">{sym}{(costs.subtotal + costs.overhead).toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Unit Margin</span>
-                <span className="font-medium font-mono">${costs.marginAmount.toFixed(2)}</span>
+                <span className="font-medium font-mono">{sym}{costs.marginAmount.toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center py-2 px-3 bg-accent/50 rounded-lg">
                 <span className="text-sm font-bold">Total Unit Price</span>
-                <span className="text-lg font-black text-foreground">${unitPrice.toFixed(2)}</span>
+                <span className="text-lg font-black text-foreground">{sym}{unitPrice.toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center pt-2 border-t border-border border-dashed">
                 <span className="text-sm text-muted-foreground">Quantity x {data.config.quantity}</span>
-                <span className="text-sm font-medium">${(unitPrice * data.config.quantity).toFixed(2)}</span>
+                <span className="text-sm font-medium">{sym}{(unitPrice * data.config.quantity).toFixed(2)}</span>
               </div>
               {costs.rushPremium > 0 && (
                 <div className="flex justify-between items-center text-orange-500 font-medium">
                   <span className="text-xs uppercase tracking-wider font-bold italic flex items-center gap-1"><Zap size={10} fill="currentColor" /> Rush Premium</span>
-                  <span className="text-sm font-bold">+${costs.rushPremium.toFixed(2)}</span>
+                  <span className="text-sm font-bold">+{sym}{costs.rushPremium.toFixed(2)}</span>
                 </div>
               )}
               <div className="flex justify-between items-center pt-2">
                 <span className="text-base font-bold">Grand Total</span>
-                <span className="text-2xl font-black text-primary">${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="text-2xl font-black text-primary">{currencySymbol(settings.currency)}{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
+              {mc && mc.repeatUnitPrice < unitPrice - 0.01 && (
+                <div className="flex justify-between items-center pt-2 mt-2 border-t border-dashed border-border text-sm">
+                  <span className="text-muted-foreground">
+                    Repeat order <span className="text-[10px]">(NRE {currencySymbol(settings.currency)}{mc.nreCost.toFixed(0)} already paid)</span>
+                  </span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                    {currencySymbol(settings.currency)}{mc.repeatUnitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/part
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
-          <div className={cn("p-6 rounded-xl border flex flex-col items-center text-center space-y-4", getWinProbColor(winProb))}>
-            <div className="flex items-center gap-2">
-              <h3 className="text-xs font-bold uppercase tracking-widest">Win Probability</h3>
-              <Info size={14} className="opacity-50" />
-            </div>
-            <div className="text-4xl font-black">{winProb}%</div>
-            <p className="text-xs font-medium leading-relaxed opacity-80">
-              Based on historical data for {customer?.name} and current material market volatility.
-            </p>
-          </div>
-
-          <button 
+          <button
             onClick={onBack}
             className="w-full flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors group"
           >
