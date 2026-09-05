@@ -173,6 +173,19 @@ def extract(path: str) -> dict:
                 is_bore = face.Orientation() == TopAbs_REVERSED
                 (bore_cyls if is_bore else outer_cyls).append(entry)
             else:
+                # Keep the cylinder's own axis and seat so these FACES can be
+                # grouped into FEATURES below. A single cross hole is normally
+                # split into two half-cylinders, and a counterbored one into
+                # more, so a raw face count runs to several times the number of
+                # operations a machinist actually performs.
+                # Extent along the CYLINDER'S OWN axis — the distance a tool has
+                # to travel to make this feature, which is not the same as its
+                # extent along the part's turning axis.
+                own = _face_vertices_axial(face, cloc, cdir)
+                entry["_axis"] = cdir
+                entry["_loc"] = cloc
+                entry["_isBore"] = face.Orientation() == TopAbs_REVERSED
+                entry["_lo"], entry["_hi"] = own if own else (0.0, 0.0)
                 cross_cyls.append(entry)
         elif stype in ROT_TYPES:
             n_rot += 1
@@ -185,9 +198,24 @@ def extract(path: str) -> dict:
     outer_radius = max([c["radiusMm"] for c in outer_cyls] + [max_vertex_radius], default=0.0)
     od = round(2 * outer_radius, 3)
 
+    # The main bore, measured across ALL the faces that make it.
+    #
+    # This used to take the single widest FACE and report its extent as the bore
+    # depth. A bore is normally modelled as two half-cylinders, and either half
+    # may be split again where a groove or a step interrupts it, so the depth
+    # came out as whatever the largest fragment happened to be. On Lance's VOC
+    # housing that read 14 mm for a hole that runs the full 70 mm of the part —
+    # a fifth of the real drilling, on the part whose two deep holes ARE the job.
     main_bore = max(bore_cyls, key=lambda c: c["radiusMm"], default=None)
     bore_dia = round(2 * main_bore["radiusMm"], 3) if main_bore else 0.0
-    bore_depth = round(abs(main_bore["zEndMm"] - main_bore["zStartMm"]), 3) if main_bore else 0.0
+    if main_bore:
+        r_main = main_bore["radiusMm"]
+        same = [c for c in bore_cyls if abs(c["radiusMm"] - r_main) <= max(0.05, 0.02 * r_main)]
+        # Every zStart/zEnd here is already projected on the part's own turning
+        # axis from a common origin, so these are directly comparable.
+        bore_depth = round(max(c["zEndMm"] for c in same) - min(c["zStartMm"] for c in same), 3)
+    else:
+        bore_depth = 0.0
 
     # Grooves: narrow outer reductions well below the OD.
     groove_count = 0
@@ -197,6 +225,59 @@ def extract(path: str) -> dict:
             groove_count += 1
 
     cross_features = len(cross_cyls) > 0
+
+    # --- Off-axis (cross) features, grouped into real operations -------------
+    #
+    # Each of these is a driven-tool operation on a turn-mill, or a second op on
+    # a lathe: index the spindle, bring in a live tool, cut, retract. Until now
+    # the extractor reported only the BOOLEAN `crossFeatures`, and the cost
+    # models never read even that — so a cross-drilled part was costed as though
+    # the cross work did not exist. Lance's Drive Dog is the clean example: it is
+    # a plastic part with no holes and almost nothing to remove, it takes him ten
+    # times as long as a stainless rod of the same size, and the only difference
+    # between the two parts is that this one has cross features.
+    #
+    # Faces are grouped into features by shared axis LINE and radius, because one
+    # hole normally arrives as two half-cylinders. Length is the axial extent
+    # along the feature's own axis, which is the depth a tool has to travel.
+    cross_groups: List[dict] = []
+    for c in cross_cyls:
+        ax = c["_axis"]
+        loc = c["_loc"]
+        r = c["radiusMm"]
+        placed = False
+        for g in cross_groups:
+            if abs(float(np.dot(ax, g["axis"]))) <= 0.98:
+                continue
+            if abs(r - g["radiusMm"]) > max(0.05, 0.02 * r):
+                continue
+            # Same axis LINE, not merely the same direction.
+            if _dist_point_to_line(loc, g["point"], g["axis"]) > max(0.2, 0.02 * r):
+                continue
+            g["faces"] += 1
+            g["lo"] = min(g["lo"], c["_lo"])
+            g["hi"] = max(g["hi"], c["_hi"])
+            placed = True
+            break
+        if not placed:
+            cross_groups.append({"axis": ax, "point": loc, "radiusMm": r,
+                                 "faces": 1, "isBore": c.get("_isBore", True),
+                                 "lo": c["_lo"], "hi": c["_hi"]})
+
+    cross_feature_list = [
+        {"diameterMm": round(2.0 * g["radiusMm"], 3),
+         "lengthMm": round(max(0.0, g["hi"] - g["lo"]), 3),
+         "isBore": bool(g["isBore"])}
+        for g in sorted(cross_groups, key=lambda g: -g["radiusMm"])
+    ]
+
+    # Strip the grouping helpers so the response stays JSON-serialisable.
+    for c in cross_cyls:
+        c.pop("_axis", None)
+        c.pop("_loc", None)
+        c.pop("_isBore", None)
+        c.pop("_lo", None)
+        c.pop("_hi", None)
 
     # --- Rotational-symmetry verdict ----------------------------------------
     # A part is TURNED when its main form is a body of revolution — a coaxial
@@ -288,6 +369,9 @@ def extract(path: str) -> dict:
             "threadCount": 0,  # threads come from the drawing callout, not geometry
             "faceCount": 2,
             "crossFeatures": cross_features,
+            # The off-axis features themselves, grouped into operations. Each is
+            # a live-tool cut on a turn-mill or a second op on a plain lathe.
+            "crossFeatureList": cross_feature_list,
         },
         "measured": {
             "volumeCm3": round(volume_mm3 / 1000.0, 3),

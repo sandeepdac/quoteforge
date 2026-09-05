@@ -310,6 +310,11 @@ async function analyzeSolid(
         crossFeatureDiametersMm: (svc!.segments ?? [])
           .filter((sg) => sg.type === 'cross')
           .map((sg) => Math.round(sg.radiusMm * 2 * 100) / 100),
+        // The same features GROUPED into operations, with the depth each tool
+        // has to travel. The segment list above is per-FACE, so one cross hole
+        // appears in it two or three times; these are the operations, and they
+        // are what the cycle-time model costs.
+        crossFeatureList: p.crossFeatureList,
       };
       profileSource = 'brep-service';
     } else {
@@ -364,6 +369,8 @@ async function analyzeSolid(
           deepPocketCount: mm.deepPocketCount,
           holeCount: mm.holeCount,
           holeDiametersMm: mm.holeDiametersMm,
+          holeDepthsMm: mm.holeDepthsMm,
+          crossFeatureList: svc?.profile?.crossFeatureList,
           sparseBillet: mm.sparseBillet,
           angledSetups: mm.angledSetups,
           axisAlignedSetups: mm.axisAlignedSetups,

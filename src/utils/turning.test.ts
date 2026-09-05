@@ -35,10 +35,24 @@ describe('estimateTurningTimes', () => {
     expect(t.airSec).toBeGreaterThan(0);
   });
 
-  it('adds peck penalty on deep bores (more drill time than a shallow one)', () => {
-    const deep = estimateTurningTimes({ ...profile, boreDepthMm: 60 }, m, 25); // 60/8 = 7.5 > 3 → peck
-    const shallow = estimateTurningTimes({ ...profile, boreDepthMm: 16 }, m, 25); // 16/8 = 2 → no peck
-    expect(deep.drillSec / 60).toBeGreaterThan((shallow.drillSec / 16) * 1.2);
+  it('drilling grows FASTER than depth, because a deep hole is pecked', () => {
+    // The property that matters is superlinearity: past a few diameters the
+    // drill has to keep coming out to clear its flutes, and each retreat is
+    // longer than the last. Four times the depth costs MORE than four times the
+    // time. (This used to be asserted as a flat 20% uplift on the per-mm rate,
+    // which was really just restating the old constant 1.4x peck multiplier —
+    // and per-mm now carries a fixed cost per hole that a shallow hole cannot
+    // amortise, so that phrasing no longer measures pecking at all.)
+    const shallow = estimateTurningTimes({ ...profile, boreDepthMm: 16 }, m, 25); // L/D 2 — one plunge
+    const deep = estimateTurningTimes({ ...profile, boreDepthMm: 64 }, m, 25);    // L/D 8 — pecked
+    expect(deep.drillSec).toBeGreaterThan(shallow.drillSec * 4);
+  });
+
+  it('a very deep small hole costs far more than the same hole made shallow', () => {
+    // ⌀8 x 160 is an L/D of 20: half-diameter bites and a full retract each time.
+    const veryDeep = estimateTurningTimes({ ...profile, boreDepthMm: 160 }, m, 25);
+    const shallow = estimateTurningTimes({ ...profile, boreDepthMm: 16 }, m, 25);
+    expect(veryDeep.drillSec / shallow.drillSec).toBeGreaterThan(10);
   });
 
   it('a solid part (no bore) skips drilling and boring', () => {

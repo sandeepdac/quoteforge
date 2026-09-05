@@ -38,6 +38,12 @@ TRACKED = [
     "turnedFeatureCount", "facingCandidates",
     "unaccountedFaces", "threadCalloutCount",
     "partVolumeCm3", "stockVolumeCm3", "removedVolumeCm3",
+    # Drilling is now timed from each hole's own SIZE, so these decide a price
+    # too. They are summarised rather than listed because a diff of two long
+    # arrays is unreadable, and the sum moves whenever any hole does.
+    "holeDepthSumMm", "maxHoleDepthMm",
+    # Off-axis features, which used to be costed at nothing at all.
+    "crossFeatureCount", "boreDepthMm",
 ]
 
 
@@ -63,11 +69,24 @@ def measure_one(path: str) -> dict:
     from app.milling import analyze_milling
     from app.threads import find_thread_callouts
 
+    from app.extractor import extract
+
     m = analyze_milling(read_step(path))
     # Threads are read from the file's NAMES, not its faces, so they are not part
     # of the milling analysis — but a change in thread detection changes what a
     # customer is quoted, so it belongs under the same brake.
     m["threadCalloutCount"] = len(find_thread_callouts(path))
+
+    depths = m.get("holeDepthsMm") or []
+    m["holeDepthSumMm"] = round(sum(depths), 3)
+    m["maxHoleDepthMm"] = round(max(depths), 3) if depths else 0.0
+
+    # The turned profile is produced by the extractor, not the milling analysis,
+    # but its cross features and bore depth now feed the cycle time directly.
+    profile = (extract(path) or {}).get("profile") or {}
+    m["crossFeatureCount"] = len(profile.get("crossFeatureList") or [])
+    m["boreDepthMm"] = profile.get("boreDepthMm")
+
     out = {}
     for k in TRACKED:
         v = m.get(k)

@@ -28,6 +28,7 @@ import { millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, Milling
 import { roughingMrrCm3PerMin, rpm as turningRpm } from './turning';
 import { buildMilledPlan } from './milledPlanner';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
+import { drillHolesSec, pairHoles, crossFeaturesSec, DEFAULT_DRILL_CONFIG, DEFAULT_CROSS_CONFIG } from './drilling';
 import type { SecondaryOperation } from './secondaryOps';
 
 /** A milled part reduced to the drivers a cycle-time model needs. */
@@ -47,6 +48,14 @@ export interface MilledProfile {
   holeCount: number;
   /** Measured hole diameters (mm), for per-size drilling operations. */
   holeDiametersMm?: number[];
+  /** Measured hole depths (mm), index-matched to holeDiametersMm. */
+  holeDepthsMm?: number[];
+  /**
+   * Off-axis features from the EXTRACTOR, grouped into operations. Needed here
+   * because the milling analyser's corner-fillet filter discards small partial
+   * cylinders, which on a small turned-and-milled part are its real features.
+   */
+  crossFeatureList?: Array<{ diameterMm: number; lengthMm: number; isBore?: boolean }>;
   /** Part fills a small fraction of its bbox → solid-billet cost is an upper bound. */
   sparseBillet?: boolean;
   /**
@@ -184,7 +193,7 @@ const COLORS: Record<string, string> = {
 
 // Milling-specific tuning (first-order; the efficiency factor calibrates the rest).
 const FINISH_MACHINED_FRACTION = 0.6; // share of surface area that is machined (vs raw stock faces)
-const DRILL_SEC_PER_HOLE_REF = 12;    // ref drill+retract per hole in steel; scales with machinability
+// (drilling is now timed per hole from diameter and depth — see drilling.ts)
 // Feature-complexity weights. A part packed with small islands, pockets and holes
 // has to be machined with small, SLOW tools that the single part-sized-cutter model
 // cannot see — the dominant time driver on detailed parts (a NIST STC-10 spends 40+
@@ -440,18 +449,65 @@ export function calculateMilledCosts(
   // twice — turned above, then billed again as "bore / interpolate ⌀30" by the
   // hole grouping, which is the milling vocabulary this route exists to replace.
   const turnedBoreDias = onAxis.filter((f) => f.kind === 'bore').map((f) => f.diameterMm);
-  const remainingHoleDias = [...(p.holeDiametersMm ?? [])];
+  const throughDepthMm = Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z) || 10;
+  // Pair each diameter with its own measured depth BEFORE anything is removed
+  // from the list, so the two stay index-matched however the list is filtered.
+  // Depths the geometry service did not supply fall back to the old through-hole
+  // assumption, so an older payload degrades rather than breaks.
+  const remainingHoles = pairHoles(p.holeDiametersMm, p.holeDepthsMm, throughDepthMm);
   for (const d of turnedBoreDias) {
-    const i = remainingHoleDias.findIndex((h) => Math.abs(h - d) <= Math.max(0.2, d * 0.02));
-    if (i >= 0) remainingHoleDias.splice(i, 1);
+    const i = remainingHoles.findIndex((h) => Math.abs(h.diameterMm - d) <= Math.max(0.2, d * 0.02));
+    if (i >= 0) remainingHoles.splice(i, 1);
   }
+  const remainingHoleDias = remainingHoles.map((h) => h.diameterMm);
   const drilledHoleDias = p.holeDiametersMm ? remainingHoleDias : undefined;
   const holes = p.holeDiametersMm
-    ? remainingHoleDias.length
+    ? remainingHoles.length
     : Math.max(0, (p.holeCount || 0) - turnedBoreDias.length);
-  const throughDepthMm = Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z) || 10;
-  const drillPerHole = DRILL_SEC_PER_HOLE_REF * (1 / Math.max(0.3, m.machinability)) * (throughDepthMm / 20);
-  const drillSec = holes * drillPerHole * feedMult;
+  // Each hole timed from its OWN diameter and depth (see drilling.ts). The old
+  // model charged a flat 12 s per hole scaled by material and by the thinnest
+  // wall of the billet, so diameter did not enter at all and every hole was a
+  // through hole. That is what flattened this model's dynamic range: it could
+  // not tell a ⌀24 counterbore from a ⌀1 hole 32 mm deep.
+  //
+  // With no measured diameters at all we still only have a count, so those holes
+  // are timed at a nominal ⌀6 through the part — the same guess as before, now
+  // confined to the case where there is genuinely nothing better to use.
+  const holeSpecs = p.holeDiametersMm
+    ? remainingHoles
+    : Array.from({ length: holes }, () => ({ diameterMm: 6, depthMm: throughDepthMm }));
+  const drillSec = drillHolesSec(holeSpecs, m, {
+    ...DEFAULT_DRILL_CONFIG,
+    maxRpm: cnc.millMaxRpm ?? DEFAULT_DRILL_CONFIG.maxRpm,
+  }) * feedMult;
+
+  // --- Off-axis features the hole finder discarded -------------------------
+  //
+  // Two detectors look at the same solid and they do not always agree. The
+  // milling analyser groups circular faces by axis and then drops the small
+  // partial ones as corner fillets, because on a big plate that is exactly what
+  // they are. The extractor instead asks whether a cylinder is off the part's
+  // TURNING axis, and it is right more often on small turned-and-milled parts.
+  //
+  // Lance's drive dog is the case that shows the difference: three ⌀12 lugs and
+  // three ⌀4 cross holes, 20% of the part's surface, all filed as corner blends
+  // and costed at nothing. Widening the fillet filter to catch them was tried
+  // once before and moved hole counts on five unrelated parts, so this takes the
+  // other route — trust the extractor's list, and subtract anything the hole
+  // finder already charged for so nothing is paid for twice.
+  //
+  // The disagreement itself is the real defect and it is worth fixing at source;
+  // until then this keeps real work from being free.
+  const alreadyCounted = [...holeSpecs.map((h) => h.diameterMm), ...turnedBoreDias];
+  const extraCross = (p.crossFeatureList ?? []).filter((f) => {
+    const i = alreadyCounted.findIndex((d) => Math.abs(d - f.diameterMm) <= Math.max(0.2, d * 0.02));
+    if (i >= 0) { alreadyCounted.splice(i, 1); return false; }
+    return true;
+  });
+  const crossSec = crossFeaturesSec(extraCross, m, {
+    ...DEFAULT_CROSS_CONFIG,
+    maxRpm: cnc.millMaxRpm ?? DEFAULT_CROSS_CONFIG.maxRpm,
+  }) * feedMult;
 
   // --- Conical features: countersinks and chamfers -------------------------
   // These cost nothing at all until now, because the analyser read only planes
@@ -484,7 +540,7 @@ export function calculateMilledCosts(
   const edgeSec = countersinkSec + chamferSec;
 
   // --- Cycle time (theoretical → actual via efficiency) --------------------
-  const cuttingSec = roughSec + turningSec + facingSec + finishSec + drillSec + edgeSec;
+  const cuttingSec = roughSec + turningSec + facingSec + finishSec + drillSec + edgeSec + crossSec;
   const toolCount = estimateToolCount(p);
   const toolChangeSec = cnc.millToolChangeSec ?? 10;
   const airSec = toolCount * toolChangeSec + cuttingSec * 0.08; // rapids between features
@@ -614,6 +670,7 @@ export function calculateMilledCosts(
     { key: 'rough', name: turnedVol > 0 ? 'Roughing (milled, off-axis)' : 'Roughing (hog-out)', driver: `${r1(milledVol)} cm³ removed @ ${r1(millMrr)} cm³/min — ${secStr(roughBaseSec)}`, value: opCost(roughBaseSec), color: COLORS.rough },
     { key: 'finish', name: 'Finishing (walls/floors)', driver: `${r1(finishAreaCm2)} cm²${finishSculpt > 1.05 ? ` contoured ×${r1(finishSculpt)} (small ball)` : ` @ ${r1(finishRate)} cm²/min`} — ${secStr(finishBaseSec)}`, value: opCost(finishBaseSec), color: COLORS.finish },
     { key: 'drill', name: 'Drilling', driver: `${holes} hole${holes === 1 ? '' : 's'}${turnedBoreDias.length ? ` (${turnedBoreDias.length} on-axis bore${turnedBoreDias.length === 1 ? '' : 's'} turned, not drilled)` : ''} — ${secStr(drillSec)}`, value: opCost(drillSec), color: COLORS.drill },
+    { key: 'cross', name: 'Off-axis features (driven tool)', driver: crossSec > 0 ? `${extraCross.length} feature${extraCross.length === 1 ? '' : 's'} off the turning axis — ${extraCross.slice(0, 4).map((f) => `⌀${r1(f.diameterMm)}×${r1(f.lengthMm)}`).join(', ')}${extraCross.length > 4 ? ` +${extraCross.length - 4} more` : ''} — ${secStr(crossSec)}` : '', value: opCost(crossSec), color: COLORS.drill },
     { key: 'edge', name: 'Countersink / chamfer', driver: edgeSec > 0 ? `${countersinkCount ? `${countersinkCount} countersink${countersinkCount === 1 ? '' : 's'}` : ''}${countersinkCount && chamferCount ? ' + ' : ''}${chamferCount ? `${chamferCount} chamfer${chamferCount === 1 ? '' : 's'}` : ''} measured from the solid — ${secStr(edgeSec)}` : '', value: opCost(edgeSec), color: COLORS.facing },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${p.pocketCount} pocket${p.pocketCount === 1 ? '' : 's'}`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
@@ -672,5 +729,6 @@ export function calculateMilledCosts(
     bossCount: p.bossCount,
     deepPocketCount: deep,
     holeCount: holes,
+    crossFeatureCount: extraCross.length,
   };
 }

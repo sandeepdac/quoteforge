@@ -231,6 +231,8 @@ export interface MachiningCosts {
   bossCount?: number;
   deepPocketCount?: number;
   holeCount?: number;
+  /** Off-axis features costed as driven-tool work — see drilling.ts. */
+  crossFeatureCount?: number;
 }
 
 /**

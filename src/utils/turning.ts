@@ -14,6 +14,7 @@
  * consistently they give a repeatable number the efficiency factor can calibrate.
  */
 import type { MaterialProps } from './materials';
+import { crossFeaturesSec, drillHoleSec, DEFAULT_CROSS_CONFIG, DEFAULT_DRILL_CONFIG } from './drilling';
 
 /** A turned part reduced to the drivers a cycle-time model needs. */
 export interface TurningProfile {
@@ -40,8 +41,22 @@ export interface TurningProfile {
    * breaking through the OD — looked like something the engine had missed.
    * These are NOT in the turned cycle time; naming them is what makes that
    * exclusion visible rather than silent.
+   *
+   * Superseded by `crossFeatureList`, which carries the LENGTH as well and is
+   * costed. Kept for payloads that predate it.
    */
   crossFeatureDiametersMm?: number[];
+  /**
+   * Off-axis features as OPERATIONS, each with the depth a tool has to travel.
+   *
+   * These used to cost nothing at all. The clearest evidence that they should
+   * not is a pair of Lance's own parts: a 416 stainless guide rod with no cross
+   * features runs 1.5 min a part, and an acetal drive dog of the same size, in a
+   * far easier material, with nothing but cross features to distinguish it, runs
+   * 15 min. Whatever else is missing from this model, off-axis work is real and
+   * it is not free.
+   */
+  crossFeatureList?: Array<{ diameterMm: number; lengthMm: number; isBore?: boolean }>;
 }
 
 export interface TurningConfig {
@@ -68,6 +83,8 @@ export interface TurningTimes {
   grooveSec: number;
   threadSec: number;
   partingSec: number;
+  /** Off-axis (live-tool / second-op) work — see `crossFeatureList`. */
+  crossSec: number;
   /** Non-cutting: tool changes + rapids between cuts. */
   airSec: number;
   /** Sum of all cutting operations (excludes air). */
@@ -134,12 +151,19 @@ export function estimateTurningTimes(
   if (profile.boreDiaMm > 0 && profile.boreDepthMm > 0) {
     const depth = profile.boreDepthMm;
     const drillDia = Math.min(profile.boreDiaMm, cfg.maxDrillDiaMm);
-    // Pilot / through drill to the drillable diameter.
-    const vcDrill = m.cuttingSpeedRough * 0.5;
-    const fDrill = m.feedRough * 0.6;
-    const drillRpm = rpm(vcDrill, drillDia, cfg.maxRpm);
-    const peck = depth / drillDia > 3 ? 1.4 : 1.0;
-    drillSec = min((depth / (fDrill * drillRpm)) * peck);
+    // Pilot / through drill to the drillable diameter, on the same arithmetic
+    // the milling side uses (drilling.ts) so one hole does not cost two
+    // different amounts depending on which estimator happens to see it.
+    //
+    // The old line here multiplied by a flat 1.4 whenever the hole was deeper
+    // than three diameters, which is where Lance's VOC housing went wrong: its
+    // two ⌀11 holes are 125 mm deep — an L/D of eleven — and the real cost is
+    // the twenty-odd full retracts needed to clear the chips, not 40% on top of
+    // a single plunge.
+    drillSec = drillHoleSec({ diameterMm: drillDia, depthMm: depth }, m, {
+      ...DEFAULT_DRILL_CONFIG,
+      maxRpm: cfg.maxRpm,
+    });
 
     // Boring: open from the drilled hole to the final bore. rpm taken at the
     // final diameter (conservative — the bar runs slower on a big bore).
@@ -174,14 +198,23 @@ export function estimateTurningTimes(
   const partRpm = rpm(m.cuttingSpeedFinish * 0.6, od, cfg.maxRpm);
   const partingSec = min((od / 2) / (0.08 * partRpm));
 
-  const cuttingSec =
-    facingSec + roughSec + finishSec + drillSec + boreSec + grooveSec + threadSec + partingSec;
+  // Off-axis work: cross holes, flats, keyways. This used to be a boolean the
+  // time model never read, so a cross-drilled part cost exactly what a plain one
+  // did. See crossFeaturesSec for what each of these actually involves.
+  const crossSec = crossFeaturesSec(profile.crossFeatureList, m, {
+    ...DEFAULT_CROSS_CONFIG,
+    maxRpm: cfg.maxRpm,
+    maxDrillDiaMm: cfg.maxDrillDiaMm,
+  });
 
-  const toolCount = [facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec]
+  const cuttingSec =
+    facingSec + roughSec + finishSec + drillSec + boreSec + grooveSec + threadSec + partingSec + crossSec;
+
+  const toolCount = [facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec]
     .filter((t) => t > 0).length;
 
   // Non-cutting: a tool change per distinct tool + ~5% rapids between cuts.
   const airSec = toolCount * cfg.toolChangeSec + cuttingSec * 0.05;
 
-  return { facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, airSec, cuttingSec, toolCount };
+  return { facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, airSec, cuttingSec, toolCount };
 }

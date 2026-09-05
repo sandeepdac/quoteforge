@@ -505,7 +505,8 @@ def analyze_milling(shape) -> dict:
     for ax, pt, r, span, a_lo, a_hi, fidx in hole_cyls:
         placed = False
         for g in hole_groups:
-            if abs(float(np.dot(ax, g["axis"]))) > 0.98:
+            align = float(np.dot(ax, g["axis"]))
+            if abs(align) > 0.98:
                 d = pt - g["point"]
                 perp = d - float(np.dot(d, g["axis"])) * g["axis"]
                 if float(np.linalg.norm(perp)) < 0.25:  # mm — same axis line
@@ -520,8 +521,18 @@ def analyze_milling(shape) -> dict:
                     g["minRadius"] = min(g["minRadius"], r)
                     g["span"] += span
                     g["faces"] += 1
-                    g["axLo"] = min(g["axLo"], a_lo)
-                    g["axHi"] = max(g["axHi"], a_hi)
+                    # Faces of one hole do not have to agree on which way the
+                    # axis points, and the group is matched on |dot| precisely so
+                    # that they need not. Their axial extents, though, are
+                    # measured along each face's OWN direction — so an
+                    # antiparallel face has to be flipped into the group's frame
+                    # before it can be compared. Without this the two halves of a
+                    # bore land on opposite sides of the origin and the span
+                    # comes out as their distance from it: the VOC housing, 70 mm
+                    # long, reported a hole 125 mm deep.
+                    f_lo, f_hi = (a_lo, a_hi) if align > 0 else (-a_hi, -a_lo)
+                    g["axLo"] = min(g["axLo"], f_lo)
+                    g["axHi"] = max(g["axHi"], f_hi)
                     g["faceIdx"].append(fidx)
                     placed = True
                     break
@@ -598,14 +609,32 @@ def analyze_milling(shape) -> dict:
                 or (st["span"] >= PARTIAL_MIN_WRAP and 2.0 * st["radius"] > corner_dia_max)]
 
     hole_diameters: List[float] = []
+    # Paired depth for each diameter above. A hole's depth is the axial extent of
+    # the cylinder faces that make it up — a fact from the model, where the
+    # estimator has until now assumed every hole runs the full thickness of the
+    # stock. That assumption costs a 1 mm hole the same as a 20 mm one and gives
+    # a blind 2 mm hole the depth of the whole billet.
+    #
+    # HONEST LIMIT: on a STEPPED hole the group extent is shared by every step,
+    # so a counterbore is reported with the depth of the whole hole rather than
+    # its own. That overstates counterbore time and is visible here rather than
+    # hidden; splitting it needs per-step axial extents, which the grouping does
+    # not currently carry.
+    hole_depths: List[float] = []
     stepped_holes = 0
     for g in hole_groups:
         steps = _real_steps(g) or [{"radius": g["maxRadius"]}]
         if len(steps) > 1:
             stepped_holes += 1
+        depth = round(max(0.0, float(g["axHi"] - g["axLo"])), 3)
         for st in steps:
             hole_diameters.append(round(2.0 * st["radius"], 3))
-    hole_diameters.sort(reverse=True)
+            hole_depths.append(depth)
+    # Sort the two together so index i of one matches index i of the other.
+    if hole_diameters:
+        _paired = sorted(zip(hole_diameters, hole_depths), key=lambda t: -t[0])
+        hole_diameters = [d for d, _ in _paired]
+        hole_depths = [z for _, z in _paired]
     # Distinct circular operations, counterbores included.
     n_holes = len(hole_diameters)
     # Open / partial circular features: milled by interpolation, never drilled.
@@ -621,13 +650,19 @@ def analyze_milling(shape) -> dict:
     for ax, pt, r, span, a_lo, a_hi, fidx in boss_cyls:
         placed = False
         for g in boss_groups:
-            if abs(float(np.dot(ax, g["axis"]))) > 0.98:
+            align = float(np.dot(ax, g["axis"]))
+            if abs(align) > 0.98:
                 d = pt - g["point"]
                 perp = d - float(np.dot(d, g["axis"])) * g["axis"]
                 if float(np.linalg.norm(perp)) < 0.25 and abs(g["radius"] - r) < 0.05:
                     g["span"] += span
-                    g["axLo"] = min(g["axLo"], a_lo)
-                    g["axHi"] = max(g["axHi"], a_hi)
+                    # Same antiparallel-face correction as the bore grouping
+                    # above: flip a face's extent into the group's frame before
+                    # merging, or the two halves of one spigot read as a length
+                    # equal to their distance from the origin.
+                    f_lo, f_hi = (a_lo, a_hi) if align > 0 else (-a_hi, -a_lo)
+                    g["axLo"] = min(g["axLo"], f_lo)
+                    g["axHi"] = max(g["axHi"], f_hi)
                     g["faceIdx"].append(fidx)
                     placed = True
                     break
@@ -1111,6 +1146,8 @@ def analyze_milling(shape) -> dict:
         "maxDepthRatio": round(max_depth_ratio, 2),
         "holeCount": n_holes,
         "holeDiametersMm": hole_diameters,
+        # Measured depth per hole, index-matched to holeDiametersMm.
+        "holeDepthsMm": hole_depths,
         # Open/partial circular features (milled by interpolation, not drilled).
         "partialBoreDiametersMm": partial_bore_diameters,
         # Holes that carry a counterbore/step (drill + counterbore = 2 tools).

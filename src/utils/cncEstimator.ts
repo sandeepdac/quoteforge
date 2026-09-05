@@ -209,6 +209,7 @@ export function calculateMachiningCosts(
     { name: 'Grooving', sec: t.grooveSec, tool: 'Grooving tool', driver: `${p.grooveCount} groove${p.grooveCount === 1 ? '' : 's'}`, color: COLORS.groove },
     { name: 'Threading', sec: t.threadSec, tool: 'Threading tool', driver: `${p.threadCount} thread${p.threadCount === 1 ? '' : 's'}`, color: COLORS.thread },
     { name: 'Part-off', sec: t.partingSec, tool: toolFor('partoff', 'Parting blade'), driver: 'cut to length', color: COLORS.parting },
+    { name: 'Off-axis features', sec: t.crossSec, tool: 'Driven tool (live tooling)', driver: `${p.crossFeatureList?.length ?? 0} cross feature${(p.crossFeatureList?.length ?? 0) === 1 ? '' : 's'}`, color: COLORS.drill },
   ];
   const planOps: PlanOperation[] = opSrc
     // Keep every operation that carries real time. The old half-second floor was

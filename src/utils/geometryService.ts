@@ -18,6 +18,8 @@ export interface GeometryProfile {
   threadCount: number;
   faceCount: number;
   crossFeatures: boolean;
+  /** Off-axis features grouped into operations, each with the tool's travel. */
+  crossFeatureList?: Array<{ diameterMm: number; lengthMm: number; isBore?: boolean }>;
 }
 
 /** Milled/prismatic analysis (the 3 AAG rules) — present alongside the turned verdict. */
@@ -73,6 +75,8 @@ export interface GeometryMilled {
   holeCount: number;
   /** Measured hole diameters (mm) — for per-size drilling operations. */
   holeDiametersMm?: number[];
+  /** Measured hole depths (mm), index-matched to holeDiametersMm. */
+  holeDepthsMm?: number[];
   /** Flats around the turning axis — hex or square bar (see milling.py). */
   polygonFlatCount?: number;
   /** Across-flats of that polygon, mm. */

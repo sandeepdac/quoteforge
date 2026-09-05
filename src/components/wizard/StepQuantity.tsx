@@ -346,7 +346,7 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                   </div>
                   <p className="text-[10px] text-muted-foreground/80 leading-tight">
                     {mc.machineClass === 'mill'
-                      ? `~${mc.cycleTimeSec}s cycle · ${mc.removedVolumeCm3} cm³ removed from ${mc.stockVolumeCm3} cm³ ${mc.fromBarStock ? 'bar' : 'billet'} · ${mc.setups} setup${mc.setups > 1 ? 's' : ''} · ${mc.pocketCount ?? 0} pocket${(mc.pocketCount ?? 0) === 1 ? '' : 's'}${(mc.deepPocketCount ?? 0) > 0 ? ` (${mc.deepPocketCount} deep)` : ''} · ${mc.holeCount ?? 0} hole${(mc.holeCount ?? 0) === 1 ? '' : 's'}`
+                      ? `~${mc.cycleTimeSec}s cycle · ${mc.removedVolumeCm3} cm³ removed from ${mc.stockVolumeCm3} cm³ ${mc.fromBarStock ? 'bar' : 'billet'} · ${mc.setups} setup${mc.setups > 1 ? 's' : ''} · ${mc.pocketCount ?? 0} pocket${(mc.pocketCount ?? 0) === 1 ? '' : 's'}${(mc.deepPocketCount ?? 0) > 0 ? ` (${mc.deepPocketCount} deep)` : ''} · ${mc.holeCount ?? 0} hole${(mc.holeCount ?? 0) === 1 ? '' : 's'}${(mc.crossFeatureCount ?? 0) > 0 ? ` · ${mc.crossFeatureCount} off-axis feature${mc.crossFeatureCount === 1 ? '' : 's'}` : ''}`
                       : `~${mc.cycleTimeSec}s cycle · ${mc.removedVolumeCm3} cm³ removed from ${mc.stockVolumeCm3} cm³ bar · ${mc.setups} setup${mc.setups > 1 ? 's' : ''} · buy-to-fly`}
                   </p>
                 </div>
