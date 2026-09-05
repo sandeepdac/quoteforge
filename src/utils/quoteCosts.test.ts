@@ -59,3 +59,43 @@ describe('resolveQuoteCosts (save/preview parity)', () => {
     expect(r.grandTotal).toBeGreaterThan(0);
   });
 });
+
+/**
+ * The route carries a setup total it has ALREADY summed — first op plus a
+ * discounted second op. An earlier version of this passed that total in and then
+ * scaled it again by the setup count, charging the second op twice: a 1020-minute
+ * route was billed at 1530. These tests pin the total to what the route says.
+ */
+describe('setup time comes from the route, and is not scaled again', () => {
+  const withRoute = (totalSetupMin: number, setups: number) => ({
+    ...turnedAnalysis,
+    setups,
+    machineRecommendation: {
+      ...(turnedAnalysis as any).machineRecommendation,
+      machineRoute: { ops: [], machines: ['star-sr20'], totalSetupMin },
+    },
+  } as unknown as ExtractedCadAnalysis);
+
+  const price = (a: ExtractedCadAnalysis) => resolveQuoteCosts({
+    cadAnalysis: a, features, materialName: 'Brass CZ121',
+    materialPricePerKg: 9, quantity: 10, isRush: false, margin: 0.25,
+    settings: DEFAULT_SHOP_SETTINGS,
+  });
+
+  it('bills exactly the minutes the route reports', () => {
+    expect(price(withRoute(240, 1)).machiningCosts!.setupTimeMin).toBe(240);
+  });
+
+  it('does not re-scale a multi-op route by its setup count', () => {
+    // Same route total, one op vs two. The route already accounted for the
+    // second op, so the estimator must not add anything on top.
+    expect(price(withRoute(1020, 2)).machiningCosts!.setupTimeMin)
+      .toBe(price(withRoute(1020, 1)).machiningCosts!.setupTimeMin);
+  });
+
+  it('falls back to the tool-count formula when no route has been chosen', () => {
+    const noRoute = price(turnedAnalysis).machiningCosts!.setupTimeMin;
+    expect(noRoute).toBeGreaterThan(0);
+    expect(noRoute).not.toBe(240);
+  });
+});

@@ -4,7 +4,7 @@ import {
   impliedRatePerHour, solveSetupAndCycle,
 } from './quotes';
 import { scoreParts } from './score';
-import { flatRatePerHour, SETUP_CHARACTER_MIN, SECOND_OP_SETUP_FRACTION, MEASURED } from './candidates';
+import { flatRatePerHour, SETUP_CHARACTER_MIN, SECOND_OP_SETUP_FRACTION, MEASURED, MEASURED_V4 } from './candidates';
 
 // The shipped engine, measured against Lance's quotes at his own quantities.
 // This is the incumbent. A new model has to beat it on SPREAD to be worth having.
@@ -153,5 +153,32 @@ describe('candidate models, compared', () => {
     expect(s.spread).toBeLessThan(v0.spread / 2.5);
     // And the errors stop all pointing one way: no single term is missing now.
     expect(s.systematic).toBe(false);
+  });
+});
+
+/**
+ * The bundling trap. Three findings about Lance's pricing are all true, and
+ * combining them is worse than adopting the best one alone. This test exists so
+ * that the next person to notice "our rate is £75/hr and his is £30" cannot
+ * quietly bundle the fix in without re-measuring.
+ */
+describe('measured on our own machine choice, not Lance\'s', () => {
+  const M = MEASURED_V4;
+
+  it('flattening the rate makes the answer WORSE, on its own', () => {
+    expect(M.flatRateOnly.spread).toBeGreaterThan(M.shipped.spread);
+  });
+
+  it('route setup is the only ingredient that earns its place', () => {
+    expect(M.routeSetupOnly.spread).toBeLessThan(M.shipped.spread / 1.8);
+    // And it is the one that stops every part erring the same way.
+    expect(M.routeSetupOnly.systematic).toBe(false);
+  });
+
+  it('all three together score WORSE than route setup alone', () => {
+    expect(M.allThree.spread).toBeGreaterThan(M.routeSetupOnly.spread);
+    for (const k of ['flatRateOnly', 'rateUpliftOnly', 'allThree'] as const) {
+      expect(M[k].spread).toBeGreaterThan(M.routeSetupOnly.spread);
+    }
   });
 });

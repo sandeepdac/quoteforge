@@ -36,30 +36,36 @@ export const DEFAULT_TURNING_TOOLS: ShopTool[] = [
  * book-vs-reality gap uniformly. Advisory — a shop tunes these to its machines.
  */
 /**
- * CALIBRATION HOLD — why the shop's real rate is not switched on yet.
+ * CALIBRATION — what is switched on, and why the rest is not.
  *
  * Seven job sheets say Lance charges a FLAT £30/hr (£38 for two-machine routes),
  * and that setup time is a property of the machine (120-900 min) rather than of
- * the part. Both findings are solid. Switching them on was tried, measured, and
- * REVERTED, because it made the product worse:
+ * the part. Both findings are solid. Only ONE of them is in the price, because
+ * they were measured separately and only one improved the answer.
  *
- *   spread (worst/best price error across the seven parts, lower is better)
- *     shipped engine                                7.8
- *     + flat rate                                   8.8
- *     + flat rate and setup character               19.6   <- shipped this? no
- *     + flat rate and setup character, but using
- *       LANCE'S machine for each part                2.7
+ *   spread (worst/best price error over the seven parts, lower is better)
+ *     shipped engine                                6.8
+ *     + flat £30/hr rate alone                      8.8   <- WORSE
+ *     + two-op rate uplift alone                    7.8   <- worse
+ *     + setup from the route alone                  3.5   <- SHIPPED
+ *     + all three together                          3.8   <- worse than route alone
  *
- * The last two lines are the same model. The only difference is whose machine
- * choice it uses. We pick the right machine on three parts of six, and setup
- * character spans 120-900 minutes — so once setup depends on the machine, a
- * wrong machine costs seven times the setup error it used to. On 031169 that
- * turned a 3x-low quote into an 1.9x-HIGH one, which loses the job rather than
- * losing money on it.
+ * Setup from the route is live (see quoteCosts.ts). It also removed the
+ * systematic low bias: errors now straddle 1.0 instead of every part being
+ * under-quoted, and six of eight lines sit within 25% of Lance's booked setup.
  *
- * The order of work is therefore fixed, and it is not the order we assumed:
- * MACHINE SELECTION FIRST, then this. The numbers below stay because they are
- * evidence and they are right; they are simply not wired into a price yet.
+ * The rate is deliberately NOT flattened. It looks obviously right and measures
+ * obviously wrong, and the reason is visible in the same table: our CYCLE time
+ * is still 3-50x too fast, so an inflated £/hr is silently absorbing that error.
+ * Flatten the rate and the cycle error is exposed with nothing covering it.
+ *
+ * The order of work is therefore: machine selection (done, 6/6), setup (done),
+ * CYCLE TIME (next), and only then the rate. The numbers below stay because
+ * they are evidence and they are right; they are not yet wired into a price.
+ *
+ * An earlier attempt switched rate and setup on together while machine
+ * selection was 3/6, and the spread went to 19.6 — a wrong machine cost seven
+ * times the setup error it used to. That is why selection came first.
  */
 
 /**
@@ -72,7 +78,7 @@ export const DEFAULT_TURNING_TOOLS: ShopTool[] = [
 export const MULTI_OP_RATE_MULTIPLIER = 38 / 30;
 
 export const DEFAULT_CNC_SETTINGS: CncSettings = {
-  // NOT YET £30/hr, and the reason is measured — see CALIBRATION_HOLD below.
+  // NOT YET £30/hr, and the reason is measured — see CALIBRATION above.
   machineRatePerMin: 1.25,
   setupRatePerMin: 0.80,
   setupTimeFirstOpMin: 35,

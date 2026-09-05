@@ -73,6 +73,33 @@ export const MEASURED = {
 } as const;
 
 /**
+ * RE-MEASURED once machine selection reached 6/6 on Lance's routers, and once
+ * setup came from the whole ROUTE rather than one machine's character stretched
+ * by a fudge factor. v2 above used LANCE'S machine for each part; these use ours.
+ *
+ * The three ingredients were measured SEPARATELY, and that mattered — bundled
+ * together they score worse than the best one alone:
+ *
+ *   shipped                    typical 0.32   spread 6.8
+ *   flat £30/hr rate only      typical 0.22   spread 8.8   worse
+ *   two-op rate uplift only    typical 0.33   spread 7.8   worse
+ *   route setup only           typical 0.78   spread 3.5   SHIPPED
+ *   all three                  typical 0.52   spread 3.8   worse than route alone
+ *
+ * Flattening the rate is the change that looks most obviously right and measures
+ * most obviously wrong. The reason is in the cycle column: our cycle times run
+ * 3-50x fast, and a £75/hr rate against Lance's £30 is quietly absorbing that.
+ * Remove the padding before fixing what it was padding and the answer gets worse.
+ */
+export const MEASURED_V4 = {
+  shipped: { typical: 0.32, spread: 6.8, systematic: true },
+  flatRateOnly: { typical: 0.22, spread: 8.8, systematic: true },
+  rateUpliftOnly: { typical: 0.33, spread: 7.8, systematic: true },
+  routeSetupOnly: { typical: 0.78, spread: 3.5, systematic: false },
+  allThree: { typical: 0.52, spread: 3.8, systematic: true },
+} as const;
+
+/**
  * WHAT THE COMPARISON SAYS TO DO NEXT, in order:
  *
  * 1. The pricing structure is DONE. The oracle proves it. Stop looking there.
@@ -87,6 +114,8 @@ export const MEASURED = {
  */
 export const NEXT_STEPS = [
   'pricing structure: settled by the oracle, no work needed',
-  'setup: adopt machine setup-character (v2), spread 7.8 -> 2.7',
-  'cycle: dominant residual after v2, concentrated on done-complete parts',
+  'machine selection: DONE, 6/6 against Lance routers',
+  'setup: DONE, route setup shipped, spread 6.8 -> 3.5',
+  'cycle: the whole remaining error. 3-50x fast, worst on done-complete parts',
+  'rate: only after cycle. Flattening it now measures WORSE (see MEASURED_V4)',
 ] as const;

@@ -82,8 +82,8 @@ export function calculateMachiningCosts(
   settings: ShopSettings,
   /** Machine charge-out multiplier from the selected machine (see machineSelection). */
   machineRateMultiplier = 1,
-  /** The chosen machine's setup character in minutes (see MachineSpec). */
-  machineSetupCharacterMin = 0,
+  /** Total setup minutes for the whole route (see buildRoute). Already summed. */
+  routeSetupMin = 0,
 ): MachiningCosts {
   const cnc = settings.cnc ?? DEFAULT_CNC_SETTINGS;
   const { overheadPercent, rushPremiumPercent } = settings;
@@ -127,16 +127,15 @@ export function calculateMachiningCosts(
   // actual 195-2070 and, worse, was wrong by 2.5x on some parts and 17x on
   // others — so no single correction could have fixed it.
   //
-  // `machineSetupCharacterMin` is the chosen machine's figure. A second op sets
-  // up faster (the part exists, only the holding changes), hence the fraction.
-  // Falls back to the old shape when no machine has been chosen yet.
-  const secondOpFraction = 0.5;
-  const setupTimeMin = machineSetupCharacterMin
-    ? machineSetupCharacterMin * (1 + (setups - 1) * secondOpFraction)
-    : (
-      cnc.setupTimeFirstOpMin +
-      (setups - 1) * cnc.secondOpSetupMin +
-      t.toolCount * cnc.setupTimePerToolMin);
+  // `routeSetupMin` is the sum the ROUTE already worked out: each machine's own
+  // setup character, with the second op discounted because the part exists and
+  // only the holding changes. It is taken as given — scaling it again here would
+  // charge the second op twice. Falls back to the old shape when no machine has
+  // been chosen yet.
+  const setupTimeMin = routeSetupMin || (
+    cnc.setupTimeFirstOpMin +
+    (setups - 1) * cnc.secondOpSetupMin +
+    t.toolCount * cnc.setupTimePerToolMin);
   // Setup billing: time-based labour, a flat per-setup charge, or both (one-time
   // job costs amortised over the batch). 'flat' matches how CAM quotes bill setup.
   const flatSetupCharge = Math.max(0, cnc.flatSetupChargePerSetup ?? 0) * setups;
