@@ -1,0 +1,151 @@
+/**
+ * INVOICE PDF — reuses the dependency-free PDF writer behind the quote PDF, so
+ * invoices come out as real PDF 1.4 documents with no library and no embedded
+ * fonts. Single Letter page: shop header, bill-to, line items, tax, totals and
+ * payment terms.
+ */
+import type { Customer, Invoice, ShopSettings } from '../types';
+import { Page, assemblePdf, wrap, MARGIN, PAGE_W, PAGE_H } from './pdfGenerator';
+import { currencySymbol } from './currency';
+
+/**
+ * A currency prefix the PDF can actually render. The writer emits Latin-1, so
+ * symbols outside it (€, ¥ …) would be dropped by the escaper and leave bare
+ * numbers — for those we print the ISO code instead, which is unambiguous.
+ */
+function pdfCurrencyPrefix(code?: string): string {
+  const sym = currencySymbol(code);
+  const latin1Safe = [...sym].every((ch) => ch.charCodeAt(0) <= 0xff);
+  return latin1Safe ? sym : `${(code ?? '').toUpperCase()} `;
+}
+
+export interface InvoicePdfInput {
+  invoice: Invoice;
+  customer?: Customer;
+  shop?: Partial<ShopSettings>;
+  /** Job number, printed as the works reference. */
+  jobNumber?: string;
+}
+
+export function buildInvoicePdf(input: InvoicePdfInput): Blob {
+  const { invoice, customer, shop, jobNumber } = input;
+  const cur = pdfCurrencyPrefix(invoice.currency ?? shop?.currency);
+  const money = (n: number) => `${cur}${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
+  const p = new Page();
+  let y = MARGIN;
+
+  // --- Header --------------------------------------------------------------
+  p.text(MARGIN, y + 4, shop?.name || 'QuoteForge Machining', 'F2', 20);
+  p.textRight(PAGE_W - MARGIN, y + 2, 'INVOICE', 'F2', 18);
+  y += 20;
+  if (shop?.address) {
+    for (const ln of String(shop.address).split(/,\s*/)) {
+      p.text(MARGIN, y, ln, 'F1', 9);
+      y += 11;
+    }
+  }
+
+  let my = MARGIN + 24;
+  const metaRight = (label: string, val: string) => {
+    p.textRight(PAGE_W - MARGIN - 90, my, label, 'F1', 9);
+    p.textRight(PAGE_W - MARGIN, my, val, 'F2', 9);
+    my += 13;
+  };
+  metaRight('Invoice #', invoice.invoiceNumber);
+  metaRight('Issued', new Date(invoice.issueDate).toLocaleDateString());
+  metaRight('Due', new Date(invoice.dueDate).toLocaleDateString());
+  if (invoice.poNumber) metaRight('Your PO', invoice.poNumber);
+  if (jobNumber) metaRight('Works order', jobNumber);
+
+  y = Math.max(y, my) + 8;
+  p.line(MARGIN, y, PAGE_W - MARGIN, 1, 0.6);
+  y += 22;
+
+  // --- Bill to -------------------------------------------------------------
+  p.text(MARGIN, y, 'BILL TO', 'F2', 9);
+  y += 15;
+  for (const ln of [customer?.name, customer?.contactName, customer?.email, customer?.address].filter(Boolean)) {
+    p.text(MARGIN, y, String(ln), 'F1', 10);
+    y += 13;
+  }
+  y += 12;
+
+  // --- Line items ----------------------------------------------------------
+  const xQty = PAGE_W - MARGIN - 230;
+  const xUnit = PAGE_W - MARGIN - 120;
+  const xAmt = PAGE_W - MARGIN;
+  p.text(MARGIN, y, 'DESCRIPTION', 'F2', 9);
+  p.textRight(xQty, y, 'QTY', 'F2', 9);
+  p.textRight(xUnit, y, 'UNIT', 'F2', 9);
+  p.textRight(xAmt, y, 'AMOUNT', 'F2', 9);
+  y += 6;
+  p.line(MARGIN, y, PAGE_W - MARGIN, 0.5, 0.75);
+  y += 15;
+
+  for (const l of invoice.lines) {
+    const [first, ...rest] = wrap(l.description, 52, 2);
+    p.text(MARGIN, y, first ?? l.description, 'F1', 10);
+    p.textRight(xQty, y, String(l.quantity), 'F1', 10);
+    p.textRight(xUnit, y, money(l.unitPrice), 'F1', 10);
+    p.textRight(xAmt, y, money(l.amount), 'F1', 10);
+    y += 14;
+    for (const ln of rest) {
+      p.text(MARGIN + 8, y, ln, 'F1', 9);
+      y += 12;
+    }
+  }
+
+  y += 4;
+  p.line(MARGIN, y, PAGE_W - MARGIN, 0.5, 0.85);
+  y += 18;
+
+  // --- Totals --------------------------------------------------------------
+  const totalRow = (label: string, val: string, bold = false, size = 10) => {
+    p.textRight(xUnit, y, label, bold ? 'F2' : 'F1', size);
+    p.textRight(xAmt, y, val, bold ? 'F2' : 'F1', size);
+    y += bold ? 18 : 15;
+  };
+  totalRow('Subtotal', money(invoice.subtotal));
+  if (invoice.taxRatePercent > 0) {
+    totalRow(`VAT / tax @ ${invoice.taxRatePercent}%`, money(invoice.taxAmount));
+  }
+  totalRow('TOTAL DUE', money(invoice.total), true, 13);
+
+  // --- Terms ---------------------------------------------------------------
+  y += 10;
+  p.line(MARGIN, y, PAGE_W - MARGIN, 0.5, 0.85);
+  y += 18;
+  p.text(MARGIN, y, 'PAYMENT', 'F2', 9);
+  y += 14;
+  p.text(MARGIN, y, `Terms: ${invoice.terms || 'Net 30'}`, 'F1', 10);
+  y += 14;
+  p.text(MARGIN, y, `Due by ${new Date(invoice.dueDate).toLocaleDateString()}`, 'F1', 10);
+  y += 14;
+  if (invoice.notes) {
+    y += 6;
+    p.text(MARGIN, y, 'Notes:', 'F2', 9);
+    y += 13;
+    for (const ln of wrap(invoice.notes, 96, 4)) {
+      p.text(MARGIN, y, ln, 'F1', 9);
+      y += 12;
+    }
+  }
+
+  p.line(MARGIN, PAGE_H - MARGIN, PAGE_W - MARGIN, 0.5, 0.85);
+  p.text(MARGIN, PAGE_H - MARGIN + 14, 'Please quote the invoice number with payment.', 'F1', 8);
+  p.textRight(PAGE_W - MARGIN, PAGE_H - MARGIN + 14, 'Generated by QuoteForge', 'F1', 8);
+
+  return assemblePdf(p.stream());
+}
+
+export function downloadInvoicePdf(input: InvoicePdfInput) {
+  const blob = buildInvoicePdf(input);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${input.invoice.invoiceNumber}_Invoice.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}

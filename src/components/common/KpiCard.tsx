@@ -24,13 +24,13 @@ export default function KpiCard({ title, value, icon: Icon, trend, description, 
   };
 
   return (
-    <div className={cn("bg-white p-5 rounded-lg border border-[#e5e5e5] flex flex-col shadow-sm", className)}>
+    <div className={cn("bg-card p-5 rounded-lg border border-border flex flex-col shadow-sm", className)}>
       <div className="flex items-start justify-between">
-        <span className="text-[10px] font-bold text-[#525252] uppercase tracking-wider">{title}</span>
-        <Icon size={16} className="text-[#a3a3a3]" />
+        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{title}</span>
+        <Icon size={16} className="text-muted-foreground" />
       </div>
       <div className="flex items-end justify-between mt-2">
-        <span className="text-2xl font-bold tracking-tight text-[#0a0a0a]">{value}</span>
+        <span className="text-2xl font-bold tracking-tight text-foreground">{value}</span>
         {trend ? (
           <span className={cn(
             "text-xs font-semibold px-2 py-0.5 rounded-full",
@@ -39,10 +39,10 @@ export default function KpiCard({ title, value, icon: Icon, trend, description, 
             {trend.isPositive ? '+' : '-'}{trend.value}
           </span>
         ) : (
-          description && <span className="text-xs text-[#a3a3a3] font-medium">{description}</span>
+          description && <span className="text-xs text-muted-foreground font-medium">{description}</span>
         )}
       </div>
-      <div className="mt-3 h-1.5 w-full bg-[#fafaf9] rounded-full overflow-hidden">
+      <div className="mt-3 h-1.5 w-full bg-muted rounded-full overflow-hidden">
         <div 
           className={cn("h-full transition-all duration-1000", colorMap[color] || colorMap.primary)} 
           style={{ width: trend ? (trend.isPositive ? '65%' : '20%') : '45%' }}

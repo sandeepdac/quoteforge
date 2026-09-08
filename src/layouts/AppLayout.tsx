@@ -5,7 +5,7 @@ import TopBar from '../components/layout/TopBar';
 
 export default function AppLayout() {
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[#fafaf9] font-sans text-[#0a0a0a]">
+    <div className="flex h-screen w-full overflow-hidden bg-background font-sans text-foreground">
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0 h-screen">
         <TopBar />

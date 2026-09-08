@@ -9,7 +9,7 @@ interface StepIndicatorProps {
 
 export default function StepIndicator({ currentStep, steps }: StepIndicatorProps) {
   return (
-    <div className="flex items-center justify-between w-full max-w-2xl mx-auto mb-12 relative overflow-hidden">
+    <div className="flex items-center justify-between w-full max-w-2xl mx-auto mb-6 relative overflow-hidden">
       {/* Background Line */}
       <div className="absolute top-5 left-0 w-full h-0.5 bg-border -z-10"></div>
       
