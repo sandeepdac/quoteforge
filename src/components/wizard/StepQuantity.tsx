@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { 
   Users, 
   Truck, 
@@ -6,62 +6,83 @@ import {
   Clock, 
   ArrowRight,
   TrendingUp,
+  AlertTriangle,
   PieChart as PieChartIcon
 } from 'lucide-react';
-import { 
-  PieChart, 
-  Pie, 
-  Cell, 
-  ResponsiveContainer 
-} from 'recharts';
 import { useQuotes } from '../../context/QuoteContext';
 import { useSettings } from '../../context/SettingsContext';
 import { calculateQuoteCosts } from '../../utils/estimator';
-import { PartFeatures } from '../../types';
+import { calculateMachiningCosts } from '../../utils/cncEstimator';
+import { calculateMilledCosts } from '../../utils/milledEstimator';
+import { materialPropsFor } from '../../utils/materials';
+import { ExtractedCadAnalysis } from '../../utils/cadAnalyzer';
+import { CostLineItem, MachiningCosts, PartFeatures } from '../../types';
 import { cn } from '../../utils/cn';
+import { currencySymbol } from '../../utils/currency';
+import { dimsDesc } from '../../utils/dims';
+import { resolveQuoteCosts } from '../../utils/quoteCosts';
 
 interface StepQuantityProps {
   data: any;
+  cadAnalysis?: ExtractedCadAnalysis;
   onContinue: (config: any) => void;
   onBack: () => void;
   onUpdate: (data: any) => void;
 }
 
-export default function StepQuantity({ data, onContinue, onBack, onUpdate }: StepQuantityProps) {
+export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, onUpdate }: StepQuantityProps) {
   const { customers, materials } = useQuotes();
-  const { settings } = useSettings();
+  const { settings, updateSettings } = useSettings();
+  const efficiency = settings.cnc?.efficiencyFactor ?? 0.8;
 
   const currentMaterial = materials.find(m => m.id === data.features.materialId) || materials[0];
 
-  const costs = useMemo(() => {
-    return calculateQuoteCosts(
-      data.features as PartFeatures,
-      data.config.quantity,
-      data.config.isRush,
-      settings.defaultMargin, // Logic is handled in context or here
-      currentMaterial.pricePerKg,
-      settings
-    );
-  }, [data, settings, currentMaterial]);
+  const f = data.features as PartFeatures;
+  // A machined solid was measured → price it from cycle time. Turned parts use the
+  // turning model; milled/prismatic parts use the milling model (the 3 AAG rules).
+  const isTurnedPart = !!(cadAnalysis?.isTurned && cadAnalysis?.turningProfile);
+  const isMilledPart = !!(cadAnalysis?.milledProfile && !cadAnalysis?.isTurned);
+  const isMachining = isTurnedPart || isMilledPart;
+  const sym = currencySymbol(settings.currency);
+
+  // Priced through the SAME resolver the Review step and the save path use, so
+  // the batch curve a quantity is chosen from is the curve that gets quoted.
+  // Weight edits still flow through: the resolver derives volume from
+  // features.weightKg exactly as this screen used to.
+  const { costs, lineItems } = useMemo(() => {
+    const r = resolveQuoteCosts({
+      cadAnalysis,
+      features: f,
+      materialName: currentMaterial.name,
+      materialPricePerKg: currentMaterial.pricePerKg,
+      quantity: data.config.quantity,
+      isRush: data.config.isRush,
+      margin: settings.defaultMargin,
+      settings,
+    });
+    return { costs: r.machiningCosts ?? r.costs, lineItems: r.lineItems };
+  }, [data, settings, currentMaterial, isTurnedPart, isMilledPart, cadAnalysis, f]);
 
   const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
 
-  const pieData = [
-    { name: 'Material', value: costs.materialCost },
-    { name: 'Laser', value: costs.laserCost },
-    { name: 'Labor/Bending', value: costs.bendCost + costs.weldCost + costs.assemblyCost },
-    { name: 'Finish', value: costs.finishCost },
-  ];
-
-  const COLORS = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'];
+  const maxItem = Math.max(...lineItems.map((li) => li.value), 0.0001);
+  // Keep the preview to a glance: the biggest lines are the ones that decide the
+  // price, and the rest stay one click away rather than off the bottom of a scroll.
+  const BREAKDOWN_PREVIEW_LINES = 5;
+  const [showAllLines, setShowAllLines] = useState(false);
+  const rankedLineItems = [...lineItems].sort((a, b) => b.value - a.value);
+  const shownLineItems = showAllLines ? rankedLineItems : rankedLineItems.slice(0, BREAKDOWN_PREVIEW_LINES);
+  const hiddenValue = rankedLineItems.slice(BREAKDOWN_PREVIEW_LINES).reduce((a, li) => a + li.value, 0);
+  const mc = isMachining ? (costs as MachiningCosts) : null;
+  const fmt = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const quantityPresets = [1, 10, 50, 100, 500];
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
       {/* Left Column: Inputs */}
-      <div className="lg:col-span-2 space-y-8 animate-in slide-in-from-left-4 duration-500">
+      <div className="lg:col-span-2 space-y-6 animate-in slide-in-from-left-4 duration-500">
         <div className="space-y-6">
           <h2 className="text-xl font-semibold">Quantity & Logistics</h2>
           
@@ -172,8 +193,8 @@ export default function StepQuantity({ data, onContinue, onBack, onUpdate }: Ste
           </div>
         </div>
 
-        <div className="flex justify-between items-center pt-8">
-          <button 
+        <div className="flex justify-between items-center pt-4">
+          <button
             onClick={onBack}
             className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
           >
@@ -199,7 +220,7 @@ export default function StepQuantity({ data, onContinue, onBack, onUpdate }: Ste
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Unit Price</p>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-3xl font-bold">${unitPrice.toFixed(2)}</span>
+                  <span className="text-3xl font-bold">{sym}{unitPrice.toFixed(2)}</span>
                   <span className="text-xs text-muted-foreground">/ ea</span>
                 </div>
               </div>
@@ -209,57 +230,183 @@ export default function StepQuantity({ data, onContinue, onBack, onUpdate }: Ste
               </div>
             </div>
 
+            {/* Itemized cost breakdown — each process tied to the measured geometry */}
             <div className="space-y-3">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                <PieChartIcon size={14} /> Cost Breakdown <span className="normal-case font-normal text-muted-foreground/70">/ unit</span>
+              </h4>
+              <div className="space-y-2.5">
+                {shownLineItems.map((li) => (
+                  <div key={li.key} className="space-y-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: li.color }}></span>
+                        <span className="text-sm font-medium text-foreground truncate">{li.name}</span>
+                      </div>
+                      <span className="text-sm font-semibold text-foreground tabular-nums">{sym}{fmt(li.value)}</span>
+                    </div>
+                    <div className="flex items-center gap-2 pl-4">
+                      <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${(li.value / maxItem) * 100}%`, backgroundColor: li.color }}></div>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground shrink-0">{Math.round((li.value / costs.subtotal) * 100)}%</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground/80 pl-4 leading-tight">{li.driver}</p>
+                  </div>
+                ))}
+              </div>
+              {/* The full breakdown runs to a dozen lines with a driver sentence
+                  each, which turned the preview into a scroll. The lines that
+                  decide the price are the big ones; the rest are a click away. */}
+              {lineItems.length > BREAKDOWN_PREVIEW_LINES && (
+                <button
+                  onClick={() => setShowAllLines((v) => !v)}
+                  className="text-[11px] font-medium text-primary hover:underline"
+                >
+                  {showAllLines
+                    ? 'Show fewer lines'
+                    : `Show all ${lineItems.length} lines (${lineItems.length - BREAKDOWN_PREVIEW_LINES} more, ${Math.round((hiddenValue / Math.max(costs.subtotal, 0.0001)) * 100)}% of cost)`}
+                </button>
+              )}
+              {mc && cadAnalysis && (
+                <div className="rounded-md border border-border bg-muted/40 p-2.5 space-y-1">
+                  {cadAnalysis.machineRecommendation && (
+                    <div className="flex items-center justify-between text-[11px] pb-1 mb-1 border-b border-border/60">
+                      <span className="text-muted-foreground">Machine</span>
+                      <span className="font-semibold text-foreground text-right">{cadAnalysis.machineRecommendation.recommendedName}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-muted-foreground">
+                      {cadAnalysis.partClass === 'turned'
+                        ? `Turned from ⌀${cadAnalysis.diameterMm} bar`
+                        : mc.fromBarStock
+                          ? `Mill-turn from ⌀${mc.barDiameterMm} round bar`
+                          : mc.stockMm
+                            ? `Milled from ${dimsDesc(mc.stockMm)} billet`
+                            : 'Milled from billet'}
+                    </span>
+                    <span className="font-semibold text-foreground">
+                      {Math.round(mc.buyToFlyRatio * 100)}% material yield
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={cn('h-full rounded-full', mc.buyToFlyRatio < 0.15 ? 'bg-amber-500' : 'bg-emerald-500')}
+                        style={{ width: `${Math.max(3, Math.min(100, mc.buyToFlyRatio * 100))}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground/80 leading-tight">
+                    {mc.machineClass === 'mill'
+                      ? `~${mc.cycleTimeSec}s cycle · ${mc.removedVolumeCm3} cm³ removed from ${mc.stockVolumeCm3} cm³ ${mc.fromBarStock ? 'bar' : 'billet'} · ${mc.setups} setup${mc.setups > 1 ? 's' : ''} · ${mc.pocketCount ?? 0} pocket${(mc.pocketCount ?? 0) === 1 ? '' : 's'}${(mc.deepPocketCount ?? 0) > 0 ? ` (${mc.deepPocketCount} deep)` : ''} · ${mc.holeCount ?? 0} hole${(mc.holeCount ?? 0) === 1 ? '' : 's'}${(mc.crossFeatureCount ?? 0) > 0 ? ` · ${mc.crossFeatureCount} off-axis feature${mc.crossFeatureCount === 1 ? '' : 's'}` : ''}`
+                      : `~${mc.cycleTimeSec}s cycle · ${mc.removedVolumeCm3} cm³ removed from ${mc.stockVolumeCm3} cm³ bar · ${mc.setups} setup${mc.setups > 1 ? 's' : ''} · buy-to-fly`}
+                  </p>
+                </div>
+              )}
+              {cadAnalysis?.formedPart && (
+                <div className="flex gap-2 bg-amber-500/10 border border-amber-500/30 rounded-md p-2.5">
+                  <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Formed part: laser &amp; finishing are measured from the <strong className="text-foreground">folded shape</strong> and
+                    under-estimate the flat-blank cut. Upload the flat DXF/drawing for an accurate cut cost.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Efficiency factor — the primary calibration control (live recalc) */}
+            {mc && (
+              <div className="space-y-2 border-t border-border pt-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Shop efficiency</span>
+                  <span className="text-sm font-bold text-primary tabular-nums">{Math.round(efficiency * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.6}
+                  max={1.0}
+                  step={0.05}
+                  value={efficiency}
+                  onChange={(e) => updateSettings({ cnc: { ...settings.cnc!, efficiencyFactor: Number(e.target.value) } })}
+                  className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+                />
+                <p className="text-[10px] text-muted-foreground/80 leading-tight">
+                  Calibrate to a job you know: actual time = book time ÷ efficiency. Every quote recalculates live.
+                  Current cycle ~{mc.cycleTimeSec}s.
+                </p>
+              </div>
+            )}
+
+            {/* Batch quantity curve — setup amortisation */}
+            {mc && (
+              <div className="space-y-2 border-t border-border pt-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Price per part by quantity</span>
+                  <span className="text-[10px] text-muted-foreground flex items-center gap-3">
+                    <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-primary" /> First order</span>
+                    <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500" /> Repeat</span>
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {mc.batchCurve.map((pt) => {
+                    const maxUp = Math.max(...mc.batchCurve.map((p) => p.unitPrice), 0.0001);
+                    const isCurrent = pt.quantity === data.config.quantity;
+                    const hasRepeatGap = pt.repeatUnitPrice < pt.unitPrice - 0.01;
+                    return (
+                      <div key={pt.quantity} className="flex items-center gap-2">
+                        <span className={cn('text-[10px] w-8 tabular-nums shrink-0', isCurrent ? 'font-bold text-primary' : 'text-muted-foreground')}>×{pt.quantity}</span>
+                        <div className="flex-1 h-3 bg-muted rounded overflow-hidden relative">
+                          <div className={cn('h-full rounded', isCurrent ? 'bg-primary' : 'bg-primary/40')} style={{ width: `${(pt.unitPrice / maxUp) * 100}%` }}></div>
+                          {hasRepeatGap && (
+                            <div className="absolute top-0 h-full w-0.5 bg-emerald-500" style={{ left: `${(pt.repeatUnitPrice / maxUp) * 100}%` }} title={`Repeat order: ${sym}${fmt(pt.repeatUnitPrice)}`}></div>
+                          )}
+                        </div>
+                        <span className={cn('text-[10px] w-14 text-right tabular-nums shrink-0', isCurrent ? 'font-bold text-foreground' : 'text-muted-foreground')}>{sym}{fmt(pt.unitPrice)}</span>
+                        <span className="text-[10px] w-14 text-right tabular-nums shrink-0 text-emerald-600 dark:text-emerald-400">{hasRepeatGap ? `${sym}${fmt(pt.repeatUnitPrice)}` : '—'}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground/80 leading-tight">
+                  Setup ({mc.setupTimeMin} min) amortises over the batch. <strong className="text-foreground">First order</strong> carries the one-time
+                  NRE (CAM programming{mc.machineClass === 'mill' ? ' + soft jaws' : ''}, {sym}{fmt(mc.nreCost)}); the <strong className="text-emerald-600 dark:text-emerald-400">repeat</strong> price drops it.
+                </p>
+              </div>
+            )}
+
+            {/* Roll-up to the unit price */}
+            <div className="space-y-2 border-t border-border pt-4">
               <div className="flex justify-between text-sm text-muted-foreground">
-                <span>Material & Processing</span>
-                <span>${(costs.subtotal + costs.overhead).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                <span>{isMachining ? 'Machining subtotal' : 'Manufacturing subtotal'}</span>
+                <span className="tabular-nums">{sym}{fmt(costs.subtotal)}</span>
+              </div>
+              <div className="flex justify-between text-sm text-muted-foreground">
+                <span>Overhead ({(settings.overheadPercent * 100).toFixed(0)}%)</span>
+                <span className="tabular-nums">{sym}{fmt(costs.overhead)}</span>
               </div>
               <div className="flex justify-between text-sm text-muted-foreground">
                 <span>Margin ({(settings.defaultMargin * 100).toFixed(0)}%)</span>
-                <span>${costs.marginAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                <span className="tabular-nums">{sym}{fmt(costs.marginAmount)}</span>
+              </div>
+              <div className="flex justify-between text-sm font-medium text-foreground pt-1 border-t border-border/60">
+                <span>Unit price</span>
+                <span className="tabular-nums">{sym}{fmt(unitPrice)}</span>
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>× {data.config.quantity} unit{data.config.quantity === 1 ? '' : 's'}</span>
+                <span className="tabular-nums">{sym}{fmt(unitPrice * data.config.quantity)}</span>
               </div>
               {data.config.isRush && (
                 <div className="flex justify-between text-sm text-orange-500 font-medium">
-                  <span>Rush Premium (20%)</span>
-                  <span>+${costs.rushPremium.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span>Rush premium ({(settings.rushPremiumPercent * 100).toFixed(0)}%)</span>
+                  <span className="tabular-nums">+{sym}{fmt(costs.rushPremium)}</span>
                 </div>
               )}
               <div className="pt-2 flex justify-between items-center text-xl font-bold text-foreground border-t border-border">
                 <span>Total</span>
-                <span>${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-              </div>
-            </div>
-
-            <div className="pt-4 space-y-4">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                <PieChartIcon size={14} /> Cost Breakdown
-              </h4>
-              <div className="h-40">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={35}
-                      outerRadius={55}
-                      paddingAngle={5}
-                      dataKey="value"
-                    >
-                      {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="grid grid-cols-2 gap-y-2">
-                {pieData.map((item, idx) => (
-                  <div key={item.name} className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[idx] }}></div>
-                    <span className="text-[10px] text-muted-foreground font-medium uppercase truncate">{item.name}</span>
-                  </div>
-                ))}
+                <span className="tabular-nums">{sym}{fmt(grandTotal)}</span>
               </div>
             </div>
           </div>

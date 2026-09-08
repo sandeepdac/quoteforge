@@ -1,28 +1,84 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { 
   RotateCcw, 
   Eye, 
   Box, 
   Layers, 
-  Maximize2, 
-  Sparkles, 
-  Ruler, 
-  Sun, 
+  Maximize2,
+  Minimize2,
+  Sparkles,
+  Ruler,
+  Crosshair,
+  Sun,
   Moon,
   CheckCircle,
   HelpCircle
 } from 'lucide-react';
 import { StepParseResult } from '../../utils/stepParser';
+import { TessellatedMesh } from '../../utils/occtLoader';
+import { cameraBracketFor, zoomLimitsFor, CAMERA_OFFSET } from '../../utils/viewerCamera';
 
 interface CadViewer3DProps {
   cadData: StepParseResult;
   selectedMaterialName?: string;
+  stepMesh?: TessellatedMesh;
   className?: string;
+  /** Called once with a PNG data-URL of the rendered model (for the part thumbnail). */
+  onSnapshot?: (dataUrl: string) => void;
 }
 
-export default function CadViewer3D({ cadData, selectedMaterialName, className = '' }: CadViewer3DProps) {
+type MeshStatus = 'idle' | 'ready' | 'fallback';
+
+/** Builds a camera-facing text label (rounded pill) as a THREE.Sprite. */
+function makeTextSprite(text: string, colorCss: string): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  const measureCtx = canvas.getContext('2d')!;
+  const fontSize = 48;
+  const font = `bold ${fontSize}px ui-monospace, monospace`;
+  measureCtx.font = font;
+  const textW = Math.ceil(measureCtx.measureText(text).width);
+  canvas.width = textW + 36;
+  canvas.height = fontSize + 26;
+
+  const ctx = canvas.getContext('2d')!;
+  ctx.font = font;
+  const r = 12;
+  ctx.beginPath();
+  ctx.moveTo(r, 0);
+  ctx.arcTo(canvas.width, 0, canvas.width, canvas.height, r);
+  ctx.arcTo(canvas.width, canvas.height, 0, canvas.height, r);
+  ctx.arcTo(0, canvas.height, 0, 0, r);
+  ctx.arcTo(0, 0, canvas.width, 0, r);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(15,23,42,0.82)';
+  ctx.fill();
+  ctx.strokeStyle = colorCss;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = colorCss;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true })
+  );
+  sprite.userData.aspect = canvas.width / canvas.height;
+  return sprite;
+}
+
+export default function CadViewer3D({ cadData, selectedMaterialName, stepMesh, className = '', onSnapshot }: CadViewer3DProps) {
   const mountRef = useRef<HTMLDivElement>(null);
+  // Snapshot plumbing: keep the latest callback in a ref so the heavy scene
+  // effect doesn't re-run when it changes, and capture only once per model.
+  const onSnapshotRef = useRef(onSnapshot);
+  useEffect(() => { onSnapshotRef.current = onSnapshot; });
+  const snapshotDoneRef = useRef(false);
+  // A new model should be re-captured; a theme/toggle re-render should not.
+  useEffect(() => { snapshotDoneRef.current = false; }, [cadData, stepMesh]);
   const [isWireframe, setIsWireframe] = useState(false);
   const [showBoundingBox, setShowBoundingBox] = useState(true);
   const [showHoles, setShowHoles] = useState(true);
@@ -31,6 +87,70 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
   const [isAutoRotate, setIsAutoRotate] = useState(true);
   const [measurementMode, setMeasurementMode] = useState(false);
   const [measuredDistance, setMeasuredDistance] = useState<number | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Refs used by the click-to-measure tool (read inside the render effect without
+  // forcing a scene rebuild on every toggle).
+  const measurementModeRef = useRef(false);
+  const measurePointsRef = useRef<THREE.Vector3[]>([]);
+  const measureGroupRef = useRef<THREE.Group | null>(null);
+  const mainMeshRef = useRef<THREE.Mesh | null>(null);
+
+  const clearMeasurement = () => {
+    const g = measureGroupRef.current;
+    if (g) while (g.children.length) g.remove(g.children[0]);
+    measurePointsRef.current = [];
+    setMeasuredDistance(null);
+  };
+
+  // Keep the ref in sync and reset picks when measurement is switched off.
+  useEffect(() => {
+    measurementModeRef.current = measurementMode;
+    if (!measurementMode) clearMeasurement();
+    if (measurementMode) setIsAutoRotate(false); // stop spin so points don't move
+  }, [measurementMode]);
+
+  // Collapse fullscreen on Escape.
+  useEffect(() => {
+    if (!isExpanded) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsExpanded(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isExpanded]);
+
+  // Build a three.js geometry from the pre-tessellated B-Rep mesh (produced during
+  // extraction). No re-computation here — the viewer just consumes the mesh.
+  const realGeometry = useMemo(() => {
+    if (!stepMesh) return null;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(stepMesh.positions, 3));
+    if (stepMesh.hasNormals) {
+      geometry.setAttribute('normal', new THREE.BufferAttribute(stepMesh.normals, 3));
+    }
+    geometry.setIndex(new THREE.BufferAttribute(stepMesh.indices, 1));
+    if (!stepMesh.hasNormals) geometry.computeVertexNormals();
+
+    // Center the model on the origin so the existing camera framing works.
+    geometry.computeBoundingBox();
+    const center = new THREE.Vector3();
+    geometry.boundingBox!.getCenter(center);
+    geometry.translate(-center.x, -center.y, -center.z);
+    return geometry;
+  }, [stepMesh]);
+
+  const meshStatus: MeshStatus = realGeometry ? 'ready' : 'fallback';
+
+  // Real per-axis bounding-box extents (mm) of what's actually rendered — used for
+  // both the on-canvas dimension overlay and the summary panel.
+  const axisDims = useMemo(() => {
+    if (realGeometry) {
+      realGeometry.computeBoundingBox();
+      const b = realGeometry.boundingBox!;
+      const r1 = (n: number) => Math.round(n * 10) / 10;
+      return { x: r1(b.max.x - b.min.x), y: r1(b.max.y - b.min.y), z: r1(b.max.z - b.min.z) };
+    }
+    return { x: cadData.lengthMm, y: cadData.heightMm, z: cadData.widthMm };
+  }, [realGeometry, cadData]);
 
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -56,16 +176,33 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
       scene.background = new THREE.Color('#f4f4f5');
     }
 
+    // Everything below is sized from what is ACTUALLY on screen. These used to be
+    // fixed millimetre constants (a 600 mm grid, a 2000 mm far plane, a 100–1200 mm
+    // zoom range), which silently broke on large parts: an 800 mm plate puts the
+    // camera ~2360 mm out, past the old far plane, so the model was clipped away to
+    // a sliver. Scaling by the model span keeps any part framed the same way.
+    const modelSpan = Math.max(axisDims.x, axisDims.y, axisDims.z) || 300;
+
     // Grid helper
     const gridColor = theme === 'blueprint' ? '#1e293b' : '#3f3f46';
-    const gridHelper = new THREE.GridHelper(600, 30, new THREE.Color(gridColor), new THREE.Color(gridColor));
-    gridHelper.position.y = -cadData.heightMm / 2 - 20;
+    const gridSpan = Math.max(600, modelSpan * 2);
+    const gridHelper = new THREE.GridHelper(gridSpan, 30, new THREE.Color(gridColor), new THREE.Color(gridColor));
+    gridHelper.position.y = -axisDims.y / 2 - modelSpan * 0.06;
     scene.add(gridHelper);
 
     // 2. Camera Setup
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 2000);
-    const maxDim = Math.max(cadData.lengthMm, cadData.widthMm, cadData.heightMm) || 300;
-    camera.position.set(maxDim * 1.5, maxDim * 1.2, maxDim * 1.8);
+    // Near/far bracket the model rather than being fixed: the camera sits ~3×
+    // the span away, so the far plane must clear that plus the part itself, with
+    // headroom for zooming out.
+    // Frame slightly wider when dimension annotations are shown so their labels fit.
+    const frame = showDimensions ? 1.12 : 1.0;
+    const bracket = cameraBracketFor(modelSpan, frame);
+    const camera = new THREE.PerspectiveCamera(45, width / height, bracket.near, bracket.far);
+    camera.position.set(
+      modelSpan * CAMERA_OFFSET.x * frame,
+      modelSpan * CAMERA_OFFSET.y * frame,
+      modelSpan * CAMERA_OFFSET.z * frame
+    );
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
@@ -82,7 +219,7 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
     scene.add(dirLight2);
 
     // 4. Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     mountRef.current.appendChild(renderer.domElement);
@@ -95,9 +232,6 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
     const { lengthMm, widthMm, heightMm } = cadData;
     const thickness = heightMm < 12 ? Math.max(1.5, heightMm) : 3.0;
 
-    // Main CAD Solid Geometry (Sheet metal rounded box / flange model)
-    const boxGeo = new THREE.BoxGeometry(lengthMm, thickness, widthMm, 8, 2, 8);
-
     // Material Styling
     let cadMaterial: THREE.Material;
 
@@ -107,62 +241,77 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
         metalness: 0.3,
         roughness: 0.2,
         wireframe: isWireframe,
-        transparent: true,
-        opacity: 0.9
+        side: THREE.DoubleSide
       });
     } else if (theme === 'metal') {
       cadMaterial = new THREE.MeshStandardMaterial({
         color: 0xcbd5e1,
         metalness: 0.85,
         roughness: 0.25,
-        wireframe: isWireframe
+        wireframe: isWireframe,
+        side: THREE.DoubleSide
       });
     } else {
       cadMaterial = new THREE.MeshStandardMaterial({
         color: 0x3b82f6,
         metalness: 0.5,
         roughness: 0.3,
-        wireframe: isWireframe
+        wireframe: isWireframe,
+        side: THREE.DoubleSide
       });
     }
 
-    const mainMesh = new THREE.Mesh(boxGeo, cadMaterial);
-    objectGroup.add(mainMesh);
-
-    // Add Edges Line for crisp CAD outline look
-    const edgesGeo = new THREE.EdgesGeometry(boxGeo);
     const edgeColor = theme === 'blueprint' ? 0x38bdf8 : 0x0284c7;
     const lineMat = new THREE.LineBasicMaterial({ color: edgeColor, linewidth: 2 });
-    const lineSegments = new THREE.LineSegments(edgesGeo, lineMat);
-    objectGroup.add(lineSegments);
 
-    // Add Bent Flanges if bend count > 0
-    if (cadData.bendCount > 0) {
-      const flangeHeight = Math.min(60, cadData.heightMm > 15 ? cadData.heightMm : 40);
-      
-      // Top Flange
-      const flangeGeo1 = new THREE.BoxGeometry(lengthMm, flangeHeight, thickness);
-      const flangeMesh1 = new THREE.Mesh(flangeGeo1, cadMaterial);
-      flangeMesh1.position.set(0, flangeHeight / 2 - thickness / 2, widthMm / 2 - thickness / 2);
-      objectGroup.add(flangeMesh1);
+    if (realGeometry) {
+      // ---- Exact tessellated B-Rep from the STEP solid ----
+      const mainMesh = new THREE.Mesh(realGeometry, cadMaterial);
+      objectGroup.add(mainMesh);
+      mainMeshRef.current = mainMesh;
 
-      const edgeFlange1 = new THREE.LineSegments(new THREE.EdgesGeometry(flangeGeo1), lineMat);
-      edgeFlange1.position.copy(flangeMesh1.position);
-      objectGroup.add(edgeFlange1);
+      // Real CAD edges derived from the actual faces (feature-angle filtered).
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(realGeometry, 20), lineMat);
+      objectGroup.add(edges);
+    } else {
+      // ---- Schematic fallback: representative sheet-metal box + flanges + hole markers ----
+      const boxGeo = new THREE.BoxGeometry(lengthMm, thickness, widthMm, 8, 2, 8);
+      const mainMesh = new THREE.Mesh(boxGeo, cadMaterial);
+      objectGroup.add(mainMesh);
+      mainMeshRef.current = mainMesh;
 
-      // Bottom Flange
-      const flangeGeo2 = new THREE.BoxGeometry(lengthMm, flangeHeight, thickness);
-      const flangeMesh2 = new THREE.Mesh(flangeGeo2, cadMaterial);
-      flangeMesh2.position.set(0, flangeHeight / 2 - thickness / 2, -widthMm / 2 + thickness / 2);
-      objectGroup.add(flangeMesh2);
+      const edgesGeo = new THREE.EdgesGeometry(boxGeo);
+      const lineSegments = new THREE.LineSegments(edgesGeo, lineMat);
+      objectGroup.add(lineSegments);
 
-      const edgeFlange2 = new THREE.LineSegments(new THREE.EdgesGeometry(flangeGeo2), lineMat);
-      edgeFlange2.position.copy(flangeMesh2.position);
-      objectGroup.add(edgeFlange2);
+      // Add Bent Flanges if bend count > 0
+      if (cadData.bendCount > 0) {
+        const flangeHeight = Math.min(60, cadData.heightMm > 15 ? cadData.heightMm : 40);
+
+        // Top Flange
+        const flangeGeo1 = new THREE.BoxGeometry(lengthMm, flangeHeight, thickness);
+        const flangeMesh1 = new THREE.Mesh(flangeGeo1, cadMaterial);
+        flangeMesh1.position.set(0, flangeHeight / 2 - thickness / 2, widthMm / 2 - thickness / 2);
+        objectGroup.add(flangeMesh1);
+
+        const edgeFlange1 = new THREE.LineSegments(new THREE.EdgesGeometry(flangeGeo1), lineMat);
+        edgeFlange1.position.copy(flangeMesh1.position);
+        objectGroup.add(edgeFlange1);
+
+        // Bottom Flange
+        const flangeGeo2 = new THREE.BoxGeometry(lengthMm, flangeHeight, thickness);
+        const flangeMesh2 = new THREE.Mesh(flangeGeo2, cadMaterial);
+        flangeMesh2.position.set(0, flangeHeight / 2 - thickness / 2, -widthMm / 2 + thickness / 2);
+        objectGroup.add(flangeMesh2);
+
+        const edgeFlange2 = new THREE.LineSegments(new THREE.EdgesGeometry(flangeGeo2), lineMat);
+        edgeFlange2.position.copy(flangeMesh2.position);
+        objectGroup.add(edgeFlange2);
+      }
     }
 
-    // Add Cylindrical Hole Markers
-    if (showHoles) {
+    // Add Cylindrical Hole Markers (schematic only — real geometry already has holes)
+    if (showHoles && !realGeometry) {
       cadData.holeDetails.forEach((hole, idx) => {
         const radius = Math.max(2, hole.diameterMm / 2);
         const cylGeo = new THREE.CylinderGeometry(radius, radius, thickness * 1.8, 16);
@@ -206,6 +355,57 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
       objectGroup.add(bboxLines);
     }
 
+    // Add 3D dimension annotations (dimension lines + camera-facing labels) along
+    // each axis of the actual geometry, so the size reads directly off the model.
+    if (showDimensions) {
+      const dx = axisDims.x, dy = axisDims.y, dz = axisDims.z;
+      const hx = dx / 2, hy = dy / 2, hz = dz / 2;
+      const maxD = Math.max(dx, dy, dz) || 100;
+      const off = maxD * 0.06;
+      const tickLen = maxD * 0.025;
+      const labelH = maxD * 0.1;
+
+      const addDim = (
+        a: THREE.Vector3,
+        b: THREE.Vector3,
+        tickDir: THREE.Vector3,
+        label: string,
+        hex: number,
+        css: string
+      ) => {
+        const mat = new THREE.LineBasicMaterial({ color: hex, depthTest: false, transparent: true });
+        objectGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), mat));
+        const td = tickDir.clone().multiplyScalar(tickLen);
+        objectGroup.add(
+          new THREE.LineSegments(
+            new THREE.BufferGeometry().setFromPoints([
+              a.clone().add(td), a.clone().sub(td),
+              b.clone().add(td), b.clone().sub(td),
+            ]),
+            mat
+          )
+        );
+        const sprite = makeTextSprite(label, css);
+        const aspect = (sprite.userData.aspect as number) || 3;
+        sprite.scale.set(labelH * aspect, labelH, 1);
+        sprite.position.copy(
+          a.clone().add(b).multiplyScalar(0.5).add(tickDir.clone().multiplyScalar(tickLen * 2.4))
+        );
+        objectGroup.add(sprite);
+      };
+
+      const V = THREE.Vector3;
+      // X (red), Y (green), Z (blue) — labelled with the real extent along that axis.
+      addDim(new V(-hx, -hy - off, hz), new V(hx, -hy - off, hz), new V(0, 1, 0), `${dx} mm`, 0xf87171, '#f87171');
+      addDim(new V(hx + off, -hy, hz), new V(hx + off, hy, hz), new V(1, 0, 0), `${dy} mm`, 0x4ade80, '#4ade80');
+      addDim(new V(hx, -hy - off, -hz), new V(hx, -hy - off, hz), new V(0, 1, 0), `${dz} mm`, 0x60a5fa, '#60a5fa');
+    }
+
+    // Group that holds measurement markers/lines so they rotate WITH the model.
+    const measureGroup = new THREE.Group();
+    objectGroup.add(measureGroup);
+    measureGroupRef.current = measureGroup;
+
     scene.add(objectGroup);
 
     // Mouse Controls (Simple Orbit Drag)
@@ -213,8 +413,42 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
     let previousMousePosition = { x: 0, y: 0 };
 
     const domElem = mountRef.current;
+    const raycaster = new THREE.Raycaster();
+
+    // Click-to-measure: pick two surface points; the straight-line distance
+    // between them (in mm) is shown. A third click starts a fresh measurement.
+    const handleMeasureClick = (e: MouseEvent) => {
+      if (!cameraRef.current || !mainMeshRef.current || !measureGroupRef.current) return;
+      const rect = domElem.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      raycaster.setFromCamera(ndc, cameraRef.current);
+      const hits = raycaster.intersectObject(mainMeshRef.current, true);
+      if (!hits.length) return;
+      const local = objectGroup.worldToLocal(hits[0].point.clone());
+      if (measurePointsRef.current.length >= 2) clearMeasurement();
+      measurePointsRef.current.push(local);
+
+      const dotGeo = new THREE.SphereGeometry(Math.max(1.2, (Math.max(axisDims.x, axisDims.y, axisDims.z) || 100) * 0.008), 12, 12);
+      const dot = new THREE.Mesh(dotGeo, new THREE.MeshBasicMaterial({ color: 0xf59e0b, depthTest: false }));
+      dot.position.copy(local);
+      measureGroupRef.current.add(dot);
+
+      if (measurePointsRef.current.length === 2) {
+        const [a, b] = measurePointsRef.current;
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([a, b]),
+          new THREE.LineBasicMaterial({ color: 0xf59e0b, depthTest: false })
+        );
+        measureGroupRef.current.add(line);
+        setMeasuredDistance(a.distanceTo(b));
+      }
+    };
 
     const handleMouseDown = (e: MouseEvent) => {
+      if (measurementModeRef.current) { handleMeasureClick(e); return; } // pick, don't rotate
       isDragging = true;
       previousMousePosition = { x: e.clientX, y: e.clientY };
     };
@@ -240,8 +474,12 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       if (!cameraRef.current) return;
-      cameraRef.current.position.z += e.deltaY * 0.5;
-      cameraRef.current.position.z = Math.max(100, Math.min(1200, cameraRef.current.position.z));
+      // Zoom step and limits scale with the part, so the wheel feels the same on a
+      // 20 mm bracket and an 800 mm plate. Fixed limits used to snap a large part
+      // to a hard stop on the first scroll.
+      const z = zoomLimitsFor(modelSpan);
+      cameraRef.current.position.z += e.deltaY * z.step;
+      cameraRef.current.position.z = Math.max(z.min, Math.min(z.max, cameraRef.current.position.z));
     };
 
     domElem.addEventListener('mousedown', handleMouseDown);
@@ -250,15 +488,30 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
     domElem.addEventListener('wheel', handleWheel, { passive: false });
 
     // Animation Loop
+    let snapFrame = 0;
     const animate = () => {
       animationFrameRef.current = requestAnimationFrame(animate);
 
-      if (objectGroupRef.current && isAutoRotate && !isDragging) {
+      if (objectGroupRef.current && isAutoRotate && !isDragging && !measurementModeRef.current) {
         objectGroupRef.current.rotation.y += 0.005;
       }
 
       if (rendererRef.current && sceneRef.current && cameraRef.current) {
         rendererRef.current.render(sceneRef.current, cameraRef.current);
+        // Capture a still of the real model once it has settled, for the part
+        // thumbnail. preserveDrawingBuffer keeps the frame readable after render.
+        snapFrame++;
+        if (!snapshotDoneRef.current && meshStatus === 'ready' && snapFrame === 45 && onSnapshotRef.current) {
+          try {
+            const url = rendererRef.current.domElement.toDataURL('image/png');
+            if (url && url.length > 2000) {
+              onSnapshotRef.current(url);
+              snapshotDoneRef.current = true;
+            }
+          } catch {
+            snapshotDoneRef.current = true; // don't retry on tainted/failed canvas
+          }
+        }
       }
     };
 
@@ -276,9 +529,18 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
 
     window.addEventListener('resize', handleResize);
 
+    // Keep the canvas synced to its CONTAINER, not just the window — the panel's
+    // width settles after layout/animation and on expand, and a stale width is
+    // what leaves the model crammed to one side with empty space beside it.
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(domElem);
+    // Re-measure on the next frame too, in case the first measure was pre-layout.
+    requestAnimationFrame(handleResize);
+
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       domElem.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
@@ -288,7 +550,7 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
         domElem.removeChild(rendererRef.current.domElement);
       }
     };
-  }, [cadData, theme, isWireframe, showBoundingBox, showHoles, isAutoRotate]);
+  }, [cadData, theme, isWireframe, showBoundingBox, showHoles, showDimensions, isAutoRotate, realGeometry, axisDims, isExpanded]);
 
   const handleResetView = () => {
     if (objectGroupRef.current) {
@@ -297,9 +559,13 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
   };
 
   return (
-    <div className={`relative rounded-xl border border-border overflow-hidden bg-card flex flex-col ${className}`}>
+    <div className={
+      isExpanded
+        ? 'fixed inset-0 z-50 bg-card flex flex-col'
+        : `relative rounded-xl border border-border overflow-hidden bg-card flex flex-col ${className}`
+    }>
       {/* CAD Toolbar */}
-      <div className="bg-slate-900/90 backdrop-blur-md px-4 py-2.5 flex items-center justify-between border-b border-slate-800 text-slate-200 text-xs">
+      <div className="bg-slate-900/90 backdrop-blur-md px-4 py-2.5 flex flex-wrap items-center justify-between gap-y-2 border-b border-slate-800 text-slate-200 text-xs">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 font-bold text-sky-400">
             <Box size={16} />
@@ -308,6 +574,16 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
           <span className="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-[10px] font-mono">
             {cadData.fileName}
           </span>
+          {meshStatus === 'ready' && (
+            <span className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
+              <CheckCircle size={11} /> Exact B-Rep
+            </span>
+          )}
+          {meshStatus === 'fallback' && (
+            <span className="bg-slate-700 text-slate-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider" title="Could not tessellate the STEP solid; showing a representative schematic.">
+              Schematic
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -334,6 +610,28 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
           </button>
 
           <button
+            onClick={() => setShowDimensions(!showDimensions)}
+            className={`px-2.5 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
+              showDimensions ? 'bg-sky-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+            }`}
+            title="Toggle Dimensions"
+          >
+            <Ruler size={13} />
+            Dims
+          </button>
+
+          <button
+            onClick={() => setMeasurementMode(!measurementMode)}
+            className={`px-2.5 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
+              measurementMode ? 'bg-amber-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+            }`}
+            title="Measure distance between two points on the model"
+          >
+            <Crosshair size={13} />
+            Measure
+          </button>
+
+          <button
             onClick={() => setIsAutoRotate(!isAutoRotate)}
             className={`px-2.5 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
               isAutoRotate ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
@@ -342,6 +640,15 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
           >
             <RotateCcw size={13} className={isAutoRotate ? 'animate-spin' : ''} />
             Spin
+          </button>
+
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="px-2.5 py-1 rounded text-[11px] font-medium flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            title={isExpanded ? 'Collapse viewer' : 'Expand viewer to full screen'}
+          >
+            {isExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            {isExpanded ? 'Close' : 'Expand'}
           </button>
 
           <div className="h-4 w-px bg-slate-700 mx-1"></div>
@@ -368,9 +675,9 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
       </div>
 
       {/* 3D WebGL Canvas Area */}
-      <div 
-        ref={mountRef} 
-        className="w-full h-[360px] relative cursor-grab active:cursor-grabbing select-none"
+      <div
+        ref={mountRef}
+        className={`w-full relative select-none ${isExpanded ? 'flex-1' : 'h-[360px]'} ${measurementMode ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
       >
         {/* Dimension Callouts Overlay */}
         {showDimensions && (
@@ -381,16 +688,16 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
             </div>
             <div className="grid grid-cols-3 gap-3 text-center">
               <div className="bg-slate-800/80 p-1.5 rounded border border-slate-700">
-                <span className="text-[10px] text-slate-400 block">Length X</span>
-                <span className="font-bold text-white text-sm">{cadData.lengthMm} mm</span>
+                <span className="text-[10px] text-red-400 block">X</span>
+                <span className="font-bold text-white text-sm">{axisDims.x} mm</span>
               </div>
               <div className="bg-slate-800/80 p-1.5 rounded border border-slate-700">
-                <span className="text-[10px] text-slate-400 block">Width Y</span>
-                <span className="font-bold text-white text-sm">{cadData.widthMm} mm</span>
+                <span className="text-[10px] text-emerald-400 block">Y</span>
+                <span className="font-bold text-white text-sm">{axisDims.y} mm</span>
               </div>
               <div className="bg-slate-800/80 p-1.5 rounded border border-slate-700">
-                <span className="text-[10px] text-slate-400 block">Height Z</span>
-                <span className="font-bold text-white text-sm">{cadData.heightMm} mm</span>
+                <span className="text-[10px] text-sky-400 block">Z</span>
+                <span className="font-bold text-white text-sm">{axisDims.z} mm</span>
               </div>
             </div>
           </div>
@@ -414,9 +721,21 @@ export default function CadViewer3D({ cadData, selectedMaterialName, className =
           </div>
         </div>
 
+        {/* Measurement panel */}
+        {measurementMode && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-amber-500/15 border border-amber-500/40 backdrop-blur-md text-amber-100 px-4 py-2 rounded-lg text-xs shadow-xl flex items-center gap-3">
+            <Crosshair size={14} className="text-amber-400" />
+            {measuredDistance != null ? (
+              <span>Distance: <strong className="text-white font-mono text-sm">{measuredDistance.toFixed(2)} mm</strong> <span className="text-amber-200/70">· click to start a new measurement</span></span>
+            ) : (
+              <span>{measurePointsRef.current.length === 1 ? 'Click the second point…' : 'Click two points on the model to measure'}</span>
+            )}
+          </div>
+        )}
+
         {/* Drag Guidance */}
         <div className="absolute bottom-3 right-3 text-[10px] text-slate-400 bg-slate-900/60 px-2.5 py-1 rounded backdrop-blur">
-          Click & Drag to Rotate | Scroll to Zoom
+          {measurementMode ? 'Click points to Measure | Scroll to Zoom' : 'Click & Drag to Rotate | Scroll to Zoom'}
         </div>
       </div>
     </div>

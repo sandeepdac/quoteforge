@@ -17,8 +17,11 @@ export function calculateQuoteCosts(
   const laserCutTimeMin = (features.perimeterMm / speeds.laserCuttingMmPerMin) + (features.pierceCount * 0.5);
   const laserCost = laserCutTimeMin * rates.laserPerMin;
 
-  // Bending cost
-  const bendTimeMin = (features.bendCount * (features.isSimpleBending ? speeds.bendSimpleMin : speeds.bendCompoundMin)) + speeds.bendSetupMin;
+  // Bending cost — only a part that actually gets folded touches the press brake,
+  // so a flat part (0 bends) incurs no setup or run time.
+  const bendTimeMin = features.bendCount > 0
+    ? (features.bendCount * (features.isSimpleBending ? speeds.bendSimpleMin : speeds.bendCompoundMin)) + speeds.bendSetupMin
+    : 0;
   const bendCost = bendTimeMin * rates.pressBrakePerMin;
 
   // Welding cost

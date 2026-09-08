@@ -102,7 +102,79 @@ DATA;
 ENDSEC;
 END-ISO-10303-21;`;
 
-export const SAMPLE_CAD_PDF_METADATA = {
+export interface CadPdfMetadata {
+  drawingNumber: string;
+  title: string;
+  revision: string;
+  author: string;
+  scale: string;
+  units: string;
+  material: string;
+  finish: string;
+  tolerances: string;
+  dimensions: { lengthMm: number; widthMm: number; heightMm: number };
+  features: {
+    holeCount: number;
+    holeDetails: Array<{ diameterMm: number; count: number }>;
+    bendCount: number;
+    isSimpleBending: boolean;
+    perimeterMm: number;
+    pierceCount: number;
+    weldLengthMm: number;
+    weldCount: number;
+    weightKg: number;
+    surfaceAreaM2: number;
+  };
+  notes: string[];
+}
+
+/**
+ * Real title-block + feature data for the bundled "P5 Round Top Flag" demo drawing
+ * (public/samples/P5-Round-Top-Flag.pdf). Dimensions and hole schedule are kept
+ * consistent with the geometry parsed from the matching STEP model so the 2D and 3D
+ * demo paths tell the same story.
+ */
+export const P5_ROUND_TOP_FLAG_PDF: CadPdfMetadata = {
+  drawingNumber: "FGC-P5-08",
+  title: "P5 ROUND TOP FLAG",
+  revision: "ISS 4",
+  author: "R&D Engineering",
+  scale: "1:1",
+  units: "mm",
+  material: "Mild Steel 3.0mm (S275)",
+  finish: "Deburr & Zinc Plate (Fe/Zn 8)",
+  tolerances: "ISO 2768-m (Linear ±0.2mm, Angular ±0.5°)",
+  dimensions: {
+    lengthMm: 56.3,
+    widthMm: 40.0,
+    heightMm: 34.3
+  },
+  features: {
+    holeCount: 14,
+    holeDetails: [
+      { diameterMm: 8.5, count: 8 },
+      { diameterMm: 5.5, count: 4 },
+      { diameterMm: 23.5, count: 2 }
+    ],
+    bendCount: 8,
+    isSimpleBending: false,
+    perimeterMm: 1302,
+    pierceCount: 21,
+    weldLengthMm: 0,
+    weldCount: 0,
+    weightKg: 0.27,
+    surfaceAreaM2: 0.05
+  },
+  notes: [
+    "1. MATERIAL: 3.0mm MILD STEEL, GRADE S275.",
+    "2. FORM ALL BENDS TO R3.0 INSIDE RADIUS.",
+    "3. DEBURR AND LINISH ALL EXPOSED EDGES 0.5 MAX.",
+    "4. ZINC PLATE TO Fe/Zn 8 AFTER FORMING.",
+    "5. MOUNTING HOLES: 4x Ø5.5 & 8x Ø8.5."
+  ]
+};
+
+export const SAMPLE_CAD_PDF_METADATA: CadPdfMetadata = {
   drawingNumber: "DWG-2026-8841-B",
   title: "HEAVY DUTY CONTROL CHASSIS",
   revision: "Rev C",

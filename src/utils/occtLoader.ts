@@ -1,0 +1,221 @@
+/**
+ * Lazy OpenCascade (occt-import-js) loader that tessellates a STEP B-Rep solid into
+ * a renderable triangle mesh. The ~7.6 MB WASM module is fetched only the first time
+ * a STEP file is actually rendered, then cached for the session.
+ *
+ * All failures resolve to `null` so the 3D viewer can gracefully fall back to its
+ * schematic representation instead of breaking the quoting flow.
+ */
+// Vite emits the WASM as a hashed asset and hands back its URL (a tiny string).
+import wasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
+
+import { detectFeaturesFromOcctMeshes, DetectedFeatures } from './holeDetector';
+
+export interface TessellatedMesh {
+  positions: Float32Array;
+  normals: Float32Array;
+  indices: Uint32Array;
+  hasNormals: boolean;
+  meshCount: number;
+  features?: DetectedFeatures; // holes + bends detected geometrically from the B-Rep faces
+}
+
+export interface MeshMeasurements {
+  /** Bounding-box extents sorted descending, in mm. */
+  lengthMm: number;
+  widthMm: number;
+  heightMm: number;
+  /** Raw axis-aligned bounding box extents (unsorted), in mm. */
+  boundingBoxMm: { x: number; y: number; z: number };
+  /** Enclosed solid volume, in cm³ (exact for a closed manifold mesh). */
+  volumeCm3: number;
+  /** Total wetted surface area, in cm². */
+  surfaceAreaCm2: number;
+}
+
+const round = (value: number, decimals: number) => {
+  const f = 10 ** decimals;
+  return Math.round(value * f) / f;
+};
+
+/**
+ * Computes exact bounding box, enclosed volume and surface area directly from the
+ * tessellated triangles — the "measured from the solid" numbers that then drive the
+ * weight and finishing cost. Volume uses the signed-tetrahedron sum (origin- and
+ * winding-independent in magnitude for a closed surface); area sums triangle areas.
+ */
+export function measureMesh(mesh: TessellatedMesh): MeshMeasurements {
+  const p = mesh.positions;
+  const idx = mesh.indices;
+
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < p.length; i += 3) {
+    const x = p[i], y = p[i + 1], z = p[i + 2];
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+
+  let sixVolume = 0;
+  let twiceArea = 0;
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+    const ax = p[a], ay = p[a + 1], az = p[a + 2];
+    const bx = p[b], by = p[b + 1], bz = p[b + 2];
+    const cx = p[c], cy = p[c + 1], cz = p[c + 2];
+
+    // 6 * signed volume of the tetrahedron (origin, a, b, c)
+    sixVolume += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+
+    // 2 * triangle area = |(b - a) × (c - a)|
+    const ux = bx - ax, uy = by - ay, uz = bz - az;
+    const vx = cx - ax, vy = cy - ay, vz = cz - az;
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    twiceArea += Math.hypot(nx, ny, nz);
+  }
+
+  const volumeMm3 = Math.abs(sixVolume) / 6;
+  const areaMm2 = twiceArea / 2;
+  const dims = [maxX - minX, maxY - minY, maxZ - minZ].sort((x, y) => y - x);
+
+  return {
+    lengthMm: round(dims[0], 1),
+    widthMm: round(dims[1], 1),
+    heightMm: round(dims[2], 1),
+    boundingBoxMm: { x: maxX - minX, y: maxY - minY, z: maxZ - minZ },
+    volumeCm3: round(volumeMm3 / 1000, 2),
+    surfaceAreaCm2: round(areaMm2 / 100, 1),
+  };
+}
+
+let occtPromise: Promise<import('occt-import-js').OcctModule> | null = null;
+
+function loadOcct() {
+  if (!occtPromise) {
+    // Dynamic import keeps the ~90 KB emscripten glue out of the main bundle; it
+    // (and the WASM) only load the first time a STEP file is rendered.
+    occtPromise = import('occt-import-js').then((mod) =>
+      mod.default({ locateFile: (path) => (path.endsWith('.wasm') ? wasmUrl : path) })
+    );
+  }
+  return occtPromise;
+}
+
+export type CadSolidFormat = 'step' | 'iges' | 'brep';
+
+/**
+ * Meshing parameters. We use an ABSOLUTE chordal deflection (mm) rather than OCCT's
+ * default bounding-box ratio: the ratio scales with part size, so on a large part
+ * (e.g. 860 mm) it becomes ~0.9 mm and small holes/fillets collapse or vanish. A fixed
+ * 0.1 mm keeps holes and fine features faithful on parts of any size.
+ */
+const TESSELLATION_PARAMS = {
+  linearDeflectionType: 'absolute_value',
+  linearDeflection: 0.1, // mm
+  angularDeflection: 0.5, // radians
+};
+
+/** Maps a file extension to an OCCT solid format, or null if it isn't a 3D solid. */
+export function solidFormatFor(fileName: string): CadSolidFormat | null {
+  if (/\.(step|stp)$/i.test(fileName)) return 'step';
+  if (/\.(iges|igs)$/i.test(fileName)) return 'iges';
+  if (/\.brep$/i.test(fileName)) return 'brep';
+  return null;
+}
+
+/** True if a mesh is degenerate — flat/zero-thickness in any axis (an open surface). */
+function isDegenerateMesh(mesh: import('occt-import-js').OcctMesh): boolean {
+  const p = mesh.attributes.position.array;
+  if (p.length < 9) return true;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < p.length; i += 3) {
+    const x = p[i], y = p[i + 1], z = p[i + 2];
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+  const EPS = 1e-3; // mm — no real solid is thinner than this
+  return maxX - minX < EPS || maxY - minY < EPS || maxZ - minZ < EPS;
+}
+
+/** Keeps only solid (non-degenerate) meshes, unless every mesh is degenerate. */
+export function keepSolidMeshes(
+  meshes: import('occt-import-js').OcctMesh[]
+): import('occt-import-js').OcctMesh[] {
+  const solids = meshes.filter((m) => !isDegenerateMesh(m));
+  return solids.length > 0 ? solids : meshes;
+}
+
+/**
+ * Reads a 3D solid file (STEP / IGES / BREP, as raw bytes) and returns a single
+ * merged, indexed mesh. Returns null if OCCT is unavailable or the file yields no
+ * geometry, so callers can fall back gracefully.
+ */
+export async function tessellateCad(
+  buffer: ArrayBuffer,
+  format: CadSolidFormat = 'step'
+): Promise<TessellatedMesh | null> {
+  try {
+    const occt = await loadOcct();
+    const bytes = new Uint8Array(buffer);
+    const result =
+      format === 'iges'
+        ? occt.ReadIgesFile(bytes, TESSELLATION_PARAMS)
+        : format === 'brep'
+        ? occt.ReadBrepFile(bytes, TESSELLATION_PARAMS)
+        : occt.ReadStepFile(bytes, TESSELLATION_PARAMS);
+    if (!result?.success || !result.meshes?.length) return null;
+
+    // Drop degenerate (zero-thickness) meshes. AP242/PMI files often ship open
+    // surface "shells" alongside the real solid — flat annotation geometry that
+    // clutters the view and corrupts the volume. Keep them only if there is no
+    // genuine solid to fall back to.
+    const meshes = keepSolidMeshes(result.meshes);
+
+    // Pre-count so we can allocate typed arrays once and merge all sub-meshes.
+    let vertexCount = 0;
+    let indexCount = 0;
+    let hasNormals = true;
+    for (const mesh of meshes) {
+      vertexCount += mesh.attributes.position.array.length / 3;
+      indexCount += mesh.index.array.length;
+      if (!mesh.attributes.normal) hasNormals = false;
+    }
+    if (vertexCount === 0 || indexCount === 0) return null;
+
+    const positions = new Float32Array(vertexCount * 3);
+    const normals = new Float32Array(vertexCount * 3);
+    const indices = new Uint32Array(indexCount);
+
+    let posOffset = 0;
+    let idxOffset = 0;
+    let vertexBase = 0;
+    for (const mesh of meshes) {
+      const pos = mesh.attributes.position.array;
+      positions.set(pos, posOffset);
+      if (mesh.attributes.normal) normals.set(mesh.attributes.normal.array, posOffset);
+
+      const idx = mesh.index.array;
+      for (let k = 0; k < idx.length; k++) indices[idxOffset + k] = idx[k] + vertexBase;
+
+      vertexBase += pos.length / 3;
+      posOffset += pos.length;
+      idxOffset += idx.length;
+    }
+
+    // Detect holes + bends geometrically from the solid faces (before merging).
+    let features: DetectedFeatures | undefined;
+    try {
+      features = detectFeaturesFromOcctMeshes(meshes);
+    } catch (err) {
+      console.warn('[occt] geometric feature detection failed', err);
+    }
+
+    return { positions, normals, indices, hasNormals, meshCount: result.meshes.length, features };
+  } catch (err) {
+    console.warn('[occt] STEP tessellation failed, falling back to schematic view', err);
+    return null;
+  }
+}

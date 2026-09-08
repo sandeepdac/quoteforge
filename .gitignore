@@ -6,3 +6,14 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Python geometry service (local venv, generated samples, caches)
+services/geometry/.venv/
+services/geometry/samples/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# scratch/test files
+_*.mjs
+_*.js
