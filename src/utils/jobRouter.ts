@@ -119,13 +119,47 @@ export function buildJobRouter(input: RouterInput): JobOperation[] {
   );
 
   // --- Machining setups -----------------------------------------------------
+  //
+  // A ROUTE, NOT A MACHINE. Four of the seven calibration parts run on two
+  // machines, and the price has derived setup on each of them since the route
+  // work went in. The traveller did not: it took one machine name and stamped it
+  // on every machining line, so a part routed NTX 1000 -> Mini Mill printed a
+  // route sheet telling the floor to do both ops on the NTX. The second work
+  // centre never appeared on the document the shop actually works from.
+  //
+  // `setupByMachine` carries the split the price already made. Plan setups are
+  // walked in order and consume each route op's holdings, so line 20 lands on the
+  // primary and line 30 on the machine that really does the second op.
   const machine = input.machineName || (mc?.machineClass === 'turn' ? 'Lathe' : 'Machining centre');
   const plan = mc?.plan;
   if (plan && plan.setups.length > 0) {
-    // Setup time is quoted for the whole job; split it across the setups so each
-    // traveller line carries its share.
-    const setupEach = (mc?.setupTimeMin ?? 0) / plan.setups.length;
-    for (const s of plan.setups) {
+    const byMachine = mc?.setupByMachine ?? [];
+    // Which machine runs the i-th planned setup, and what setup time it owes.
+    // Falls back to the old even split across one machine when a quote carries no
+    // route — an older saved quote must still travel, just as it did before.
+    const assign = (i: number): { centre: string; setupMin: number } => {
+      if (!byMachine.length) {
+        return { centre: machine, setupMin: (mc?.setupTimeMin ?? 0) / plan.setups.length };
+      }
+      let seen = 0;
+      for (const rowIdx of byMachine.keys()) {
+        const row = byMachine[rowIdx];
+        const holdings = Math.max(1, Math.round(row.setups));
+        // Plan setups can outnumber the route's holdings (the estimator groups by
+        // fixturing, the route by machine). Anything past the last op stays on
+        // the last machine rather than falling off the traveller.
+        const isLast = rowIdx === byMachine.length - 1;
+        if (i < seen + holdings || isLast) {
+          // This machine's own setup, spread over the lines it actually owns.
+          const lines = isLast ? Math.max(1, plan.setups.length - seen) : holdings;
+          return { centre: row.machineName, setupMin: row.setupMin / lines };
+        }
+        seen += holdings;
+      }
+      return { centre: machine, setupMin: 0 };
+    };
+    for (const [planIdx, s] of plan.setups.entries()) {
+      const { centre: setupCentre, setupMin: setupEach } = assign(planIdx);
       const tools = s.operations.map((o) => o.tool).filter(Boolean);
       const uniqueTools = Array.from(new Set(tools));
       const opNames = s.operations.map((o) => o.name).join(', ');
@@ -134,7 +168,7 @@ export function buildJobRouter(input: RouterInput): JobOperation[] {
           next(),
           s.name || `Setup ${s.index}`,
           'machining',
-          machine,
+          setupCentre,
           setupEach,
           s.seconds / 60,
           [
@@ -148,19 +182,43 @@ export function buildJobRouter(input: RouterInput): JobOperation[] {
       );
     }
   } else if (mc) {
-    // A machining quote without a per-setup plan (e.g. a turned part): one
-    // machining line carrying the whole cycle.
-    ops.push(
-      op(
-        next(),
-        mc.setups > 1 ? `Machining (${mc.setups} setups)` : 'Machining',
-        'machining',
-        machine,
-        mc.setupTimeMin ?? 0,
-        (mc.cycleTimeSec ?? 0) / 60,
-        'Cycle time from the quoted estimate.'
-      )
-    );
+    // A machining quote without a per-setup plan (e.g. a turned part). Still one
+    // line PER MACHINE where the route names more than one, or the traveller
+    // would send a two-machine part out under a single work centre.
+    const byMachine = mc.setupByMachine ?? [];
+    if (byMachine.length > 1) {
+      const totalHoldings = byMachine.reduce((a, r) => a + Math.max(1, Math.round(r.setups)), 0);
+      byMachine.forEach((row, i) => {
+        const holdings = Math.max(1, Math.round(row.setups));
+        ops.push(
+          op(
+            next(),
+            `Machining op ${i + 1}${holdings > 1 ? ` (${holdings} setups)` : ''}`,
+            'machining',
+            row.machineName,
+            row.setupMin,
+            // Cycle time is quoted for the whole part and is not split per op —
+            // the estimator bills it all at the primary machine's rate, and we do
+            // not know how the minutes divide. Holdings are the only split we
+            // have; the note says so rather than implying a measurement.
+            ((mc.cycleTimeSec ?? 0) / 60) * (holdings / totalHoldings),
+            'Setup is this machine\'s own. Run time is the part\'s cycle apportioned by holdings, not a per-op measurement.'
+          )
+        );
+      });
+    } else {
+      ops.push(
+        op(
+          next(),
+          mc.setups > 1 ? `Machining (${mc.setups} setups)` : 'Machining',
+          'machining',
+          byMachine[0]?.machineName ?? machine,
+          mc.setupTimeMin ?? 0,
+          (mc.cycleTimeSec ?? 0) / 60,
+          'Cycle time from the quoted estimate.'
+        )
+      );
+    }
   }
 
   // --- Secondary / subcontract operations -----------------------------------

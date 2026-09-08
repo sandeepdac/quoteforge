@@ -346,6 +346,13 @@ export function calculateMachiningCosts(
     barDiameterMm,
     cycleTimeSec: Math.round(cycleTimeSec),
     setupTimeMin: r1(setupTimeMin),
+    // The per-machine split, so the traveller can name the right work centre on
+    // each line instead of stamping the primary machine on all of them.
+    setupByMachine: derivedSetup?.perOp.map((o) => ({
+      machineName: o.machineName,
+      setups: o.setups,
+      setupMin: o.breakdown.totalMin,
+    })),
     setups,
     nreCost,
     repeatUnitPrice,

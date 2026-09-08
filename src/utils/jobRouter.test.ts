@@ -202,3 +202,73 @@ describe('nextDocNumber', () => {
     expect(nextDocNumber(['INV-1200', 'JOB-x', '', 'JOB-1002'], 'JOB')).toBe('JOB-1003');
   });
 });
+
+describe('a two-machine route reaches the traveller', () => {
+  // THE DEFECT THIS PINS. The price has derived setup on each machine the route
+  // names since the route work went in; the traveller took a single machine name
+  // and stamped it on every machining line. A part routed NTX 1000 -> Mini Mill
+  // printed a route sheet telling the floor to do both ops on the NTX, and the
+  // second work centre appeared nowhere on the document the shop works from.
+  const routed = {
+    ...mc,
+    setupTimeMin: 640,
+    setupByMachine: [
+      { machineName: 'DMG Mori NTX 1000 (5-axis Mill-Turn)', setups: 1, setupMin: 365 },
+      { machineName: 'H Mini Mill 300', setups: 1, setupMin: 275 },
+    ],
+  } as unknown as MachiningCosts;
+
+  const router = buildJobRouter({
+    machiningCosts: routed,
+    machineName: 'DMG Mori NTX 1000 (5-axis Mill-Turn)',
+    stockDescription: '⌀32 round bar',
+    quantity: 10,
+  });
+  const machining = router.filter((o) => o.kind === 'machining');
+
+  it('names BOTH machines, not just the primary', () => {
+    const centres = machining.map((o) => o.workCentre);
+    expect(centres).toContain('DMG Mori NTX 1000 (5-axis Mill-Turn)');
+    expect(centres).toContain('H Mini Mill 300');
+  });
+
+  it('puts them in route order — the primary first', () => {
+    expect(machining[0].workCentre).toBe('DMG Mori NTX 1000 (5-axis Mill-Turn)');
+    expect(machining[1].workCentre).toBe('H Mini Mill 300');
+  });
+
+  it('charges each machine its OWN setup, not an even split of the total', () => {
+    // An even split would put 320 on both lines and tell the mini mill it needs
+    // as long to set as the 5-axis mill-turn.
+    expect(machining[0].setupMin).toBe(365);
+    expect(machining[1].setupMin).toBe(275);
+    expect(machining[0].setupMin + machining[1].setupMin).toBe(routed.setupTimeMin);
+  });
+
+  it('still travels when a quote carries no route at all', () => {
+    // Older saved quotes have no setupByMachine. They must behave exactly as
+    // before rather than losing their machining lines.
+    const old = buildJobRouter({ machiningCosts: mc, machineName: 'Haas VF-2', quantity: 5 });
+    const m = old.filter((o) => o.kind === 'machining');
+    expect(m).toHaveLength(2);
+    expect(m.every((o) => o.workCentre === 'Haas VF-2')).toBe(true);
+    expect(m[0].setupMin + m[1].setupMin).toBeCloseTo(mc.setupTimeMin, 1);
+  });
+
+  it('a turned part with no per-setup plan still gets a line per machine', () => {
+    const turned = {
+      cycleTimeSec: 600, setups: 2, setupTimeMin: 640,
+      setupByMachine: [
+        { machineName: 'Mori NL 2000 Mill-Turn', setups: 1, setupMin: 303 },
+        { machineName: 'Haas VF-2 (4-axis VMC)', setups: 1, setupMin: 228 },
+      ],
+    } as unknown as MachiningCosts;
+    const r = buildJobRouter({ machiningCosts: turned, machineName: 'Mori NL 2000 Mill-Turn', quantity: 1 });
+    const m = r.filter((o) => o.kind === 'machining');
+    expect(m).toHaveLength(2);
+    expect(m.map((o) => o.workCentre)).toEqual(['Mori NL 2000 Mill-Turn', 'Haas VF-2 (4-axis VMC)']);
+    expect(m[0].setupMin).toBe(303);
+    // The whole part's cycle is accounted for, not counted twice.
+    expect(m[0].runMinPerPart + m[1].runMinPerPart).toBeCloseTo(10, 1);
+  });
+});

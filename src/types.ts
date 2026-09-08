@@ -210,6 +210,18 @@ export interface MachiningCosts {
   /** Total setup time for the job (min), amortised over the batch. */
   setupTimeMin: number;
   setups: number;
+  /**
+   * Setup minutes SPLIT BY MACHINE, in route order.
+   *
+   * The price already derives setup on each machine the route names (see
+   * setupModel.ts). Without carrying that split, everything downstream had only
+   * a single total and a single machine name, so the job traveller stamped every
+   * machining line with the primary machine — a route sheet telling the floor to
+   * do the second op on a machine that never sees the part.
+   *
+   * Absent when no route was passed (older quotes, unpriced paths).
+   */
+  setupByMachine?: Array<{ machineName: string; setups: number; setupMin: number }>;
   /** One-time NRE for the job (CAM programming + soft jaws/fixture), not per part. */
   nreCost: number;
   /** Per-part price on a REORDER (NRE already paid) at the quoted quantity. */
