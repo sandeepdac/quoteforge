@@ -151,7 +151,7 @@ export function buildJobRouter(input: RouterInput): JobOperation[] {
         const isLast = rowIdx === byMachine.length - 1;
         if (i < seen + holdings || isLast) {
           // This machine's own setup, spread over the lines it actually owns.
-          const lines = isLast ? Math.max(1, plan.setups.length - seen) : holdings;
+          const lines = isLast ? Math.max(1, plan.setups.length - seen) : Math.min(holdings, plan.setups.length - seen);
           return { centre: row.machineName, setupMin: row.setupMin / lines };
         }
         seen += holdings;
@@ -180,6 +180,16 @@ export function buildJobRouter(input: RouterInput): JobOperation[] {
             .join(' ')
         )
       );
+    }
+    // A compressed display plan must not silently erase a priced route machine.
+    let consumedHoldings = 0;
+    for (const row of byMachine) {
+      if (consumedHoldings >= plan.setups.length) {
+        ops.push(op(next(), 'Route operation — planning required', 'machining',
+          row.machineName, row.setupMin, 0,
+          'REVIEW REQUIRED: this priced route has no allocated cutting operations. Zero run time means unallocated, not a free operation.'));
+      }
+      consumedHoldings += Math.max(1, Math.round(row.setups));
     }
   } else if (mc) {
     // A machining quote without a per-setup plan (e.g. a turned part). Still one

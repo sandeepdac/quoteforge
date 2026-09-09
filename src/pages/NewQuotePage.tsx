@@ -14,6 +14,8 @@ import type { SecondaryOperation } from '../utils/secondaryOps';
 import { generateQuoteNumber, generateId } from '../utils/idGenerator';
 import { generatePartThumbnail } from '../utils/partThumbnail';
 import { ExtractedCadAnalysis, stripCadForStorage } from '../utils/cadAnalyzer';
+import { restoreReviewState } from '../utils/quoteReviewState';
+import { DEFAULT_SECONDARY_OPS } from '../constants';
 
 const STEPS = ['Upload', 'Extraction', 'Quantity', 'Review'];
 
@@ -82,6 +84,7 @@ export default function NewQuotePage() {
     setQuoteData((prev: any) => ({
       ...prev,
       partName: part?.name ?? prev.partName,
+      review: src ? restoreReviewState(src, settings.secondaryOps ?? DEFAULT_SECONDARY_OPS) : prev.review,
       features: part?.features
         ? { ...prev.features, materialId: part.materialId, ...part.features }
         : prev.features,
@@ -200,6 +203,7 @@ export default function NewQuotePage() {
         isRushOrder: quoteData.config.isRush,
         marginPercent: margin,
         notes: opts?.notes ?? editBase.notes,
+        secondaryOps: opts?.secondaryOps ?? editBase.secondaryOps,
         costs,
         totalUnitPrice: unitPrice,
         grandTotal,
@@ -247,6 +251,7 @@ export default function NewQuotePage() {
       isRushOrder: quoteData.config.isRush,
       marginPercent: margin,
       notes: opts?.notes ?? '',
+      secondaryOps: opts?.secondaryOps ?? [],
       costs,
       totalUnitPrice: unitPrice,
       grandTotal,

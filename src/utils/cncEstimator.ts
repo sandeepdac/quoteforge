@@ -158,7 +158,8 @@ export function calculateMachiningCosts(
       + input.profile.grooveCount + input.profile.threadCount,
     cycleMin: cycleTimeSec / 60,
   }) : null;
-  const setupTimeMin = derivedSetup ? derivedSetup.totalMin : (routeSetupMin || (
+  const derivedProgrammingMin = derivedSetup?.perOp.reduce((sum, op) => sum + op.breakdown.programmingMin, 0) ?? 0;
+  const setupTimeMin = derivedSetup ? derivedSetup.totalMin - derivedProgrammingMin : (routeSetupMin || (
     cnc.setupTimeFirstOpMin +
     (setups - 1) * cnc.secondOpSetupMin +
     t.toolCount * cnc.setupTimePerToolMin));
@@ -183,7 +184,7 @@ export function calculateMachiningCosts(
   // --- One-time NRE: CAM programming (NRE) ---------------------------------
   // Programming/proving the turning cycle is one-time and does not recur on a
   // reorder; amortised over the first batch, excluded from the repeat price.
-  const programmingMin = Math.max(0, cnc.programmingMinPerSetup ?? 0) * setups;
+  const programmingMin = derivedSetup ? derivedProgrammingMin : Math.max(0, cnc.programmingMinPerSetup ?? 0) * setups;
   const nreCost = programmingMin * cnc.setupRatePerMin;
   const programmingPerUnit = nreCost / qty;
 
@@ -214,12 +215,12 @@ export function calculateMachiningCosts(
     { key: 'tap', name: 'Tapping', driver: `${(input.profile.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ') || 'none'} — ${secStr(t.tapSec)}`, value: opCost(t.tapSec), color: COLORS.thread },
     { key: 'cross', name: 'Off-axis features (driven tool)', driver: `${input.profile.crossFeatureList?.length ?? 0} feature${(input.profile.crossFeatureList?.length ?? 0) === 1 ? '' : 's'} off the turning axis — ${secStr(t.crossSec)}`, value: opCost(t.crossSec), color: COLORS.drill },
     { key: 'noncut', name: 'Tool changes / load', driver: `${t.toolCount} tool changes, rapids + ${cnc.barLoadSec}s load`, value: (t.airSec / eff + cnc.barLoadSec) * ratePerSec, color: COLORS.noncut },
-    { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min — ${derivedSetup.explanation} — over a batch of ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
+    { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min preparation, excluding ${derivedProgrammingMin} min CAM billed separately. Full first-order breakdown: ${derivedSetup.explanation} — batch ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${t.toolCount} operations`, value: toolingCost, color: COLORS.tooling },
     { key: 'nre', name: `CAM programming (one-time) ÷ ${qty}`, driver: `${r1(programmingMin)} min NRE over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty} — not billed again on reorder`, value: programmingPerUnit, color: COLORS.nre },
     ...secondaryOpsLineItems(input.secondaryOps, qty),
-  ].filter((li) => li.value > 0.005);
+  ].filter((li) => li.value > 0);
 
   // --- Per-setup / per-operation plan (a turning job sheet) ----------------
   // Same seconds as the line items, grouped the way a turner reads a job. A
@@ -339,9 +340,9 @@ export function calculateMachiningCosts(
     marginAmount,
     rushPremium,
     lineItems,
-    partVolumeCm3: r1(partVol),
-    stockVolumeCm3: r1(stockVolumeCm3),
-    removedVolumeCm3: r1(removedVol),
+    partVolumeCm3: partVol,
+    stockVolumeCm3,
+    removedVolumeCm3: removedVol,
     buyToFlyRatio: Math.round(buyToFlyRatio * 100) / 100,
     barDiameterMm,
     cycleTimeSec: Math.round(cycleTimeSec),
@@ -351,7 +352,7 @@ export function calculateMachiningCosts(
     setupByMachine: derivedSetup?.perOp.map((o) => ({
       machineName: o.machineName,
       setups: o.setups,
-      setupMin: o.breakdown.totalMin,
+      setupMin: o.breakdown.totalMin - o.breakdown.programmingMin,
     })),
     setups,
     nreCost,

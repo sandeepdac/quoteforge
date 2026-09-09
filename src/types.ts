@@ -76,6 +76,8 @@ export interface Quote {
   isRushOrder: boolean;
   marginPercent: number;
   notes: string;
+  /** Snapshot of the operations selected when this quote was saved. */
+  secondaryOps?: SecondaryOperation[];
   
   // Calculated values (cached)
   costs: QuoteCosts;

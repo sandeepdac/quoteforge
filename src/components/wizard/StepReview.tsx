@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { 
   Send, 
   Download, 
@@ -46,16 +46,25 @@ interface StepReviewProps {
 export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, onSend, onSaveDraft, onBack, onUpdate }: StepReviewProps) {
   const { customers, materials } = useQuotes();
   const { settings } = useSettings();
-  const [margin, setMargin] = useState(settings.defaultMargin);
-  const [notes, setNotes] = useState('');
+  const margin: number = data.review?.margin ?? settings.defaultMargin;
+  const notes: string = data.review?.notes ?? '';
+  const updateReview = (patch: Record<string, unknown>) => onUpdate?.((prev) => ({
+    ...prev, review: { ...prev.review, ...patch },
+  }));
+  const setMargin = (value: number) => updateReview({ margin: value });
+  const setNotes = (value: string) => updateReview({ notes: value });
 
   // Secondary operations (finishing / inspection) the shop offers, and which
   // ones the estimator applies to this quote.
-  const secondaryCatalog = settings.secondaryOps ?? DEFAULT_SECONDARY_OPS;
-  const [secondaryIds, setSecondaryIds] = useState<string[]>([]);
-  const selectedSecondaryOps = secondaryCatalog.filter((o) => secondaryIds.includes(o.id));
-  const toggleSecondary = (id: string) =>
-    setSecondaryIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+  const selectedSecondaryOps: SecondaryOperation[] = data.review?.secondaryOps ?? [];
+  const secondaryCatalog = [...selectedSecondaryOps, ...(settings.secondaryOps ?? DEFAULT_SECONDARY_OPS)
+    .filter((op) => !selectedSecondaryOps.some((saved) => saved.id === op.id))];
+  const secondaryIds = selectedSecondaryOps.map((op) => op.id);
+  const toggleSecondary = (id: string) => updateReview({
+    secondaryOps: secondaryIds.includes(id)
+      ? selectedSecondaryOps.filter((op) => op.id !== id)
+      : [...selectedSecondaryOps, secondaryCatalog.find((op) => op.id === id)!],
+  });
 
   const customer = customers.find(c => c.id === data.config.customerId);
   const material = materials.find(m => m.id === data.features.materialId) || materials[0];
@@ -110,6 +119,11 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
 
   return (
     <div className="max-w-5xl mx-auto space-y-6 animate-in zoom-in-95 duration-500">
+      {data.review?.warning && (
+        <p role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          {data.review.warning}
+        </p>
+      )}
       {/* Price-forward header — the quote total is the first thing you see. */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 bg-card border border-border rounded-2xl p-5 shadow-sm">
         <div className="space-y-1.5">

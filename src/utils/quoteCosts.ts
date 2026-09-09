@@ -115,7 +115,7 @@ export function resolveQuoteCosts(p: ResolveParams): ResolvedQuoteCosts {
   const density = materialPropsFor(p.materialName).densityGCm3;
 
   if (isTurnedPart && cadAnalysis?.turningProfile) {
-    const volumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : cadAnalysis.volumeCm3 ?? 0;
+    const volumeCm3 = cadAnalysis.volumeCm3 ?? (f.weightKg > 0 ? (f.weightKg * 1000) / density : 0);
     const mc = calculateMachiningCosts(
       { isTurned: true, materialName: p.materialName, volumeCm3, profile: cadAnalysis.turningProfile, setups: cadAnalysis.setups ?? 1, materialPricePerKg: p.materialPricePerKg, secondaryOps: p.secondaryOps },
       p.quantity, p.isRush, p.margin, settings, rateMult, routeSetupMin, routeOps
@@ -126,7 +126,7 @@ export function resolveQuoteCosts(p: ResolveParams): ResolvedQuoteCosts {
 
   if (isMilledPart && cadAnalysis?.milledProfile) {
     const base = cadAnalysis.milledProfile;
-    const partVolumeCm3 = f.weightKg > 0 ? (f.weightKg * 1000) / density : base.partVolumeCm3;
+    const partVolumeCm3 = base.partVolumeCm3;
     const profile = { ...base, partVolumeCm3, removedVolumeCm3: Math.max(0, base.stockVolumeCm3 - partVolumeCm3) };
     const mc = calculateMilledCosts(
       { materialName: p.materialName, profile, materialPricePerKg: p.materialPricePerKg, secondaryOps: p.secondaryOps },

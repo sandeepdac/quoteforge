@@ -76,6 +76,8 @@ export interface MilledPlanInput {
   /** theoretical sec → machine cost. */
   opCost: (sec: number) => number;
   toolChangeSec: number;
+  /** Rapid-motion allowance relative to cutting time; excludes tool changes. */
+  rapidFraction?: number;
   colors: Record<string, string>;
 }
 
@@ -126,7 +128,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   // exists — never emitting a setup that would carry only a facing skim.
   const subs: SubOp[] = [];
   const addSub = (o: SubOp) => {
-    if (o.sec > 0.5) subs.push(o);
+    if (o.sec > 0) subs.push(o);
   };
 
   // On a lathe or mill-turn the on-axis features are cut by the SPINDLE, with
@@ -136,7 +138,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   // could simply bore.
   const turnedBores = (inp.turnedFeatures ?? []).filter((f) => f.kind === 'bore');
   const turnedOds = (inp.turnedFeatures ?? []).filter((f) => f.kind === 'spigot');
-  if ((inp.turningSec ?? 0) > 0.5 && (turnedBores.length || turnedOds.length)) {
+  if ((inp.turningSec ?? 0) > 0 && (turnedBores.length || turnedOds.length)) {
     const total = turnedBores.length + turnedOds.length;
     const odShare = (inp.turningSec ?? 0) * (turnedOds.length / total);
     const boreShare = (inp.turningSec ?? 0) * (turnedBores.length / total);
@@ -267,7 +269,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   // the tool a programmer would actually pick.
   const csinks = inp.countersinks ?? [];
   const nCsink = csinks.reduce((n, x) => n + Math.max(1, x.count ?? 1), 0);
-  if ((inp.countersinkSec ?? 0) > 0.5 && nCsink > 0) {
+  if ((inp.countersinkSec ?? 0) > 0 && nCsink > 0) {
     const angles = [...new Set(csinks.map((x) => Math.round(x.includedDeg)))];
     addSub({
       name: `Countersink ⌀${r1(csinks[0].diameterMm)}`,
@@ -286,7 +288,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   let chamfer: SubOp | null = null;
   const chamfs = inp.chamfers ?? [];
   const nCham = chamfs.reduce((n, x) => n + Math.max(1, x.count ?? 1), 0);
-  if ((inp.chamferSec ?? 0) > 0.5 && nCham > 0) {
+  if ((inp.chamferSec ?? 0) > 0 && nCham > 0) {
     chamfer = {
       name: 'Chamfer / edge break',
       tool: toolName(cham, 'Chamfer mill'),
@@ -296,7 +298,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
     };
   } else if ((inp.holeCount > 0 || inp.bossCount > 0) && cham) {
     const chamSec = Math.min(inp.finishBaseSec * 0.08, 30);
-    if (chamSec > 0.5) {
+    if (chamSec > 0) {
       const wall = subs.find((o) => o.name === 'Wall finishing');
       if (wall) wall.sec = Math.max(0, wall.sec - chamSec); // conserve total time
       chamfer = {
@@ -342,7 +344,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
 
   // --- Facing (once per real setup — you skim each re-clamped face) ---------
   const facePerSetup = inp.facingSec / setups;
-  if (facePerSetup > 0.5) {
+  if (facePerSetup > 0) {
     for (let s = 1; s <= setups; s++) {
       ops.push({
         name: 'Facing',
@@ -374,8 +376,9 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
       driver: o.driver,
       color: o.color,
     }));
-    const seconds = operations.reduce((a, o) => a + o.seconds, 0) + changeSec / inp.eff;
-    const cost = operations.reduce((a, o) => a + o.cost, 0) + inp.opCost(changeSec);
+    const rapidSec = mine.reduce((sum, o) => sum + o.sec, 0) * (inp.rapidFraction ?? 0);
+    const seconds = operations.reduce((a, o) => a + o.seconds, 0) + (changeSec + rapidSec) / inp.eff;
+    const cost = operations.reduce((a, o) => a + o.cost, 0) + inp.opCost(changeSec + rapidSec);
     planSetups.push({
       index: s,
       // "Op", not "Setup": this group's time is CUTTING time, and the quote

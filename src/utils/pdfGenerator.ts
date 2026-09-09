@@ -187,7 +187,7 @@ export function buildQuotePdf(input: QuotePdfInput): Blob {
     // cost term is visible on the invoice from the day it exists.
     const shownByPlan = new Set([
       'material', 'facing', 'rough', 'finish', 'drill', 'bore', 'groove',
-      'thread', 'parting', 'cross', 'turning', 'edge', 'deep',
+      'thread', 'parting', 'cross', 'turning', 'edge', 'deep', 'tap',
     ]);
     for (const li of quote.machiningCosts?.lineItems ?? []) {
       if (shownByPlan.has(li.key) || li.value <= 0.005) continue;

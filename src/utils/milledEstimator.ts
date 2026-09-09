@@ -301,23 +301,6 @@ function featureComplexityMult(p: MilledProfile): number {
   return 1 + Math.min(CX_CAP, cx);
 }
 
-/**
- * Distinct cutters a prismatic part needs. Tool changes are a first-order cost on
- * a milled part — a real 3-setup job runs 8–12 tools and can spend a third of its
- * cycle swapping them — so this must reflect actual CUTTERS, not operation types.
- * A face mill and a roughing end mill are shared across setups; each setup adds a
- * finishing cutter and a chamfer tool, and holes add a drill.
- */
-function estimateToolCount(p: MilledProfile): number {
-  let tools = 2;                       // face mill + roughing end mill
-  tools += Math.max(1, p.setupCount);  // a finisher per setup
-  tools += p.holeCount > 0 ? 1 : 0;    // drill
-  tools += p.pocketCount > 0 ? 1 : 0;  // smaller cutter to clear pocket corners
-  tools += p.deepPocketCount > 0 ? 1 : 0; // long-reach tool
-  tools += 1;                          // chamfer/deburr
-  return tools;
-}
-
 const r1 = (v: number) => Math.round(v * 10) / 10;
 
 export function calculateMilledCosts(
@@ -356,20 +339,11 @@ export function calculateMilledCosts(
   const rawStockVol = Math.max(0, p.stockVolumeCm3);
   const partVol = Math.max(0, p.partVolumeCm3);
 
-  // Near-net cap. A SOLID billet is physically wrong for a very sparse part —
-  // an open frame / weldment / near-net casting that fills a tiny % of its
-  // bounding box. Milling it from a solid block would hog away nearly the whole
-  // envelope (e.g. 98% removed) and produce an absurd upper-bound price. Below a
-  // floor yield the solid-billet assumption is unrealistic, so we price on an
-  // assumed near-net stock at that floor instead. The measured envelope + the
-  // sparse-billet warning still tell the user to confirm the real stock.
-  const YIELD_FLOOR = 0.15;
-  const rawYield = rawStockVol > 0 ? partVol / rawStockVol : 1;
-  const nearNetStock = partVol > 0 && rawYield < YIELD_FLOOR;
-  const stockVol = nearNetStock ? partVol / YIELD_FLOOR : rawStockVol;
-  const removedVol = nearNetStock
-    ? Math.max(0, stockVol - partVol)
-    : Math.max(0, p.removedVolumeCm3 || rawStockVol - partVol);
+  // Price the selected stock. Low yield is a review warning, never permission
+  // to substitute an uncosted casting or other near-net blank.
+  const nearNetStock = false;
+  const stockVol = rawStockVol;
+  const removedVol = Math.max(0, stockVol - partVol);
   const stockWeightKg = (stockVol * m.densityGCm3) / 1000;
   const materialCost = stockWeightKg * input.materialPricePerKg * (1 - cnc.scrapRecovery);
   const buyToFlyRatio = stockVol > 0 ? partVol / stockVol : 0;
@@ -565,13 +539,9 @@ export function calculateMilledCosts(
 
   // --- Cycle time (theoretical → actual via efficiency) --------------------
   const cuttingSec = roughSec + turningSec + facingSec + finishSec + drillSec + edgeSec + crossSec + tapSec;
-  const toolCount = estimateToolCount(p);
   const toolChangeSec = cnc.millToolChangeSec ?? 10;
-  const airSec = toolCount * toolChangeSec + cuttingSec * 0.08; // rapids between features
   const ratePerSec = machineRatePerMin / 60;
   const opCost = (sec: number) => (sec / eff) * ratePerSec;
-  const cycleTimeSec = cuttingSec / eff + airSec / eff;
-  const machineCost = (cycleTimeSec / 60) * machineRatePerMin;
 
   // --- Per-setup / per-operation plan (tool-by-tool job sheet) -------------
   // Built BEFORE setup billing because the plan is the source of truth for how
@@ -582,7 +552,7 @@ export function calculateMilledCosts(
   // re-clamp — without changing the calibrated total.
   const sortedDims = [p.stockMm.x, p.stockMm.y, p.stockMm.z].sort((a, b) => a - b);
   const plan = buildMilledPlan({
-    holeDepthsMm: p.holeDepthsMm,
+    holeDepthsMm: remainingHoles.map((h) => h.depthMm),
     crossSec,
     crossFeatures: extraCross,
     tapSec,
@@ -615,8 +585,15 @@ export function calculateMilledCosts(
     eff,
     opCost,
     toolChangeSec,
+    rapidFraction: 0.08,
     colors: COLORS,
   });
+  // Use the same tools and non-cutting events in the price and traveller.
+  const toolCount = plan.tools.length;
+  const toolChanges = plan.setups.reduce((sum, setup) => sum + setup.toolChanges, 0);
+  const airSec = toolChanges * toolChangeSec + cuttingSec * 0.08;
+  const cycleTimeSec = plan.totalSeconds;
+  const machineCost = plan.totalCost;
 
   // --- Setup (amortised over the batch) — Rule 1 is the driver -------------
   // Milling setups are slower than the bar-lathe defaults: each one means
@@ -644,7 +621,8 @@ export function calculateMilledCosts(
       + (p.crossFeatureList ?? []).length + (p.threads ?? []).length,
     cycleMin: cycleTimeSec / 60,
   }) : null;
-  const setupTimeMin = derivedSetup ? derivedSetup.totalMin : (routeSetupMin || (
+  const derivedProgrammingMin = derivedSetup?.perOp.reduce((sum, op) => sum + op.breakdown.programmingMin, 0) ?? 0;
+  const setupTimeMin = derivedSetup ? derivedSetup.totalMin - derivedProgrammingMin : (routeSetupMin || (
     (cnc.millSetupFirstOpMin ?? cnc.setupTimeFirstOpMin) +
     (setups - 1) * (cnc.millSetupPerExtraOpMin ?? cnc.secondOpSetupMin) +
     toolCount * cnc.setupTimePerToolMin));
@@ -679,7 +657,7 @@ export function calculateMilledCosts(
   // part and do not recur on a reorder. They amortise over the first batch but
   // are excluded from the repeat price. (Separating this is what lets us show a
   // first-order vs repeat-order price — a ~30% swing at mid quantities.)
-  const programmingMin = Math.max(0, cnc.programmingMinPerSetup ?? 0) * setups;
+  const programmingMin = derivedSetup ? derivedProgrammingMin : Math.max(0, cnc.programmingMinPerSetup ?? 0) * setups;
   const nreProgrammingCost = programmingMin * cnc.setupRatePerMin;
   const nreCost = nreProgrammingCost + fixtureCostTotal; // one-time for the whole job
   const programmingPerUnit = nreProgrammingCost / qty;
@@ -709,14 +687,14 @@ export function calculateMilledCosts(
     { key: 'tap', name: 'Tapping', driver: tapSec > 0 ? `${(p.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ')} — ${secStr(tapSec)}` : '', value: opCost(tapSec), color: COLORS.thread ?? COLORS.drill },
     { key: 'edge', name: 'Countersink / chamfer', driver: edgeSec > 0 ? `${countersinkCount ? `${countersinkCount} countersink${countersinkCount === 1 ? '' : 's'}` : ''}${countersinkCount && chamferCount ? ' + ' : ''}${chamferCount ? `${chamferCount} chamfer${chamferCount === 1 ? '' : 's'}` : ''} measured from the solid — ${secStr(edgeSec)}` : '', value: opCost(edgeSec), color: COLORS.facing },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
-    { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${p.pocketCount} pocket${p.pocketCount === 1 ? '' : 's'}`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
-    { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min — ${derivedSetup.explanation} — over a batch of ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
+    { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${toolChanges} tool changes × ${toolChangeSec}s plus 8% rapid allowance (before efficiency)`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
+    { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min preparation, excluding ${derivedProgrammingMin} min CAM billed separately. Full first-order breakdown: ${derivedSetup.explanation} — batch ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
     { key: 'nre', name: `CAM programming (one-time) ÷ ${qty}`, driver: `${r1(programmingMin)} min NRE over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty} — not billed again on reorder`, value: programmingPerUnit, color: COLORS.nre },
     { key: 'fixture', name: `Soft jaws / fixture ÷ ${qty}`, driver: needsSoftJaws ? `${setups} setups${p.bossCount > 0 ? `, ${p.bossCount} boss` : ''} → work-holding, made once (one-time)` : '', value: fixtureCost, color: COLORS.fixture },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${toolCount} operations`, value: toolingCost, color: COLORS.tooling },
     ...secondaryOpsLineItems(input.secondaryOps, qty),
-  ].filter((li) => li.value > 0.005);
+  ].filter((li) => li.value > 0);
 
   // --- Batch quantity curve (setup + NRE amortisation) ---------------------
   // First-order price carries the one-time NRE (programming + jaws); the repeat
@@ -744,9 +722,9 @@ export function calculateMilledCosts(
     marginAmount,
     rushPremium,
     lineItems,
-    partVolumeCm3: r1(partVol),
-    stockVolumeCm3: r1(stockVol),
-    removedVolumeCm3: r1(removedVol),
+    partVolumeCm3: partVol,
+    stockVolumeCm3: stockVol,
+    removedVolumeCm3: removedVol,
     buyToFlyRatio: Math.round(buyToFlyRatio * 100) / 100,
     nearNetStock,
     fromBarStock: p.fromBarStock,
@@ -758,7 +736,7 @@ export function calculateMilledCosts(
     setupByMachine: derivedSetup?.perOp.map((o) => ({
       machineName: o.machineName,
       setups: o.setups,
-      setupMin: o.breakdown.totalMin,
+      setupMin: o.breakdown.totalMin - o.breakdown.programmingMin,
     })),
     setups,
     nreCost,
