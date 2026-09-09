@@ -90,6 +90,18 @@ describe('quote consistency regressions', () => {
     expect(rows[1].notes).toContain('REVIEW REQUIRED');
   });
 
+  it('does not reduce a deep large bore to a volume-only allowance', () => {
+    const bore = { ...profile, setupCount: 1, holeCount: 0,
+      turnedFeatures: [{ kind: 'bore' as const, diameterMm: 17, lengthMm: 80 }],
+      turningRoute: true };
+    const c = runMill(bore);
+    const turning = c.lineItems.find((line) => line.key === 'turning');
+    expect(turning).toBeDefined();
+    expect(turning!.driver.toLowerCase()).toContain('bore');
+    expect(c.plan!.setups.flatMap((s) => s.operations).some((op) => op.name.includes('Bore'))).toBe(true);
+    expect(c.cycleTimeSec).toBeGreaterThan(0);
+  });
+
   it('restores saved review choices, including operations removed from the catalogue', () => {
     const quote = { marginPercent: .37, notes: 'Retain inspection', secondaryOps: [
       { id: 'special', name: 'Special inspection', category: 'inspection', lotCharge: 90, perPartCost: 2 },

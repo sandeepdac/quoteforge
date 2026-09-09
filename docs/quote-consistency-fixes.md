@@ -33,3 +33,5 @@ Existing saved prices are not migrated automatically. Reopening and saving recal
 - Add browser interaction tests for the quote workflow. This batch has automated calculation and state-restoration tests, not a live client-corpus acceptance run.
 
 No client source documents are included in this change.
+
+- Mill-turn on-axis bores now use pilot-drill, radial roughing-pass, and finish-pass timing. The aggregate volume/MRR result remains a conservative floor for other spindle work.

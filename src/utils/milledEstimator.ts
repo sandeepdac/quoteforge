@@ -28,7 +28,7 @@ import { millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, Milling
 import { roughingMrrCm3PerMin, rpm as turningRpm } from './turning';
 import { buildMilledPlan } from './milledPlanner';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
-import { drillHolesSec, pairHoles, crossFeaturesSec, tapThreadsSec, DEFAULT_DRILL_CONFIG, DEFAULT_CROSS_CONFIG } from './drilling';
+import { drillHoleSec, drillHolesSec, pairHoles, crossFeaturesSec, tapThreadsSec, DEFAULT_DRILL_CONFIG, DEFAULT_CROSS_CONFIG } from './drilling';
 import { deriveRouteSetup, type RouteSetupOp } from './setupModel';
 import type { ThreadSpec } from './drilling';
 import type { SecondaryOperation } from './secondaryOps';
@@ -408,7 +408,28 @@ export function calculateMilledCosts(
   const roughSec = roughBaseSec * deepMult;
   // Turning is not subject to the small-tool complexity derate: that models a
   // cutter squeezing into detail, which has no analogue on a spindle.
-  const turningSec = (turnedVol > 0 && turnMrr > 0 ? (turnedVol / turnMrr) * 60 : 0) * feedMult;
+  // On-axis boring is not a generic volume/MRR operation. A bore has a pilot,
+  // multiple radial passes when the pilot is smaller, and a finish pass at the
+  // final diameter. Keep that operation model aligned with turning.ts so a
+  // mill-turn part cannot show a one-second "boring" allowance for a deep bore.
+  const turningBoreSec = onAxis.filter((f) => f.kind === 'bore').reduce((sum, f) => {
+    const depth = Math.max(0, f.lengthMm);
+    const finalDia = Math.max(0.5, f.diameterMm);
+    if (!depth || !m.feedFinish || !m.feedRough) return sum;
+    const pilotDia = Math.min(finalDia, cnc.maxDrillDiaMm ?? 20);
+    const pilotSec = drillHoleSec({ diameterMm: pilotDia, depthMm: depth }, m, {
+      ...DEFAULT_DRILL_CONFIG, maxRpm: cnc.maxRpm,
+    });
+    const boreRpm = turningRpm(m.cuttingSpeedFinish, finalDia, cnc.maxRpm);
+    const radial = (finalDia - pilotDia) / 2;
+    const ap = Math.max(0.3, m.depthOfCutRough * 0.6);
+    const roughPasses = radial > 0.1 ? Math.ceil(radial / ap) : 0;
+    const roughSec = roughPasses * (depth / (m.feedRough * boreRpm)) * 60;
+    const finishSec = (depth / (m.feedFinish * boreRpm)) * 60;
+    return sum + pilotSec + roughSec + finishSec;
+  }, 0) * feedMult;
+  const turningVolumeSec = (turnedVol > 0 && turnMrr > 0 ? (turnedVol / turnMrr) * 60 : 0) * feedMult;
+  const turningSec = Math.max(turningBoreSec, turningVolumeSec);
 
   // --- Facing --------------------------------------------------------------
   // On a lathe a face is spiralled from OD to centre in one pass — far quicker
