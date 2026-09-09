@@ -24,6 +24,7 @@ import { CURRENCIES, currencySymbol } from '../utils/currency';
 import { useMoney } from '../utils/useMoney';
 import { ALL_MACHINE_IDS, MACHINE_CATALOG, MachineId } from '../utils/machineSelection';
 import TurningLibraryEditor from '../components/TurningLibraryEditor';
+import ToolCatalogImporter from '../components/ToolCatalogImporter';
 import type { TurningToolAssembly } from '../types';
 
 export default function SettingsPage() {
@@ -36,6 +37,7 @@ export default function SettingsPage() {
     { id: 'estimate', name: 'Estimate', icon: Calculator },
     { id: 'margins', name: 'Margins', icon: Zap },
     { id: 'tooling', name: 'Tooling', icon: Wrench },
+    { id: 'toolImports', name: 'Tool Imports', icon: Wrench },
     { id: 'secondary', name: 'Secondary Ops', icon: Paintbrush },
     { id: 'account', name: 'Preferences', icon: SettingsIcon },
   ];
@@ -67,6 +69,7 @@ export default function SettingsPage() {
         </aside>
 
         <div className="flex-1 bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+          {activeTab === 'toolImports' && <ToolCatalogImporter />}
           {activeTab === 'shop' && (
             <ShopInfoTab settings={settings} onSave={(patch) => updateSettings(patch)} />
           )}

@@ -45,13 +45,20 @@ export function loadState<T>(name: string, seed: T): T {
 
 /** Serializes and persists a value. Silently no-ops if storage is unavailable/full. */
 export function saveState<T>(name: string, value: T): void {
+  trySaveState(name, value);
+}
+
+/** Explicit saves can report failure instead of claiming data was persisted. */
+export function trySaveState<T>(name: string, value: T): boolean {
   const store = getStore();
-  if (!store) return;
+  if (!store) return false;
   try {
     store.setItem(storageKey(name), JSON.stringify(value));
+    return true;
   } catch (err) {
     // QuotaExceededError and similar — the app keeps working from in-memory state.
     console.warn(`[storage] could not save "${name}"`, err);
+    return false;
   }
 }
 

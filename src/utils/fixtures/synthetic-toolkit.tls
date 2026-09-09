@@ -1,0 +1,22 @@
+<!-- Synthetic QuoteForge smoke-test data. Not a real cutter or cutting recommendation. -->
+<ToolsItemsManager Version="11" Istoolkit="1">
+  <Components>
+    <CompTool ID="1" Type="0" ToolName="SYNTHETIC assembly - not for machining">
+      <Components>
+        <CompTool ID="2" Type="2" Name="Synthetic holder">
+          <Components>
+            <CompTool ID="3" Type="1" Name="Synthetic cutter" VendorName="Test fixture" CatalogNum="000123" IsMilling="-1">
+              <Shape NumFlutes="3">
+                <LenParams>
+                  <D Units="1" Val="0.5"/>
+                  <CL Units="0" Val="12"/>
+                </LenParams>
+              </Shape>
+              <CuttingConditionsList><CC WorkMaterial="" OperationType="4"/></CuttingConditionsList>
+            </CompTool>
+          </Components>
+        </CompTool>
+      </Components>
+    </CompTool>
+  </Components>
+</ToolsItemsManager>
