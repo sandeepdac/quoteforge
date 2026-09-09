@@ -11,6 +11,7 @@ This first implementation batch fixes reproducible accounting and workflow defec
 - Review choices live in wizard state. Notes, markup and secondary-operation snapshots survive navigation and quote editing. Legacy secondary selections are recovered from cost lines; a warning requests price and lot-charge confirmation.
 - A compressed plan cannot silently remove a priced route machine. Unallocated route operations remain on the traveller with a planning-required warning. Their zero run time means unallocated, not measured zero.
 - Tapping already represented in the plan is not repeated as an additional PDF cost row.
+- Runtime is now allocated by route holding. Milling plan seconds are charged at the catalog rate of the machine assigned to each setup; turned runtime uses the setup-weighted route rate. The adjustment is visible in the cost breakdown, and the plan/traveller retain the same operation seconds.
 
 ## Local acceptance checks
 

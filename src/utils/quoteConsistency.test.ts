@@ -102,6 +102,25 @@ describe('quote consistency regressions', () => {
     expect(c.cycleTimeSec).toBeGreaterThan(0);
   });
 
+  it('prices each milling holding at its route machine rate', () => {
+    const routed = runMill(profile, true);
+    const primaryOnly = runMill(profile, false);
+    expect(routed.machineCost).not.toBeCloseTo(primaryOnly.machineCost, 5);
+    expect(routed.lineItems.find((line) => line.key === 'machine-rate')?.driver).toContain('H Mini Mill');
+    expect(routed.lineItems.reduce((sum, line) => sum + line.value, 0)).toBeCloseTo(routed.subtotal, 2);
+    expect(Math.abs(routed.plan!.totalSeconds - routed.cycleTimeSec)).toBeLessThan(1);
+  });
+
+  it('uses the weighted route rate for turned runtime', () => {
+    const primary = calculateMachiningCosts({ isTurned: true, materialName: 'Aluminium 6082',
+      volumeCm3: 25, profile: turningProfile, materialPricePerKg: 16.5, setups: 2 },
+      10, false, .25, settings, 1.8, 0, route);
+    const primaryOnly = calculateMachiningCosts({ isTurned: true, materialName: 'Aluminium 6082',
+      volumeCm3: 25, profile: turningProfile, materialPricePerKg: 16.5, setups: 2 },
+      10, false, .25, settings, 1.8);
+    expect(primary.machineCost).toBeLessThan(primaryOnly.machineCost);
+  });
+
   it('restores saved review choices, including operations removed from the catalogue', () => {
     const quote = { marginPercent: .37, notes: 'Retain inspection', secondaryOps: [
       { id: 'special', name: 'Special inspection', category: 'inspection', lotCharge: 90, perPartCost: 2 },

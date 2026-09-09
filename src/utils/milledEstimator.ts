@@ -609,12 +609,43 @@ export function calculateMilledCosts(
     rapidFraction: 0.08,
     colors: COLORS,
   });
+  // Allocate runtime to the machine that owns each holding. Previously every
+  // planned second was priced at the primary machine rate, even when the route
+  // sent the second holding to a cheaper mill. The plan already has the exact
+  // seconds; only its rate needs to vary by setup.
+  const routeMachineForSetup = (setupIndex: number) => {
+    if (!routeOps?.length) return undefined;
+    let cursor = setupIndex;
+    for (const op of routeOps) {
+      const holdings = Math.max(1, Math.round(op.setups));
+      if (cursor <= holdings) return op.machine;
+      cursor -= holdings;
+    }
+    return routeOps[routeOps.length - 1].machine;
+  };
+  const primaryRatePerMin = cnc.machineRatePerMin * (machineRateMultiplier > 0 ? machineRateMultiplier : 1);
+  for (const setup of plan.setups) {
+    const machine = routeMachineForSetup(setup.index);
+    const ratePerMin = machine ? cnc.machineRatePerMin * machine.rateMultiplier : primaryRatePerMin;
+    const rateFactor = primaryRatePerMin > 0 ? ratePerMin / primaryRatePerMin : 1;
+    setup.operations = setup.operations.map((operation) => ({
+      ...operation,
+      cost: operation.cost * rateFactor,
+    }));
+    const cuttingCost = setup.operations.reduce((sum, operation) => sum + operation.cost, 0);
+    const rapidSec = setup.operations.reduce((sum, operation) => sum + operation.seconds, 0) * 0.08;
+    const nonCutCost = (setup.toolChanges * toolChangeSec / eff + rapidSec) * (ratePerMin / 60);
+    setup.cost = cuttingCost + nonCutCost;
+  }
+  plan.totalCost = plan.setups.reduce((sum, setup) => sum + setup.cost, 0);
   // Use the same tools and non-cutting events in the price and traveller.
   const toolCount = plan.tools.length;
   const toolChanges = plan.setups.reduce((sum, setup) => sum + setup.toolChanges, 0);
   const airSec = toolChanges * toolChangeSec + cuttingSec * 0.08;
   const cycleTimeSec = plan.totalSeconds;
   const machineCost = plan.totalCost;
+  const primaryRuntimeCost = (cycleTimeSec / 60) * primaryRatePerMin;
+  const routeRuntimeAdjustment = machineCost - primaryRuntimeCost;
 
   // --- Setup (amortised over the batch) — Rule 1 is the driver -------------
   // Milling setups are slower than the bar-lathe defaults: each one means
@@ -714,8 +745,9 @@ export function calculateMilledCosts(
     { key: 'nre', name: `CAM programming (one-time) ÷ ${qty}`, driver: `${r1(programmingMin)} min NRE over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty} — not billed again on reorder`, value: programmingPerUnit, color: COLORS.nre },
     { key: 'fixture', name: `Soft jaws / fixture ÷ ${qty}`, driver: needsSoftJaws ? `${setups} setups${p.bossCount > 0 ? `, ${p.bossCount} boss` : ''} → work-holding, made once (one-time)` : '', value: fixtureCost, color: COLORS.fixture },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${toolCount} operations`, value: toolingCost, color: COLORS.tooling },
+    ...(Math.abs(routeRuntimeAdjustment) > 0.005 ? [{ key: 'machine-rate', name: 'Multi-machine runtime rate', driver: routeOps!.map((op) => `${op.machine.name}: ${op.machine.hourlyRate}/hr × ${Math.max(1, Math.round(op.setups))} holding${op.setups > 1 ? 's' : ''}`).join('; '), value: routeRuntimeAdjustment, color: COLORS.turn }] : []),
     ...secondaryOpsLineItems(input.secondaryOps, qty),
-  ].filter((li) => li.value > 0);
+  ].filter((li) => Math.abs(li.value) > 0);
 
   // --- Batch quantity curve (setup + NRE amortisation) ---------------------
   // First-order price carries the one-time NRE (programming + jaws); the repeat

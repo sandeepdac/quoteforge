@@ -24,7 +24,7 @@ import {
 import { DEFAULT_CNC_SETTINGS, DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor, nextStandardBar } from './materials';
 import { estimateTurningTimes, TurningProfile } from './turning';
-import { deriveRouteSetup, type RouteSetupOp } from './setupModel';
+import { deriveRouteSetup, routeRateMultiplier, type RouteSetupOp } from './setupModel';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
 import type { SecondaryOperation } from './secondaryOps';
 
@@ -100,7 +100,8 @@ export function calculateMachiningCosts(
   const { overheadPercent, rushPremiumPercent } = settings;
   const m = materialPropsFor(input.materialName);
   const eff = cnc.efficiencyFactor > 0 ? cnc.efficiencyFactor : 0.8;
-  const machineRatePerMin = cnc.machineRatePerMin * (machineRateMultiplier > 0 ? machineRateMultiplier : 1);
+  const routeRate = routeOps?.length ? routeRateMultiplier(routeOps) : null;
+  const machineRatePerMin = cnc.machineRatePerMin * (routeRate ?? (machineRateMultiplier > 0 ? machineRateMultiplier : 1));
   // Client-facing feedrate override (Settings): 100% = programmed feed; scales
   // CUTTING time only (air moves, bar-feed and setup are unaffected).
   const feedMult = 100 / Math.max(1, cnc.feedrateRatioPercent ?? 100);
@@ -220,7 +221,7 @@ export function calculateMachiningCosts(
     { key: 'tooling', name: 'Tooling / consumables', driver: `${t.toolCount} operations`, value: toolingCost, color: COLORS.tooling },
     { key: 'nre', name: `CAM programming (one-time) ÷ ${qty}`, driver: `${r1(programmingMin)} min NRE over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty} — not billed again on reorder`, value: programmingPerUnit, color: COLORS.nre },
     ...secondaryOpsLineItems(input.secondaryOps, qty),
-  ].filter((li) => li.value > 0);
+  ].filter((li) => Math.abs(li.value) > 0);
 
   // --- Per-setup / per-operation plan (a turning job sheet) ----------------
   // Same seconds as the line items, grouped the way a turner reads a job. A
