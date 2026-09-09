@@ -90,7 +90,7 @@ export const DEFAULT_CNC_SETTINGS: CncSettings = {
   efficiencyFactor: 0.8, // actual = theoretical / 0.8 (real shops run below book)
   feedrateRatioPercent: 100, // client-facing feed override; 100 = programmed feed (neutral)
   maxRpm: 6000,
-  toolChangeSec: 3,
+  toolChangeSec: 8,
   barLoadSec: 8,
   toolingCostPerOp: 0.5,
   radialStockAllowanceMm: 2,

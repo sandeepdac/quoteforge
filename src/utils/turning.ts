@@ -104,7 +104,10 @@ export interface TurningTimes {
 
 export const DEFAULT_TURNING_CONFIG: TurningConfig = {
   maxRpm: 6000,
-  toolChangeSec: 3,
+  // Turret index / tool-change allowance. Three seconds was an optimistic
+  // controller-only figure; the shop evidence and operator-facing quote use an
+  // 8-second chip-to-chip allowance for each engaged tool.
+  toolChangeSec: 8,
   roughFraction: 0.9,
   maxDrillDiaMm: 20,
 };

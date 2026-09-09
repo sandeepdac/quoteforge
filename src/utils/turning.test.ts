@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rpm, roughingMrrCm3PerMin, estimateTurningTimes, TurningProfile } from './turning';
+import { rpm, roughingMrrCm3PerMin, estimateTurningTimes, TurningProfile, DEFAULT_TURNING_CONFIG } from './turning';
 import { materialPropsFor } from './materials';
 
 describe('rpm', () => {
@@ -74,5 +74,11 @@ describe('estimateTurningTimes', () => {
     expect(wide.boreSec).toBeGreaterThan(drillable.boreSec * 4);
     // Drill time is bounded by the pilot (≤ max drill), not the 45 mm final size.
     expect(wide.drillSec).toBeLessThan(wide.boreSec);
+  });
+
+  it('uses the configured per-tool change allowance', () => {
+    const fast = estimateTurningTimes(profile, m, 25, { ...DEFAULT_TURNING_CONFIG, toolChangeSec: 3 });
+    const shop = estimateTurningTimes(profile, m, 25, { ...DEFAULT_TURNING_CONFIG, toolChangeSec: 8 });
+    expect(shop.airSec - fast.airSec).toBeCloseTo((8 - 3) * shop.toolCount, 6);
   });
 });
