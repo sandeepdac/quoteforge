@@ -90,10 +90,12 @@ describe('shop tool library', () => {
     expect(tp.passes.find((p) => p.op === 'rough')!.noseRadiusMm).toBe(0.8);
   });
 
-  it('falls back to a generic tool for ops the library omits', () => {
-    // No 'partoff' entry provided → generic fallback station.
+  it('does not invent a station for an omitted operation', () => {
     const partoff = tp.passes.find((p) => p.op === 'partoff')!;
-    expect(partoff.station).toBe('T0404');
+    expect(partoff.station).toBe('(UNASSIGNED TOOL)');
+    expect(toGcode(tp)).toContain('EXPORT INCOMPLETE');
+    expect(toGcode(tp)).not.toContain('G00');
+    expect(toGcode(tp)).not.toContain('G01');
   });
 
   it('emits the shop stations into the G-code + tool table', () => {

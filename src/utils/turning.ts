@@ -16,6 +16,8 @@
 import type { MaterialProps } from './materials';
 import { crossFeaturesSec, drillHoleSec, tapThreadsSec, DEFAULT_CROSS_CONFIG, DEFAULT_DRILL_CONFIG } from './drilling';
 import type { ThreadSpec } from './drilling';
+import type { ShopTool, TurningToolAssembly } from '../types';
+import { countToolSelections, resolveTurningTool, TURNING_SEQUENCE, type ToolAssignment } from './turningTools';
 
 /** A turned part reduced to the drivers a cycle-time model needs. */
 export interface TurningProfile {
@@ -67,6 +69,8 @@ export interface TurningProfile {
 }
 
 export interface TurningConfig {
+  toolLibrary?: ShopTool[];
+  toolAssemblies?: TurningToolAssembly[];
   /** Spindle rpm ceiling (rpm) — small bar work often runs into this. */
   maxRpm: number;
   /** Turret index / tool-change time (s each). */
@@ -98,15 +102,17 @@ export interface TurningTimes {
   airSec: number;
   /** Sum of all cutting operations (excludes air). */
   cuttingSec: number;
-  /** Distinct tools/operations engaged (drives tool-change count). */
+  /** Distinct assemblies (unassigned operation groups are provisional tools). */
   toolCount: number;
+  operationCount: number;
+  toolChangeCount: number;
+  rapidSec: number;
+  toolAssignments: ToolAssignment[];
 }
 
 export const DEFAULT_TURNING_CONFIG: TurningConfig = {
   maxRpm: 6000,
-  // Turret index / tool-change allowance. Three seconds was an optimistic
-  // controller-only figure; the shop evidence and operator-facing quote use an
-  // 8-second chip-to-chip allowance for each engaged tool.
+  // Editable provisional allowance, not a verified machine specification.
   toolChangeSec: 8,
   roughFraction: 0.9,
   maxDrillDiaMm: 20,
@@ -228,11 +234,14 @@ export function estimateTurningTimes(
     facingSec + roughSec + finishSec + drillSec + boreSec + grooveSec + threadSec + partingSec
     + crossSec + tapSec;
 
-  const toolCount = [facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec]
-    .filter((t) => t > 0).length;
+  const times = { face: facingSec, rough: roughSec, finish: finishSec, drill: drillSec,
+    bore: boreSec, groove: grooveSec, thread: threadSec, partoff: partingSec, cross: crossSec, tap: tapSec };
+  const toolAssignments = TURNING_SEQUENCE.filter(op => times[op] > 0)
+    .map(op => resolveTurningTool(op, cfg.toolLibrary ?? [], cfg.toolAssemblies));
+  const { distinctTools: toolCount, selections: toolChangeCount } = countToolSelections(toolAssignments);
+  const rapidSec = cuttingSec * 0.05;
+  const airSec = toolChangeCount * cfg.toolChangeSec + rapidSec;
 
-  // Non-cutting: a tool change per distinct tool + ~5% rapids between cuts.
-  const airSec = toolCount * cfg.toolChangeSec + cuttingSec * 0.05;
-
-  return { facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec, airSec, cuttingSec, toolCount };
+  return { facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec,
+    airSec, cuttingSec, toolCount, toolChangeCount, rapidSec, toolAssignments, operationCount: toolAssignments.length };
 }

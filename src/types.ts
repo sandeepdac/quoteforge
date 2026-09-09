@@ -124,6 +124,8 @@ export interface CostLineItem {
   driver: string;
   value: number;
   color: string;
+  /** Per-part machine seconds, when this line represents runtime. */
+  seconds?: number;
 }
 
 /** Per-part price at a given batch quantity (setup amortised over the batch). */
@@ -175,6 +177,8 @@ export interface PlanSetup {
  */
 export interface MachiningPlan {
   setups: PlanSetup[];
+  /** Unresolved tooling assumptions; these are not suitability approvals. */
+  toolingWarnings?: string[];
   /** Distinct cutters across the whole job. */
   tools: Array<{ name: string; ops: number; seconds: number }>;
   totalSeconds: number;
@@ -263,12 +267,30 @@ export type TurningOp = 'face' | 'rough' | 'drill' | 'bore' | 'finish' | 'partof
  */
 export interface ShopTool {
   op: TurningOp;
+  /** Stable assembly reference; legacy station/description records remain readable. */
+  assemblyId?: string;
   /** Turret station + offset call, e.g. "T0101". */
   station: string;
   /** Tool / insert description, e.g. "DCLNR 2020 + CNMG 120408-PM". */
   description: string;
   /** Insert nose radius (mm), optional. */
   noseRadiusMm?: number;
+}
+
+/** Shop inventory record, separate from the operations that use it. */
+export interface TurningToolAssembly {
+  id: string;
+  description: string;
+  station: string;
+  noseRadiusMm?: number;
+  diameterMm?: number;
+  cuttingLengthMm?: number;
+  usableReachMm?: number;
+  minBoreMm?: number;
+  /** Source reference / shop notes. Geometry is recorded, not yet clearance-checked. */
+  source?: string;
+  /** Inventory confirmation only, NOT approval for any material or operation. */
+  inventoryConfirmed?: boolean;
 }
 
 export interface CncSettings {
@@ -346,8 +368,9 @@ export interface CncSettings {
   millSetupPerExtraOpMin?: number;
   /** Fraction of swarf value recovered (0–1). */
   scrapRecovery: number;
-  /** Shop turning tool library — drives the reference toolpath's stations/tools. */
+  /** Operation assignments used by turning costing and reference toolpath. */
   toolLibrary?: ShopTool[];
+  turningToolAssemblies?: TurningToolAssembly[];
   /**
    * Machines the shop actually owns. Machine selection compares only these when
    * choosing the best route for a part (e.g. a 5-axis mill vs a 5-axis turn-mill).

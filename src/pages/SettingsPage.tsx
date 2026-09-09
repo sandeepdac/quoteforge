@@ -19,10 +19,12 @@ import { useSettings } from '../context/SettingsContext';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../utils/cn';
 import { DEFAULT_CNC_SETTINGS, DEFAULT_SECONDARY_OPS, DEFAULT_TURNING_TOOLS } from '../constants';
-import { CncSettings, SecondaryCategory, SecondaryOperation, ShopSettings, ShopTool, TurningOp } from '../types';
+import { CncSettings, SecondaryCategory, SecondaryOperation, ShopSettings, ShopTool } from '../types';
 import { CURRENCIES, currencySymbol } from '../utils/currency';
 import { useMoney } from '../utils/useMoney';
 import { ALL_MACHINE_IDS, MACHINE_CATALOG, MachineId } from '../utils/machineSelection';
+import TurningLibraryEditor from '../components/TurningLibraryEditor';
+import type { TurningToolAssembly } from '../types';
 
 export default function SettingsPage() {
   const { settings, updateSettings } = useSettings();
@@ -88,7 +90,8 @@ export default function SettingsPage() {
           {activeTab === 'tooling' && (
             <ToolingTab
               tools={settings.cnc?.toolLibrary ?? DEFAULT_TURNING_TOOLS}
-              onSave={(toolLibrary) => updateSettings({ cnc: { toolLibrary } as Partial<CncSettings> as CncSettings })}
+              assemblies={settings.cnc?.turningToolAssemblies}
+              onSave={(toolLibrary, turningToolAssemblies) => updateSettings({ cnc: { toolLibrary, turningToolAssemblies } as Partial<CncSettings> as CncSettings })}
               flatSetupCharge={settings.cnc?.flatSetupChargePerSetup ?? 0}
               onSaveSetupCharge={(flatSetupChargePerSetup) =>
                 updateSettings({ cnc: { flatSetupChargePerSetup } as Partial<CncSettings> as CncSettings })
@@ -168,23 +171,6 @@ export default function SettingsPage() {
   );
 }
 
-const OP_ROWS: { op: TurningOp; label: string; hint: string }[] = [
-  { op: 'face', label: 'Facing', hint: 'Skim the end flat' },
-  { op: 'rough', label: 'Roughing', hint: 'OD stock removal' },
-  { op: 'drill', label: 'Drilling', hint: 'Pilot / through hole' },
-  { op: 'bore', label: 'Boring', hint: 'Open bore to size' },
-  { op: 'finish', label: 'Finishing', hint: 'Final OD pass' },
-  { op: 'partoff', label: 'Part-off', hint: 'Cut off at length' },
-];
-
-/** Seed all five ops in machining order, filling gaps from the defaults. */
-function normalise(tools: ShopTool[]): ShopTool[] {
-  return OP_ROWS.map(({ op }) => {
-    const found = tools.find((t) => t.op === op);
-    return found ?? DEFAULT_TURNING_TOOLS.find((t) => t.op === op)!;
-  });
-}
-
 /**
  * ESTIMATE settings — the client-facing cost inputs, mirroring a CAM estimator's
  * Estimate panel: the shop enters its own machining rate, feed override, tool-
@@ -205,6 +191,8 @@ function EstimateTab({
   const [rateHr, setRateHr] = useState(String(Math.round((cnc.machineRatePerMin ?? 1.25) * 60)));
   const [feed, setFeed] = useState(String(cnc.feedrateRatioPercent ?? 100));
   const [toolChange, setToolChange] = useState(String(cnc.millToolChangeSec ?? 10));
+  const [turnChange, setTurnChange] = useState(String(cnc.toolChangeSec ?? DEFAULT_CNC_SETTINGS.toolChangeSec));
+  const [barLoad, setBarLoad] = useState(String(cnc.barLoadSec ?? DEFAULT_CNC_SETTINGS.barLoadSec));
   const [saved, setSaved] = useState('');
   const flash = (what: string) => {
     setSaved(what);
@@ -329,7 +317,7 @@ function EstimateTab({
         </SettingField>
 
         <SettingField
-          label="Tool Change Time"
+          label="Milling Tool Change Time"
           hint="ATC swap time added per distinct tool"
           unit="s"
         >
@@ -342,6 +330,16 @@ function EstimateTab({
             onBlur={saveToolChange}
             className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right font-mono focus:outline-none focus:ring-1 focus:ring-primary"
           />
+        </SettingField>
+        <SettingField label="Turning Tool Selection Time" hint="Seconds per selection, including the initial tool. Editable assumption; efficiency is applied separately." unit="s">
+          <input aria-label="Turning tool selection seconds" type="number" min="0" step="0.1" value={turnChange} onChange={e => setTurnChange(e.target.value)} onBlur={() => {
+            const value = Math.max(0, Number(turnChange) || 0); setTurnChange(String(value)); onSaveCnc({ toolChangeSec: value }); flash('Turning tool selection');
+          }} className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right" />
+        </SettingField>
+        <SettingField label="Turning Load / Unload / Bar Feed" hint="Separate per-part handling allowance. Not a tool change; not scaled by efficiency." unit="s">
+          <input aria-label="Turning load seconds" type="number" min="0" step="0.1" value={barLoad} onChange={e => setBarLoad(e.target.value)} onBlur={() => {
+            const value = Math.max(0, Number(barLoad) || 0); setBarLoad(String(value)); onSaveCnc({ barLoadSec: value }); flash('Turning handling');
+          }} className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right" />
         </SettingField>
       </div>
 
@@ -741,6 +739,7 @@ function SettingField({
 
 function ToolingTab({
   tools,
+  assemblies,
   onSave,
   flatSetupCharge,
   onSaveSetupCharge,
@@ -748,39 +747,22 @@ function ToolingTab({
   onSaveSetupMode,
 }: {
   tools: ShopTool[];
-  onSave: (t: ShopTool[]) => void;
+  assemblies?: TurningToolAssembly[];
+  onSave: (t: ShopTool[], assemblies: TurningToolAssembly[]) => void;
   flatSetupCharge: number;
   onSaveSetupCharge: (v: number) => void;
   setupMode: 'time' | 'flat' | 'both';
   onSaveSetupMode: (m: 'time' | 'flat' | 'both') => void;
 }) {
   const { symbol } = useMoney();
-  const [rows, setRows] = useState<ShopTool[]>(() => normalise(tools));
-  const [saved, setSaved] = useState(false);
   const [charge, setCharge] = useState(String(flatSetupCharge || 0));
-
-  const update = (op: TurningOp, patch: Partial<ShopTool>) => {
-    setRows((rs) => rs.map((r) => (r.op === op ? { ...r, ...patch } : r)));
-    setSaved(false);
-  };
-
-  const save = () => {
-    onSave(rows);
-    setSaved(true);
-  };
-
-  const reset = () => {
-    setRows(normalise(DEFAULT_TURNING_TOOLS));
-    setSaved(false);
-  };
 
   return (
     <div className="p-8 space-y-6 animate-in slide-in-from-right-4 duration-300">
       <div className="border-b border-border pb-4">
         <h3 className="text-lg font-bold">Machining & Tool Library</h3>
         <p className="text-sm text-muted-foreground mt-1">
-          Map each turning operation to the turret station and insert your shop runs. These drive the reference toolpath preview and the
-          downloadable G-code on turned parts.
+          Maintain reusable turning assemblies and assign operations to them. Assignments drive tool-selection accounting and the reference preview; sample inventory is not verified tooling.
         </p>
       </div>
 
@@ -823,75 +805,7 @@ function ToolingTab({
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground text-left">
-              <th className="pb-2 pr-3">Operation</th>
-              <th className="pb-2 pr-3">Station</th>
-              <th className="pb-2 pr-3">Tool / insert</th>
-              <th className="pb-2">Nose R (mm)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const meta = OP_ROWS.find((o) => o.op === r.op)!;
-              return (
-                <tr key={r.op} className="border-t border-border">
-                  <td className="py-2 pr-3 align-top">
-                    <p className="font-semibold text-foreground">{meta.label}</p>
-                    <p className="text-[11px] text-muted-foreground">{meta.hint}</p>
-                  </td>
-                  <td className="py-2 pr-3 align-top">
-                    <input
-                      value={r.station}
-                      onChange={(e) => update(r.op, { station: e.target.value })}
-                      className="w-24 bg-background border border-border rounded px-2 py-1 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                      placeholder="T0101"
-                    />
-                  </td>
-                  <td className="py-2 pr-3 align-top">
-                    <input
-                      value={r.description}
-                      onChange={(e) => update(r.op, { description: e.target.value })}
-                      className="w-full min-w-[220px] bg-background border border-border rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                      placeholder="Holder + insert"
-                    />
-                  </td>
-                  <td className="py-2 align-top">
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      value={r.noseRadiusMm ?? ''}
-                      onChange={(e) =>
-                        update(r.op, { noseRadiusMm: e.target.value === '' ? undefined : Number(e.target.value) })
-                      }
-                      className="w-20 bg-background border border-border rounded px-2 py-1 font-mono text-sm text-right focus:outline-none focus:ring-1 focus:ring-primary"
-                      placeholder="—"
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="pt-6 border-t border-border flex items-center justify-between">
-        <button onClick={reset} className="text-xs font-bold text-muted-foreground hover:text-foreground uppercase tracking-widest">
-          Reset to defaults
-        </button>
-        <div className="flex items-center gap-3">
-          {saved && <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Saved ✓</span>}
-          <button
-            onClick={save}
-            className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2 rounded-md text-sm font-medium hover:bg-primary/90 transition-shadow shadow"
-          >
-            <Save size={16} /> Save Tool Library
-          </button>
-        </div>
-      </div>
+      <TurningLibraryEditor tools={tools} assemblies={assemblies} onSave={onSave} />
     </div>
   );
 }

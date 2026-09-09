@@ -110,9 +110,10 @@ export default function StepReview({ data, cadAnalysis, partImage, quoteNumber, 
       bar,
       materialPropsFor(material.name),
       undefined,
-      settings.cnc?.toolLibrary
+      settings.cnc?.toolLibrary,
+      settings.cnc?.turningToolAssemblies,
     );
-  }, [isTurnedPart, cadAnalysis, material, settings.cnc?.toolLibrary]);
+  }, [isTurnedPart, cadAnalysis, material, settings.cnc?.toolLibrary, settings.cnc?.turningToolAssemblies]);
 
   const validUntil = new Date();
   validUntil.setDate(validUntil.getDate() + 30);

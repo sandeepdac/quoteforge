@@ -31,7 +31,7 @@ export default function MachiningCostTable({ costs, overheadPercent, currency = 
   const plan = costs.plan;
 
   const material = li('material');
-  const noncut = li('noncut');
+  const noncut = costs.lineItems.filter(l => ['noncut', 'rapids', 'loading'].includes(l.key));
   const setup = li('setup');
   const setupCharge = li('setupCharge');
   const nre = li('nre');
@@ -44,6 +44,13 @@ export default function MachiningCostTable({ costs, overheadPercent, currency = 
 
   return (
     <div className="overflow-x-auto">
+      {!!plan?.toolingWarnings?.length && (
+        <details className="m-4 rounded border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+          <summary className="cursor-pointer font-semibold">Tooling requires review ({plan.toolingWarnings.length} assumptions)</summary>
+          <ul className="list-disc pl-5 mt-2 space-y-1">{plan.toolingWarnings.map(w => <li key={w}>{w}</li>)}</ul>
+          <p className="mt-2">Inventory confirmation is not a clearance or cutting-data approval.</p>
+        </details>
+      )}
       <table className="w-full">
           <thead>
             <tr className="text-left text-[10px] font-bold uppercase tracking-widest text-muted-foreground border-b border-border">
@@ -96,14 +103,14 @@ export default function MachiningCostTable({ costs, overheadPercent, currency = 
             })}
 
             {/* Non-cutting machine + shop charges */}
-            {noncut && noncut.value > 0.005 && (
-              <tr>
-                <td className={cell}><span className="text-foreground">Tool changes &amp; rapids</span></td>
-                <td className={`${cell} text-muted-foreground`}>{noncut.driver}</td>
-                <td className={num}>—</td>
-                <td className={num}>{money(noncut.value)}</td>
+            {noncut.map(line => (
+              <tr key={line.key}>
+                <td className={cell}><span className="text-foreground">{line.name}</span></td>
+                <td className={`${cell} text-muted-foreground`}>{line.driver}</td>
+                <td className={num}>{line.seconds === undefined ? '—' : secs(line.seconds)}</td>
+                <td className={num}>{money(line.value)}</td>
               </tr>
-            )}
+            ))}
             {[setup, setupCharge, nre, fixture, tooling]
               .filter((x): x is CostLineItem => !!x && x.value > 0.005)
               .map((x) => (

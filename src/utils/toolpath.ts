@@ -14,7 +14,9 @@
 import type { MaterialProps } from './materials';
 import { rpm } from './turning';
 import type { TurningProfile } from './turning';
-import type { ShopTool, TurningOp } from '../types';
+import type { ShopTool, TurningOp, TurningToolAssembly } from '../types';
+import { DEFAULT_TURNING_TOOLS } from '../constants';
+import { resolveTurningTool } from './turningTools';
 
 export interface TPMove {
   /** Rapid (G0) vs feed (G1). */
@@ -79,21 +81,11 @@ const OP_COLORS = {
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
-/** Generic fallback tools, used when the shop library has no entry for an op. */
-const FALLBACK_TOOLS: Record<TurningOp, { station: string; description: string }> = {
-  face: { station: 'T0101', description: 'OD turning — 80° rhombic insert (C/DNMG)' },
-  rough: { station: 'T0101', description: 'OD turning — 80° rhombic insert (C/DNMG)' },
-  drill: { station: 'T0202', description: 'Carbide drill' },
-  bore: { station: 'T0505', description: 'Boring bar' },
-  finish: { station: 'T0303', description: 'OD finishing — 35° insert (V/DCGT, sharp)' },
-  partoff: { station: 'T0404', description: 'Parting blade — 3 mm wide' },
-};
-
 /**
  * Expand a turned profile + chosen bar into an ordered toolpath. Stepover for
  * roughing comes from the material's depth of cut; feeds/speeds from its cutting
- * data. Stations/tools come from the shop `tools` library (falling back to a
- * generic set per op). Grooves/threads are estimated in the quote but omitted
+ * data. Stations/tools use the same resolver as costing. Explicit missing
+ * assignments stay unassigned. Grooves/threads are estimated in the quote but omitted
  * from this reference path (they need the drawing callout to program correctly).
  */
 export function generateTurningToolpath(
@@ -101,7 +93,8 @@ export function generateTurningToolpath(
   stockDiaMm: number,
   m: MaterialProps,
   cfg: ToolpathConfig = DEFAULT_TOOLPATH_CONFIG,
-  tools?: ShopTool[]
+  tools?: ShopTool[],
+  assemblies?: TurningToolAssembly[],
 ): Toolpath {
   const od = Math.max(0.5, profile.odMm);
   const len = Math.max(1, profile.lengthMm);
@@ -109,14 +102,9 @@ export function generateTurningToolpath(
   const clr = cfg.clearanceMm;
   const passes: TPPass[] = [];
 
-  const lib = new Map<TurningOp, ShopTool>();
-  for (const t of tools ?? []) if (t.station.trim()) lib.set(t.op, t);
   const toolFor = (op: TurningOp, drillDia?: number) => {
-    const custom = lib.get(op);
-    if (custom) return { station: custom.station.trim(), tool: custom.description.trim(), noseRadiusMm: custom.noseRadiusMm };
-    const fb = FALLBACK_TOOLS[op];
-    const desc = op === 'drill' && drillDia ? `⌀${r3(drillDia)} mm carbide drill` : fb.description;
-    return { station: fb.station, tool: desc, noseRadiusMm: undefined as number | undefined };
+    const resolved = resolveTurningTool(op, tools ?? DEFAULT_TURNING_TOOLS, assemblies);
+    return { station: resolved.station || '(UNASSIGNED TOOL)', tool: resolved.description || resolved.label, noseRadiusMm: resolved.noseRadiusMm };
   };
 
   // --- 1) Facing: skim the right end flat, OD → centre, a couple of steps ----
@@ -241,6 +229,12 @@ export function toGcode(tp: Toolpath, opts: { partName?: string; materialName?: 
       const nose = pass.noseRadiusMm ? ` [R${r3(pass.noseRadiusMm)}]` : '';
       p(`(${pass.station}: ${pass.tool}${nose})`);
     }
+  }
+  if (tp.passes.some(pass => !/^T\d{4}$/i.test(pass.station))) {
+    p('(EXPORT INCOMPLETE: assign all tools before generating reference motion.)');
+    p('M30');
+    p('%');
+    return L.join('\n');
   }
   p('G21 G18 G99');
   p('G40');

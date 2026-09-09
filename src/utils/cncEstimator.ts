@@ -18,8 +18,6 @@ import {
   MachiningPlan,
   PlanOperation,
   ShopSettings,
-  ShopTool,
-  TurningOp,
 } from '../types';
 import { DEFAULT_CNC_SETTINGS, DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor, nextStandardBar } from './materials';
@@ -27,6 +25,7 @@ import { estimateTurningTimes, TurningProfile } from './turning';
 import { deriveRouteSetup, routeRateMultiplier, type RouteSetupOp } from './setupModel';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
 import type { SecondaryOperation } from './secondaryOps';
+import type { EstimatedTurningOp } from './turningTools';
 
 export interface MachiningInput {
   /** True for a rotationally-symmetric (turned) part. Only these are costed here. */
@@ -121,6 +120,8 @@ export function calculateMachiningCosts(
     toolChangeSec: cnc.toolChangeSec,
     roughFraction: 0.9,
     maxDrillDiaMm: cnc.maxDrillDiaMm ?? 20,
+    toolLibrary: cnc.toolLibrary ?? DEFAULT_TURNING_TOOLS,
+    toolAssemblies: cnc.turningToolAssemblies,
   });
   // Per-op actual seconds and cost (efficiency applied to cutting/air alike).
   const ratePerSec = machineRatePerMin / 60;
@@ -175,7 +176,8 @@ export function calculateMachiningCosts(
   const setupPerUnit = setupCostTotal / qty;
 
   // --- Tooling -------------------------------------------------------------
-  const toolingCost = t.toolCount * cnc.toolingCostPerOp;
+  // Still an operation allowance, not measured insert wear or replacement cost.
+  const toolingCost = t.operationCount * cnc.toolingCostPerOp;
 
   // --- Secondary operations (plating / passivate / inspection …) -----------
   // Lot charge amortised over the batch + per-part cost; folded into subtotal so
@@ -215,10 +217,12 @@ export function calculateMachiningCosts(
     // stops adding up to the subtotal it is supposed to explain.
     { key: 'tap', name: 'Tapping', driver: `${(input.profile.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ') || 'none'} — ${secStr(t.tapSec)}`, value: opCost(t.tapSec), color: COLORS.thread },
     { key: 'cross', name: 'Off-axis features (driven tool)', driver: `${input.profile.crossFeatureList?.length ?? 0} feature${(input.profile.crossFeatureList?.length ?? 0) === 1 ? '' : 's'} off the turning axis — ${secStr(t.crossSec)}`, value: opCost(t.crossSec), color: COLORS.drill },
-    { key: 'noncut', name: 'Tool changes / load', driver: `${t.toolCount} changes × ${cnc.toolChangeSec}s, rapids + ${cnc.barLoadSec}s bar load`, value: (t.airSec / eff + cnc.barLoadSec) * ratePerSec, color: COLORS.noncut },
+    { key: 'noncut', name: 'Tool selections', driver: `${t.toolCount} distinct tools; ${t.toolChangeCount} selections × ${cnc.toolChangeSec}s ÷ ${r1(eff * 100)}% efficiency (includes initial selection; adjacent shared tools counted once)`, seconds: t.toolChangeCount * cnc.toolChangeSec / eff, value: airCost(t.toolChangeCount * cnc.toolChangeSec), color: COLORS.noncut },
+    { key: 'rapids', name: 'Rapid movement allowance', driver: `5% of theoretical cutting time ÷ ${r1(eff * 100)}% efficiency — provisional, not measured travel`, seconds: t.rapidSec / eff, value: airCost(t.rapidSec), color: COLORS.noncut },
+    { key: 'loading', name: 'Load / unload / bar feed', driver: `${cnc.barLoadSec}s per part — shop allowance, separate from tool selection`, seconds: cnc.barLoadSec, value: cnc.barLoadSec * ratePerSec, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min preparation, excluding ${derivedProgrammingMin} min CAM billed separately. Full first-order breakdown: ${derivedSetup.explanation} — batch ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
-    { key: 'tooling', name: 'Tooling / consumables', driver: `${t.toolCount} operations`, value: toolingCost, color: COLORS.tooling },
+    { key: 'tooling', name: 'Tooling / consumables', driver: `${t.operationCount} operations — provisional allowance, not a tool-life calculation`, value: toolingCost, color: COLORS.tooling },
     { key: 'nre', name: `CAM programming (one-time) ÷ ${qty}`, driver: `${r1(programmingMin)} min NRE over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty} — not billed again on reorder`, value: programmingPerUnit, color: COLORS.nre },
     ...secondaryOpsLineItems(input.secondaryOps, qty),
   ].filter((li) => Math.abs(li.value) > 0);
@@ -228,9 +232,8 @@ export function calculateMachiningCosts(
   // bar-fed / sliding-head part runs in ONE setup; a second op (back-face /
   // cross features) is listed but not itemised because those features are not
   // in the cycle-time estimate. Tools come from the shop turning library.
-  const tools: ShopTool[] = settings.cnc?.toolLibrary ?? DEFAULT_TURNING_TOOLS;
-  const toolFor = (op: TurningOp, fallback: string) =>
-    tools.find((tl) => tl.op === op)?.description ?? fallback;
+  const toolFor = (op: EstimatedTurningOp, fallback: string) =>
+    t.toolAssignments.find(a => a.op === op)?.label ?? fallback;
   const p = input.profile;
   const opSrc: Array<{ name: string; sec: number; tool: string; driver: string; color: string }> = [
     { name: 'Facing', sec: t.facingSec, tool: toolFor('face', 'OD turning tool'), driver: `${p.faceCount} face${p.faceCount === 1 ? '' : 's'}`, color: COLORS.facing },
@@ -238,11 +241,11 @@ export function calculateMachiningCosts(
     { name: 'Drilling', sec: t.drillSec, tool: toolFor('drill', 'Carbide drill'), driver: `⌀${p.boreDiaMm} × ${p.boreDepthMm} mm`, color: COLORS.drill },
     { name: 'Boring', sec: t.boreSec, tool: toolFor('bore', 'Boring bar'), driver: `bore to ⌀${p.boreDiaMm}`, color: COLORS.bore },
     { name: 'Finish turning', sec: t.finishSec, tool: toolFor('finish', 'OD finishing tool'), driver: `${r1(p.lengthMm)} mm OD`, color: COLORS.finish },
-    { name: 'Grooving', sec: t.grooveSec, tool: 'Grooving tool', driver: `${p.grooveCount} groove${p.grooveCount === 1 ? '' : 's'}`, color: COLORS.groove },
-    { name: 'Threading', sec: t.threadSec, tool: 'Threading tool', driver: `${p.threadCount} thread${p.threadCount === 1 ? '' : 's'}`, color: COLORS.thread },
+    { name: 'Grooving', sec: t.grooveSec, tool: toolFor('groove', 'Unassigned groove tool'), driver: `${p.grooveCount} groove${p.grooveCount === 1 ? '' : 's'}`, color: COLORS.groove },
+    { name: 'Threading', sec: t.threadSec, tool: toolFor('thread', 'Unassigned thread tool'), driver: `${p.threadCount} thread${p.threadCount === 1 ? '' : 's'}`, color: COLORS.thread },
     { name: 'Part-off', sec: t.partingSec, tool: toolFor('partoff', 'Parting blade'), driver: 'cut to length', color: COLORS.parting },
-    { name: 'Tapping', sec: t.tapSec, tool: 'Tap (rigid tapping cycle)', driver: (p.threads ?? []).map((th) => `${Math.max(1, th.count ?? 1)}x ${th.callout}`).join(', ') || 'threads', color: COLORS.thread },
-    { name: 'Off-axis features', sec: t.crossSec, tool: 'Driven tool (live tooling)', driver: `${p.crossFeatureList?.length ?? 0} cross feature${(p.crossFeatureList?.length ?? 0) === 1 ? '' : 's'}`, color: COLORS.drill },
+    { name: 'Tapping', sec: t.tapSec, tool: toolFor('tap', 'Unassigned tap tool'), driver: (p.threads ?? []).map((th) => `${Math.max(1, th.count ?? 1)}x ${th.callout}`).join(', ') || 'threads', color: COLORS.thread },
+    { name: 'Off-axis features', sec: t.crossSec, tool: toolFor('cross', 'Unassigned cross tool'), driver: `${p.crossFeatureList?.length ?? 0} cross feature${(p.crossFeatureList?.length ?? 0) === 1 ? '' : 's'}`, color: COLORS.drill },
   ];
   const planOps: PlanOperation[] = opSrc
     // Keep every operation that carries real time. The old half-second floor was
@@ -252,17 +255,16 @@ export function calculateMachiningCosts(
     // reference toolpath still listed them, so the two views of the same part
     // disagreed and the drill looked un-costed. It never was: the seconds are in
     // the cycle either way — only the display dropped them.
-    .filter((o) => o.sec > 0.01)
+    .filter((o) => o.sec > 0)
     .map((o) => ({ name: o.name, tool: o.tool, seconds: cutSec(o.sec), cost: opCost(o.sec), driver: o.driver, color: o.color }));
-  const changeSec = t.toolCount * cnc.toolChangeSec;
-  const setup1Sec = planOps.reduce((a, o) => a + o.seconds, 0) + changeSec / eff + cnc.barLoadSec;
-  const setup1Cost = planOps.reduce((a, o) => a + o.cost, 0) + airCost(changeSec) + cnc.barLoadSec * ratePerSec;
+  const setup1Sec = planOps.reduce((a, o) => a + o.seconds, 0) + t.airSec / eff + cnc.barLoadSec;
+  const setup1Cost = planOps.reduce((a, o) => a + o.cost, 0) + airCost(t.airSec) + cnc.barLoadSec * ratePerSec;
   const planSetups = [
     // NAMED "Op", not "Setup". These groups are FIXTURINGS and the time against
     // them is CUTTING time; "Setup labour" further down is the time to prepare
     // the machine. Calling both of them "setup" put 2m 15s and 900 min in the
     // same table under the same word, which reads as a contradiction.
-    { index: 1, name: setups > 1 ? 'Op 1 — main turning' : 'Op 1', operations: planOps, seconds: setup1Sec, cost: setup1Cost, toolChanges: t.toolCount },
+    { index: 1, name: setups > 1 ? 'Op 1 — main turning' : 'Op 1', operations: planOps, seconds: setup1Sec, cost: setup1Cost, toolChanges: t.toolChangeCount },
   ];
   if (setups > 1) {
     // The second op used to be an empty row costing nothing, which reads as "no
@@ -303,14 +305,17 @@ export function calculateMachiningCosts(
     });
   }
   const planToolAgg = new Map<string, { name: string; ops: number; seconds: number }>();
-  for (const o of planOps) {
-    const cur = planToolAgg.get(o.tool) ?? { name: o.tool, ops: 0, seconds: 0 };
+  for (const [i, o] of planOps.entries()) {
+    const identity = t.toolAssignments[i].identity;
+    const cur = planToolAgg.get(identity) ?? { name: o.tool, ops: 0, seconds: 0 };
     cur.ops += 1;
     cur.seconds += o.seconds;
-    planToolAgg.set(o.tool, cur);
+    planToolAgg.set(identity, cur);
   }
   const plan: MachiningPlan = {
     setups: planSetups,
+    toolingWarnings: [...new Set(t.toolAssignments.flatMap(a => a.warning ? [a.warning] : [])),
+      ...(t.crossSec > 0 || t.tapSec > 0 ? ['Cross-feature and tapping tools are grouped estimates; confirm the individual tools and sequence.'] : [])],
     tools: [...planToolAgg.values()].sort((a, b) => b.seconds - a.seconds),
     totalSeconds: planSetups.reduce((a, s) => a + s.seconds, 0),
     totalCost: planSetups.reduce((a, s) => a + s.cost, 0),
