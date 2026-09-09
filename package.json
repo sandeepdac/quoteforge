@@ -12,6 +12,7 @@
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "audit:client": "node scripts/client-corpus-audit.cjs",
+    "calibrate:client": "node scripts/client-calibration-report.cjs",
     "test:watch": "vitest"
   },
   "dependencies": {
