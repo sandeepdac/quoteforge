@@ -15,7 +15,7 @@
  * A model earns a change to the engine by beating the incumbent on SPREAD, not
  * on mean. Getting the mean right is what a multiplier does.
  */
-import { QUOTED_PARTS, QuotedPart, totalSetupMin, cycleMinPerPart, machiningOps, impliedRatePerHour } from './quotes';
+import { QUOTED_PARTS, QuotedPart, totalSetupMin, machiningCycleMinPerPart, machiningOps, impliedRatePerHour } from './quotes';
 
 export interface PartScore {
   drawing: string;
@@ -56,7 +56,9 @@ export function scoreParts(
     if (!p) continue;
     const pricing = p.pricing.find((x) => x.qty === r.qty) ?? p.pricing[0];
     const lanceSetup = totalSetupMin(p);
-    const lanceCycle = cycleMinPerPart(p);
+    // SPINDLE minutes only. Scoring a cycle model against a figure that also
+    // carries final inspection charged it for work it never claimed to do.
+    const lanceCycle = machiningCycleMinPerPart(p);
     parts.push({
       drawing: p.drawing,
       qty: pricing.qty,

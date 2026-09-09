@@ -115,12 +115,17 @@ export function calculateMachiningCosts(
   const buyToFlyRatio = stockVolumeCm3 > 0 ? partVol / stockVolumeCm3 : 0;
 
   // --- Cycle time (theoretical → actual via efficiency) --------------------
-  const t = estimateTurningTimes(input.profile, m, removedVol, {
-    maxRpm: cnc.maxRpm,
-    toolChangeSec: cnc.toolChangeSec,
-    roughFraction: 0.9,
-    maxDrillDiaMm: cnc.maxDrillDiaMm ?? 20,
-  });
+  const t = estimateTurningTimes(
+    // The bar is what roughing has to cut away, and it is computed right here —
+    // passing it stops the pass count falling back to a guess at the allowance.
+    { ...input.profile, barDiameterMm },
+    m, removedVol, {
+      maxRpm: cnc.maxRpm,
+      toolChangeSec: cnc.toolChangeSec,
+      roughFraction: 0.9,
+      maxDrillDiaMm: cnc.maxDrillDiaMm ?? 20,
+      facingAllowanceMm: cnc.facingAllowanceMm,
+    });
   // Per-op actual seconds and cost (efficiency applied to cutting/air alike).
   const ratePerSec = machineRatePerMin / 60;
   // The feedrate override slows CUTTING; it does not slow a rapid or a turret

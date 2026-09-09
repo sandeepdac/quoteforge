@@ -154,11 +154,33 @@ export const QUOTED_PARTS: QuotedPart[] = [
 export const totalSetupMin = (p: QuotedPart) =>
   p.router.reduce((a, o) => a + o.setupMin, 0);
 
+/**
+ * Every minute the router books against one part — machining, inspection,
+ * cleaning, the lot. This is the right figure for "what does the whole job cost
+ * per part", and the WRONG one to score a cycle-time model against.
+ */
 export const cycleMinPerPart = (p: QuotedPart) =>
   p.router.reduce((a, o) => a + o.cycleMin / Math.max(1, o.cycleQty), 0);
 
 export const machiningOps = (p: QuotedPart) =>
   p.router.filter((o) => CENTRE_KIND[o.centre] === 'machining');
+
+/**
+ * SPINDLE minutes per part — the only figure a cycle-time model can be scored
+ * against, because it is the only one that model is trying to predict.
+ *
+ * `cycleMinPerPart` includes the final-inspection line, and on these routers
+ * that is not a rounding error: the VOC housing books 45 min of machining and
+ * 15 min of inspection, so a third of the number our cycle model was being
+ * judged against is work it never claimed to do. The collet block is worse in
+ * proportion — 1.9 min of machining against 3.57 all-in, so the model was
+ * scored as x0.60 when it was really x0.91.
+ *
+ * Keeping both is deliberate. Price needs every minute; cycle accuracy needs
+ * only the spindle's.
+ */
+export const machiningCycleMinPerPart = (p: QuotedPart) =>
+  machiningOps(p).reduce((a, o) => a + o.cycleMin / Math.max(1, o.cycleQty), 0);
 
 /** Minutes of work the router says go into one part at a given quantity. */
 export const routerMinutesPerPart = (p: QuotedPart, qty: number) =>

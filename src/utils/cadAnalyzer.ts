@@ -354,6 +354,14 @@ async function analyzeSolid(
         // appears in it two or three times; these are the operations, and they
         // are what the cycle-time model costs.
         crossFeatureList: p.crossFeatureList,
+        // How many distinct turned diameters the profile presents. A finish pass
+        // is per DIAMETER — each step is its own approach, shoulder and chamfer —
+        // so without this a three-diameter register was timed as a plain shaft.
+        // The coaxial turned features the service already found ARE the steps.
+        turnedStepCount: Math.max(
+          1,
+          ((svc?.milled as { turnedFeatures?: unknown[] } | undefined)?.turnedFeatures ?? []).length
+        ),
       };
       profileSource = 'brep-service';
     } else {
