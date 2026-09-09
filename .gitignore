@@ -17,3 +17,6 @@ services/geometry/samples/
 # scratch/test files
 _*.mjs
 _*.js
+
+# Local client evidence manifest (never commit customer data)
+client-corpus.local.json
