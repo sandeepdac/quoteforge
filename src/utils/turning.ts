@@ -77,6 +77,12 @@ export interface TurningProfile {
    * costing it as an ordinary turned diameter.
    */
   surfaceFinishRaUm?: number;
+  /**
+   * Round bar the part is cut from (mm). Sets how much there is to rough off,
+   * and so how many passes roughing takes — which is what decides its return
+   * strokes. Absent on older payloads; the facing allowance then stands in.
+   */
+  barDiameterMm?: number;
 }
 
 export interface TurningConfig {
@@ -94,6 +100,10 @@ export interface TurningConfig {
    * you cannot drill a 45 mm hole in one shot. Governs how big bores are timed.
    */
   maxDrillDiaMm: number;
+  /** Stock left on each end face for the facing cut (mm) — what facing removes. */
+  facingAllowanceMm?: number;
+  /** Non-cutting time each operation occurrence owes. See OpApproach. */
+  opApproach?: OpApproach;
 }
 
 export interface TurningTimes {
@@ -170,6 +180,57 @@ export function boringOverhangDerate(lengthOverDiameter: number): number {
   return 0.25;
 }
 
+/**
+ * WHAT AN OPERATION COSTS BEFORE AND AFTER IT CUTS.
+ *
+ * Every lathe operation here was timed as a single ideal cut: the tool was
+ * already at the metal, made one pass, and vanished. That is why facing two ends
+ * of a ⌀36 bar came out at 1.0 s, boring a ⌀11.8 x 14 hole at 0.7 s, and four
+ * grooves at 0.8 s each — numbers no machinist would sign.
+ *
+ * NOT THE TOOL CHANGE. The turret index is already charged once per CHANGE
+ * (`toolChangeCount * toolChangeSec`). This is the part nobody was charging: for
+ * EVERY operation, including two in a row on the same tool, the slide still has
+ * to travel to the start point, the spindle still has to reach and hold speed,
+ * the tool still feeds through a clearance gap before it touches metal, and it
+ * still retracts clear at the end.
+ *
+ * Ordinary CNC lathe figures, and each is separately arguable:
+ *   rapid   a slide moves at 10-24 m/min; 120 mm of positioning is typical on a
+ *           small part, in and out again.
+ *   settle  a spindle changing speed between operations needs a second or two
+ *           before the cut is stable.
+ *   clearance the last 2 mm before metal are taken at FEED, not rapid, so this
+ *           term is larger exactly when the feed is fine — which is correct.
+ */
+export interface OpApproach {
+  /** Positioning move to the start point and clear again (mm, total). */
+  rapidTravelMm: number;
+  rapidMmPerMin: number;
+  /** Spindle speed change and stabilise. */
+  settleSec: number;
+  /** Gap above the metal taken at feed rather than rapid. */
+  clearanceMm: number;
+}
+
+export const DEFAULT_OP_APPROACH: OpApproach = {
+  rapidTravelMm: 120,
+  rapidMmPerMin: 10000,
+  settleSec: 1.5,
+  clearanceMm: 2,
+};
+
+/**
+ * Non-cutting seconds owed by ONE operation occurrence — per face, per groove,
+ * per bore, not per part and not per tool. Around 3 s on a normal lathe, which
+ * is why an operation removing almost nothing still cannot cost half a second.
+ */
+export function opApproachSec(feedMmPerMin: number, cfg: OpApproach = DEFAULT_OP_APPROACH): number {
+  const rapidSec = (cfg.rapidTravelMm / Math.max(1, cfg.rapidMmPerMin)) * 60;
+  const clearanceSec = (cfg.clearanceMm / Math.max(0.001, feedMmPerMin)) * 60;
+  return rapidSec + cfg.settleSec + clearanceSec;
+}
+
 export const DEFAULT_TURNING_CONFIG: TurningConfig = {
   maxRpm: 6000,
   // Editable provisional allowance, not a verified machine specification.
@@ -202,6 +263,8 @@ export function estimateTurningTimes(
 ): TurningTimes {
   const od = Math.max(0.5, profile.odMm);
   const min = (v: number) => v * 60; // minutes → seconds
+  const num = (v: number | undefined, fallback: number) =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback;
 
   // TOOLS ARE RESOLVED BEFORE ANYTHING IS TIMED.
   //
@@ -239,26 +302,55 @@ export function estimateTurningTimes(
   // spring pass at the same feed with no depth of cut.
   const finishPasses = raUm <= SPRING_PASS_RA_UM ? 2 : 1;
 
+  // Non-cutting seconds owed by one operation occurrence. NOT the turret index —
+  // that is charged separately, once per actual tool change.
+  const approach = (feedMmPerMin: number) => opApproachSec(feedMmPerMin, cfg.opApproach);
+  const faceAllowMm = Number.isFinite(cfg.facingAllowanceMm) && (cfg.facingAllowanceMm ?? 0) > 0
+    ? (cfg.facingAllowanceMm as number) : 2;
+
   // Facing — spiral from OD to centre on each end face (rpm taken at a mid radius).
   const faceRpm = rpm(m.cuttingSpeedFinish, od * 0.5, cfg.maxRpm);
   // A SEALING FACE is the surface most often carrying the fine Ra callout, and
   // the facing tool's own nose radius decides what feed that allows.
   const faceFeed = feedForFinish('face', m.feedFinish, 0.8);
+  // A face is not one pass. There is facing allowance on the bar to take off,
+  // which comes away at roughing depth of cut, and then the finish pass(es) that
+  // leave the surface the drawing asks for. Each face is its own approach.
+  const faceRoughFeedMmPerMin = Math.max(0.001, m.feedRough * faceRpm);
+  const faceFinishFeedMmPerMin = Math.max(0.001, faceFeed * faceRpm);
+  const faceRoughPasses = Math.max(0, Math.ceil(faceAllowMm / Math.max(0.1, m.depthOfCutRough)) - 1);
   const facingSec = profile.faceCount > 0
-    ? profile.faceCount * finishPasses * min((od / 2) / Math.max(0.001, faceFeed * faceRpm))
+    ? profile.faceCount * (
+        faceRoughPasses * min((od / 2) / faceRoughFeedMmPerMin)
+        + finishPasses * min((od / 2) / faceFinishFeedMmPerMin)
+        + approach(faceFinishFeedMmPerMin)
+      )
     : 0;
 
   // Roughing — remove the bulk at the roughing MRR.
   const mrr = roughingMrrCm3PerMin(m);
+  // Roughing is a SEQUENCE of passes. Volume ÷ MRR times the metal being cut and
+  // then gives away every return stroke: after each pass the tool retracts and
+  // rapids back to start. On a part roughed in a dozen passes that is most of a
+  // minute nobody was charging.
+  const roughRpm = rpm(m.cuttingSpeedRough, od, cfg.maxRpm);
+  const roughFeedMmPerMin = Math.max(0.001, m.feedRough * roughRpm);
+  const radialStockMm = Math.max(0, (num(profile.barDiameterMm, od + 2 * faceAllowMm) - od) / 2);
+  const roughPasses = Math.max(1, Math.ceil(radialStockMm / Math.max(0.1, m.depthOfCutRough)));
+  const roughReturnSec = roughPasses
+    * ((cfg.opApproach ?? DEFAULT_OP_APPROACH).rapidTravelMm
+       / Math.max(1, (cfg.opApproach ?? DEFAULT_OP_APPROACH).rapidMmPerMin)) * 60;
   const roughSec = removalVolCm3 > 0 && mrr > 0
-    ? min((removalVolCm3 * cfg.roughFraction) / mrr)
+    ? min((removalVolCm3 * cfg.roughFraction) / mrr) + roughReturnSec + approach(roughFeedMmPerMin)
     : 0;
 
   // Finish turning — one pass along the OD, at the feed the FINISHING INSERT can
   // take for the finish the drawing asks for.
   const finishRpm = rpm(m.cuttingSpeedFinish, od, cfg.maxRpm);
   const finishFeed = feedForFinish('finish', m.feedFinish, 0.4);
-  const finishSec = finishPasses * min(profile.lengthMm / Math.max(0.001, finishFeed * finishRpm));
+  const finishFeedMmPerMin = Math.max(0.001, finishFeed * finishRpm);
+  const finishSec = finishPasses * min(profile.lengthMm / finishFeedMmPerMin)
+    + approach(finishFeedMmPerMin);
 
   // Drilling + boring. A hole is drilled from solid only up to the max drill
   // size; anything larger is drilled to that pilot and then bored OUT to size
@@ -300,13 +392,23 @@ export function estimateTurningTimes(
       boreRoughSec = boringPasses * min(depth / Math.max(0.001, m.feedRough * overhang * boreRpm));
     }
     const boreFeed = feedForFinish('bore', m.feedFinish, 0.4) * overhang;
-    const boreFinishSec = finishPasses * min(depth / Math.max(0.001, boreFeed * boreRpm));
-    boreSec = boreRoughSec + boreFinishSec;
+    const boreFeedMmPerMin = Math.max(0.001, boreFeed * boreRpm);
+    const boreFinishSec = finishPasses * min(depth / boreFeedMmPerMin);
+    // The bar travels the full depth back out of the hole between passes, and
+    // the whole operation still has to reach the bore face to begin with.
+    const borePassRetractSec = boreRoughSec > 0
+      ? Math.ceil(radial / Math.max(0.3, m.depthOfCutRough * 0.6 * overhang))
+        * (depth / Math.max(1, (cfg.opApproach ?? DEFAULT_OP_APPROACH).rapidMmPerMin)) * 60
+      : 0;
+    boreSec = boreRoughSec + boreFinishSec + borePassRetractSec + approach(boreFeedMmPerMin);
   }
 
   // Grooving — plunge a ~3 mm tool to ~10% of OD, per groove.
+  // EACH groove is its own operation: position along Z, plunge, dwell to break
+  // the chip, retract. Four grooves are four approaches, not one.
+  const grooveFeedMmPerMin = Math.max(0.001, 0.05 * rpm(m.cuttingSpeedFinish, od, cfg.maxRpm));
   const grooveSec = profile.grooveCount > 0
-    ? profile.grooveCount * min((od * 0.1) / (0.05 * rpm(m.cuttingSpeedFinish, od, cfg.maxRpm)))
+    ? profile.grooveCount * (min((od * 0.1) / grooveFeedMmPerMin) + approach(grooveFeedMmPerMin))
     : 0;
 
   // Threading — multi-pass over the thread length, per threaded feature.
@@ -321,7 +423,8 @@ export function estimateTurningTimes(
 
   // Part-off — plunge to centre at a reduced speed.
   const partRpm = rpm(m.cuttingSpeedFinish * 0.6, od, cfg.maxRpm);
-  const partingSec = min((od / 2) / (0.08 * partRpm));
+  const partFeedMmPerMin = Math.max(0.001, 0.08 * partRpm);
+  const partingSec = min((od / 2) / partFeedMmPerMin) + approach(partFeedMmPerMin);
 
   // Off-axis work: cross holes, flats, keyways. This used to be a boolean the
   // time model never read, so a cross-drilled part cost exactly what a plain one

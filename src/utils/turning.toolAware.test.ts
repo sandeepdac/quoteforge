@@ -89,11 +89,24 @@ describe('a boring bar is slowed by its own overhang', () => {
     expect(boringOverhangDerate(12)).toBeGreaterThan(0);
   });
 
-  it('a deep bore costs more than a shallow one of the same diameter', () => {
+  it('a deep bore costs more PER MILLIMETRE than a shallow one', () => {
     // Not exercised by the calibration corpus — no part there has a bore deeper
     // than three diameters — so this test is the only thing holding it.
+    //
+    // Per-millimetre is the honest claim. Total time cannot be a clean multiple
+    // of depth, because every bore pays one approach however deep it is; what
+    // the derate asserts is that the metres of bar sticking out of the hole make
+    // each millimetre slower, and that is what is checked.
     const shallow = estimateTurningTimes({ ...profile, boreDepthMm: 12 }, brass, 55, cfg(0.4));
     const deep = estimateTurningTimes({ ...profile, boreDepthMm: 120 }, brass, 55, cfg(0.4));
-    expect(deep.boreSec).toBeGreaterThan(shallow.boreSec * 10);
+    expect(deep.boreSec).toBeGreaterThan(shallow.boreSec * 5);
+
+    // Per-millimetre is compared between two bores that are BOTH deep enough for
+    // the derate to be what separates them. Against a shallow bore it would not
+    // show: a 12 mm bore is mostly approach, and approach does not scale with
+    // depth, so the shallow hole looks dearer per millimetre for a reason that
+    // has nothing to do with overhang.
+    const d60 = estimateTurningTimes({ ...profile, boreDepthMm: 60 }, brass, 55, cfg(0.4));
+    expect(deep.boreSec / 120).toBeGreaterThan(d60.boreSec / 60);
   });
 });
