@@ -135,3 +135,25 @@ describe('the plan finds each row its own tool', () => {
     expect(rows.every((r) => typeof r.tool === 'string' && r.tool.length > 0)).toBe(true);
   });
 });
+
+describe('every plan row names the tool that actually runs it', () => {
+  it('spot drilling is not attributed to the drill', async () => {
+    // Caught in an end-to-end run: the PDF printed
+    // "Spot drilling - T0202 - Carbide drill (pilot / through)". The row looked
+    // its tool up under 'drill' rather than 'spot', so the quote told the floor
+    // to centre a hole with the through drill.
+    const { calculateMachiningCosts } = await import('./cncEstimator');
+    const { DEFAULT_SHOP_SETTINGS } = await import('../constants');
+    const [, base] = cases[0];
+    const c = calculateMachiningCosts(
+      { isTurned: true, materialName: 'Brass CZ121', volumeCm3: 20, profile: base, setups: 1, materialPricePerKg: 12 },
+      1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const rows = c.plan!.setups.flatMap((s) => s.operations);
+    const spot = rows.find((r) => r.op === 'spot');
+    const drill = rows.find((r) => r.op === 'drill');
+    expect(spot, 'no spot row in the plan').toBeTruthy();
+    expect(drill, 'no drill row in the plan').toBeTruthy();
+    expect(spot!.tool).not.toBe(drill!.tool);
+    expect(spot!.tool.toLowerCase()).toMatch(/spot|centre|center/);
+  });
+});

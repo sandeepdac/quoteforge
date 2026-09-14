@@ -247,7 +247,7 @@ export function calculateMachiningCosts(
   const opSrc: Array<{ op: EstimatedTurningOp; name: string; sec: number; tool: string; driver: string; color: string }> = [
     { op: 'face', name: 'Facing', sec: t.facingSec, tool: toolFor('face', 'OD turning tool'), driver: `${p.faceCount} face${p.faceCount === 1 ? '' : 's'}`, color: COLORS.facing },
     { op: 'rough', name: 'Rough turning', sec: t.roughSec, tool: toolFor('rough', 'OD turning tool'), driver: `${r1(removedVol)} cm³ removed`, color: COLORS.rough },
-    { op: 'spot', name: 'Spot drilling', sec: t.spotSec, tool: toolFor('drill', 'Spot drill'), driver: `centre ⌀${p.boreDiaMm}`, color: COLORS.drill },
+    { op: 'spot', name: 'Spot drilling', sec: t.spotSec, tool: toolFor('spot', 'Spot / centre drill'), driver: `centre ⌀${p.boreDiaMm}`, color: COLORS.drill },
     { op: 'drill', name: 'Drilling', sec: t.drillSec, tool: toolFor('drill', 'Carbide drill'), driver: `⌀${p.boreDiaMm} × ${p.boreDepthMm} mm`, color: COLORS.drill },
     { op: 'bore', name: 'Boring', sec: t.boreSec, tool: toolFor('bore', 'Boring bar'), driver: `bore to ⌀${p.boreDiaMm}`, color: COLORS.bore },
     { op: 'finish', name: 'Finish turning', sec: t.finishSec, tool: toolFor('finish', 'OD finishing tool'), driver: `${r1(p.lengthMm)} mm OD`, color: COLORS.finish },

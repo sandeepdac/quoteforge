@@ -49,6 +49,14 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
   // the batch curve a quantity is chosen from is the curve that gets quoted.
   // Weight edits still flow through: the resolver derives volume from
   // features.weightKg exactly as this screen used to.
+  //
+  // The SAME INPUTS, too. This step used to hardcode the shop's default margin
+  // and pass no secondary operations, while Review and the save path used the
+  // quoter's own choices. Set 40% markup and tick gold plating on Review, come
+  // back to change the quantity, and this screen quietly showed a different
+  // price for the same quote — and a batch curve the quote would never honour.
+  const margin = data.review?.margin ?? settings.defaultMargin;
+  const reviewSecondaryOps = data.review?.secondaryOps;
   const { costs, lineItems } = useMemo(() => {
     const r = resolveQuoteCosts({
       cadAnalysis,
@@ -57,11 +65,12 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
       materialPricePerKg: currentMaterial.pricePerKg,
       quantity: data.config.quantity,
       isRush: data.config.isRush,
-      margin: settings.defaultMargin,
+      margin,
       settings,
+      secondaryOps: reviewSecondaryOps,
     });
     return { costs: r.machiningCosts ?? r.costs, lineItems: r.lineItems };
-  }, [data, settings, currentMaterial, isTurnedPart, isMilledPart, cadAnalysis, f]);
+  }, [data, settings, currentMaterial, isTurnedPart, isMilledPart, cadAnalysis, f, margin, reviewSecondaryOps]);
 
   const unitPrice = costs.subtotal + costs.overhead + costs.marginAmount;
   const grandTotal = (unitPrice * data.config.quantity) + costs.rushPremium;
