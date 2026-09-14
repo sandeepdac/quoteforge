@@ -14,7 +14,7 @@
  * consistently they give a repeatable number the efficiency factor can calibrate.
  */
 import type { MaterialProps } from './materials';
-import { crossFeaturesSec, drillHoleSec, tapThreadsSec, DEFAULT_CROSS_CONFIG, DEFAULT_DRILL_CONFIG } from './drilling';
+import { crossFeaturesSec, drillHoleSec, spotDrillSec, tapThreadsSec, DEFAULT_CROSS_CONFIG, DEFAULT_DRILL_CONFIG } from './drilling';
 import type { ThreadSpec } from './drilling';
 import type { ShopTool, TurningToolAssembly } from '../types';
 import { countToolSelections, resolveTurningTool, TURNING_SEQUENCE, type ToolAssignment, type EstimatedTurningOp } from './turningTools';
@@ -107,6 +107,8 @@ export interface TurningConfig {
 }
 
 export interface TurningTimes {
+  /** Spot/centre drilling — the operation before the drill. */
+  spotSec: number;
   facingSec: number;
   roughSec: number;
   finishSec: number;
@@ -358,6 +360,7 @@ export function estimateTurningTimes(
   // extra radius takes multiple roughing passes plus a finish pass, which is the
   // real cost driver on a big bore (the old model priced it as one finish pass).
   let drillSec = 0;
+  let spotSec = 0;
   let boreSec = 0;
   if (profile.boreDiaMm > 0 && profile.boreDepthMm > 0) {
     const depth = profile.boreDepthMm;
@@ -375,6 +378,8 @@ export function estimateTurningTimes(
       ...DEFAULT_DRILL_CONFIG,
       maxRpm: cfg.maxRpm,
     });
+    // Spot it first, or the drill wanders off the axis the drawing dimensions from.
+    spotSec = spotDrillSec(drillDia, m, { ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm });
 
     // Boring: open from the drilled hole to the final bore. rpm taken at the
     // final diameter (conservative — the bar runs slower on a big bore).
@@ -441,10 +446,10 @@ export function estimateTurningTimes(
   const tapSec = tapThreadsSec(profile.threads, m);
 
   const cuttingSec =
-    facingSec + roughSec + finishSec + drillSec + boreSec + grooveSec + threadSec + partingSec
-    + crossSec + tapSec;
+    facingSec + roughSec + finishSec + spotSec + drillSec + boreSec + grooveSec + threadSec
+    + partingSec + crossSec + tapSec;
 
-  const times = { face: facingSec, rough: roughSec, finish: finishSec, drill: drillSec,
+  const times = { face: facingSec, rough: roughSec, finish: finishSec, spot: spotSec, drill: drillSec,
     bore: boreSec, groove: grooveSec, thread: threadSec, partoff: partingSec, cross: crossSec, tap: tapSec };
   const toolAssignments = TURNING_SEQUENCE.filter(op => times[op] > 0).map(toolFor);
   const { distinctTools: toolCount, selections: toolChangeCount } = countToolSelections(toolAssignments);
@@ -459,6 +464,6 @@ export function estimateTurningTimes(
     : DEFAULT_TURNING_CONFIG.toolChangeSec;
   const airSec = toolChangeCount * toolChangeSec + rapidSec;
 
-  return { facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec,
+  return { spotSec, facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec,
     airSec, cuttingSec, toolCount, toolChangeCount, rapidSec, toolAssignments, operationCount: toolAssignments.length };
 }

@@ -52,6 +52,7 @@ export function pilotDiaFromToolpath(tp: Toolpath): number {
 const TURNING_COPY: Record<TurningOp, string> = {
   face: 'Skims the right-hand end face flat — establishes the Z datum for everything after it.',
   rough: 'Hogs the OD down from bar stock to near-finish size — the bulk of the metal removed.',
+  spot: 'Cuts a shallow cone on centre so the drill starts true instead of wandering off the axis.',
   drill: 'Drills the pilot hole on centre, deep enough for the boring bar to open out.',
   bore: 'Opens the drilled pilot out to the finished bore diameter.',
   finish: 'Final light pass along the OD — brings it to size and surface finish.',
@@ -61,6 +62,7 @@ const TURNING_COPY: Record<TurningOp, string> = {
 const TURNING_LABEL: Record<TurningOp, string> = {
   face: 'Facing',
   rough: 'Rough turn',
+  spot: 'Spot drill',
   drill: 'Drill pilot',
   bore: 'Bore',
   finish: 'Finish turn',

@@ -2,7 +2,7 @@ import type { ShopTool, TurningOp, TurningToolAssembly } from '../types';
 
 export type EstimatedTurningOp = TurningOp | 'groove' | 'thread' | 'tap' | 'cross';
 export const TURNING_SEQUENCE: EstimatedTurningOp[] = [
-  'face', 'rough', 'drill', 'bore', 'finish', 'groove', 'thread', 'partoff', 'tap', 'cross',
+  'face', 'rough', 'spot', 'drill', 'bore', 'finish', 'groove', 'thread', 'partoff', 'tap', 'cross',
 ];
 
 export interface ToolAssignment {

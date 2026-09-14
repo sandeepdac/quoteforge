@@ -140,6 +140,12 @@ export interface BatchPricePoint {
 
 /** One cutting operation inside a setup, as an operator would read a job sheet. */
 export interface PlanOperation {
+  /**
+   * Which turning operation this row is. Carried so the plan can find the row's
+   * TOOL by operation rather than by position in a parallel array — the index
+   * pairing broke silently the first time an operation was inserted.
+   */
+  op?: string;
   /** Facing / Roughing / Finishing / Drilling … */
   name: string;
   /** The cutter this op runs, e.g. `12 mm 3F flat end mill`. */
@@ -258,7 +264,7 @@ export interface MachiningCosts {
  * is the primary calibration control.
  */
 /** The turning operations the reference toolpath expands, in machining order. */
-export type TurningOp = 'face' | 'rough' | 'drill' | 'bore' | 'finish' | 'partoff';
+export type TurningOp = 'face' | 'rough' | 'spot' | 'drill' | 'bore' | 'finish' | 'partoff';
 
 /**
  * One entry in the shop's turning tool library — maps an operation to the real

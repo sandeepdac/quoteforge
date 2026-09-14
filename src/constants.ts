@@ -23,6 +23,7 @@ export const DEFAULT_SECONDARY_OPS: SecondaryOperation[] = [
 export const DEFAULT_TURNING_TOOLS: ShopTool[] = [
   { op: 'face', station: 'T0101', description: 'OD rough — DCLNR + CNMG 120408-PM', noseRadiusMm: 0.8 },
   { op: 'rough', station: 'T0101', description: 'OD rough — DCLNR + CNMG 120408-PM', noseRadiusMm: 0.8 },
+  { op: 'spot', station: 'T0606', description: 'Spot / centre drill (starts the hole true)' },
   { op: 'drill', station: 'T0202', description: 'Carbide drill (pilot / through)' },
   { op: 'bore', station: 'T0505', description: 'Boring bar — CCGT 060204 (opens bore to size)', noseRadiusMm: 0.4 },
   { op: 'finish', station: 'T0303', description: 'OD finish — SDJCR + DCGT 070204-AL', noseRadiusMm: 0.4 },

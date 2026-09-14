@@ -78,3 +78,60 @@ describe('no operation costs less than a real operation', () => {
     expect(thick.roughSec).toBeGreaterThan(thin.roughSec);
   });
 });
+
+describe('a hole is spotted before it is drilled', () => {
+  it('drilling a bore also spots it', () => {
+    const [, base, mat] = cases[0];
+    const m = materialPropsFor(mat);
+    const t = estimateTurningTimes(base, m, 30, cfg);
+    expect(t.drillSec).toBeGreaterThan(0);
+    expect(t.spotSec).toBeGreaterThan(0);
+  });
+
+  it('a solid part with no bore spots nothing', () => {
+    const [, base, mat] = cases[2];
+    const t = estimateTurningTimes(base, materialPropsFor(mat), 30, cfg);
+    expect(t.spotSec).toBe(0);
+    expect(t.drillSec).toBe(0);
+  });
+
+  it('the spot is counted in cutting time, not lost', () => {
+    const [, base, mat] = cases[0];
+    const t = estimateTurningTimes(base, materialPropsFor(mat), 30, cfg);
+    const named = t.spotSec + t.facingSec + t.roughSec + t.finishSec + t.drillSec
+      + t.boreSec + t.grooveSec + t.threadSec + t.partingSec + t.crossSec + t.tapSec;
+    expect(named).toBeCloseTo(t.cuttingSec, 6);
+  });
+
+  it('the spot drill is a DIFFERENT tool from the drill, so it costs a change', () => {
+    const [, base, mat] = cases[0];
+    const t = estimateTurningTimes(base, materialPropsFor(mat), 30, cfg);
+    const ids = new Set(t.toolAssignments.map((a) => a.identity));
+    expect(t.toolAssignments.some((a) => a.op === 'spot')).toBe(true);
+    expect(t.toolAssignments.some((a) => a.op === 'drill')).toBe(true);
+    expect(ids.size).toBeGreaterThan(1);
+  });
+});
+
+describe('the plan finds each row its own tool', () => {
+  it('pairs by operation, not by position in a parallel array', async () => {
+    // The bug this pins: plan rows were matched to tools by ARRAY INDEX into
+    // toolAssignments. Inserting one operation misaligned every row after it and
+    // read off the end of the array — a crash, and before that, silently wrong
+    // tool names. Adding an operation must not be able to do that again.
+    const { calculateMachiningCosts } = await import('./cncEstimator');
+    const { DEFAULT_SHOP_SETTINGS } = await import('../constants');
+    const [, base] = cases[0];
+    const c = calculateMachiningCosts(
+      { isTurned: true, materialName: 'Brass CZ121', volumeCm3: 20, profile: base, setups: 1, materialPricePerKg: 12 },
+      1, false, 0.25, DEFAULT_SHOP_SETTINGS);
+    const rows = c.plan!.setups.flatMap((s) => s.operations);
+    expect(rows.length).toBeGreaterThan(5);
+    for (const r of rows) {
+      expect(r.op, `row "${r.name}" carries no op`).toBeTruthy();
+      expect(r.tool, `row "${r.name}" has no tool`).toBeTruthy();
+    }
+    // Every row's tool name is a real one, not an off-the-end undefined.
+    expect(rows.every((r) => typeof r.tool === 'string' && r.tool.length > 0)).toBe(true);
+  });
+});

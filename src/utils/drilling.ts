@@ -116,6 +116,42 @@ export function drillHoleSec(
   return (cutMin + peckMin + positionMin + clearanceMin) * 60 + cfg.settleSec;
 }
 
+/**
+ * SPOTTING — the operation before the drill, which nothing was charging.
+ *
+ * You do not put a ⌀11.8 drill into a faced bar and expect it to start where the
+ * drawing says. A twist drill wanders: its chisel edge skates until the margins
+ * engage, and on a lathe the hole ends up off the spindle axis. Every shop spots
+ * or centre-drills first, and that is a separate tool, a separate approach and a
+ * separate cut.
+ *
+ * It is short — a spot is a shallow cone at drilling speeds — but it is never
+ * nothing, and on a part with one hole it is most of the difference between a
+ * drilling line that reads 1.7 s and one a machinist recognises.
+ *
+ * Spot ⌀ is about half the hole, capped at a stocked spot drill; depth is what
+ * it takes to cut a cone the drill's corners can pick up.
+ */
+export function spotDrillSec(
+  holeDiaMm: number,
+  m: MaterialProps,
+  cfg: DrillConfig = DEFAULT_DRILL_CONFIG
+): number {
+  const spotDia = Math.min(12, Math.max(1.5, holeDiaMm * 0.5));
+  // A cone deep enough to guide the drill: roughly a quarter of the hole ⌀.
+  const depth = Math.max(0.4, holeDiaMm * 0.25);
+  return drillHoleSec({ diameterMm: spotDia, depthMm: depth }, m, cfg);
+}
+
+/** Seconds to spot every hole in a list. */
+export function spotDrillsSec(
+  holes: HoleSpec[],
+  m: MaterialProps,
+  cfg: DrillConfig = DEFAULT_DRILL_CONFIG
+): number {
+  return holes.reduce((sec, h) => sec + spotDrillSec(h.diameterMm, m, cfg), 0);
+}
+
 /** Seconds to drill a list of holes. */
 export function drillHolesSec(
   holes: HoleSpec[],

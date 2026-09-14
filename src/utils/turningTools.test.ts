@@ -15,7 +15,9 @@ describe('turning assembly identity and migration', () => {
   it('converts shared legacy rows to one unconfirmed assembly without mutating them', () => {
     const before = JSON.stringify(DEFAULT_TURNING_TOOLS);
     const seeded = seedTurningInventory(DEFAULT_TURNING_TOOLS);
-    expect(seeded.assemblies).toHaveLength(5);
+    // 6, not 5: the default inventory now carries a spot/centre drill, which is
+    // a real tool on its own station — see turning.ts, spotDrillSec.
+    expect(seeded.assemblies).toHaveLength(6);
     expect(seeded.assignments[0].assemblyId).toBe(seeded.assignments[1].assemblyId);
     expect(seeded.assemblies.every(a => a.inventoryConfirmed === false)).toBe(true);
     expect(JSON.stringify(DEFAULT_TURNING_TOOLS)).toBe(before);
@@ -51,8 +53,9 @@ describe('tool library drives turning costing and the plan', () => {
     const shared = calculateMachiningCosts(input, 1, false, .25, settings);
     const separate = calculateMachiningCosts(input, 1, false, .25, { ...settings, cnc: { ...settings.cnc,
       toolLibrary: DEFAULT_TURNING_TOOLS.map(t => t.op === 'rough' ? { ...t, station: 'T0909' } : t) } });
-    expect(shared.plan!.tools).toHaveLength(5);
-    expect(separate.plan!.tools).toHaveLength(6);
+    // Each +1 for the spot drill, which is a distinct tool from the drill.
+    expect(shared.plan!.tools).toHaveLength(6);
+    expect(separate.plan!.tools).toHaveLength(7);
     expect(separate.machineCost - shared.machineCost).toBeCloseTo(8 / 60, 8);
     expect(separate.setupTimeMin - shared.setupTimeMin).toBeCloseTo(settings.cnc.setupTimePerToolMin);
     expect(separate.plan!.setups[0].operations.map(o => o.seconds)).toEqual(shared.plan!.setups[0].operations.map(o => o.seconds));
@@ -82,7 +85,8 @@ describe('tool library drives turning costing and the plan', () => {
   it('shows explicit unassigned tools without silently restoring default inventory', () => {
     const c = calculateMachiningCosts(input, 1, false, .25, { ...settings, cnc: { ...settings.cnc, toolLibrary: [] } });
     expect(c.plan!.setups[0].operations.every(o => o.tool.startsWith('Unassigned'))).toBe(true);
-    expect(c.plan!.toolingWarnings).toHaveLength(6);
+    // +1: the spot drill is unassigned too when inventory is cleared.
+    expect(c.plan!.toolingWarnings).toHaveLength(7);
   });
   it('keeps zero selection and loading allowances at zero', () => {
     const c = calculateMachiningCosts(input, 1, false, .25, { ...settings, cnc: { ...settings.cnc, toolChangeSec: 0, barLoadSec: 0 } });

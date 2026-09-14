@@ -115,13 +115,17 @@ export function calculateMachiningCosts(
   const buyToFlyRatio = stockVolumeCm3 > 0 ? partVol / stockVolumeCm3 : 0;
 
   // --- Cycle time (theoretical → actual via efficiency) --------------------
-  const t = estimateTurningTimes(input.profile, m, removedVol, {
+  const t = estimateTurningTimes(
+    // The bar is computed right here; passing it stops roughing's pass count
+    // falling back to a guess at the stock allowance.
+    { ...input.profile, barDiameterMm }, m, removedVol, {
     maxRpm: cnc.maxRpm,
     toolChangeSec: cnc.toolChangeSec,
     roughFraction: 0.9,
     maxDrillDiaMm: cnc.maxDrillDiaMm ?? 20,
     toolLibrary: cnc.toolLibrary ?? DEFAULT_TURNING_TOOLS,
     toolAssemblies: cnc.turningToolAssemblies,
+    facingAllowanceMm: cnc.facingAllowanceMm,
   });
   // Per-op actual seconds and cost (efficiency applied to cutting/air alike).
   const ratePerSec = machineRatePerMin / 60;
@@ -208,6 +212,7 @@ export function calculateMachiningCosts(
     { key: 'facing', name: 'Facing', driver: `${input.profile.faceCount} face${input.profile.faceCount === 1 ? '' : 's'} — ${secStr(t.facingSec)}`, value: opCost(t.facingSec), color: COLORS.facing },
     { key: 'rough', name: 'Rough turning', driver: `${r1(removedVol)} cm³ removed @ ${Math.round(m.cuttingSpeedRough * m.feedRough * m.depthOfCutRough)} cm³/min — ${secStr(t.roughSec)}`, value: opCost(t.roughSec), color: COLORS.rough },
     { key: 'finish', name: 'Finish turning', driver: `${r1(input.profile.lengthMm)} mm @ ${m.cuttingSpeedFinish} m/min — ${secStr(t.finishSec)}`, value: opCost(t.finishSec), color: COLORS.finish },
+    { key: 'spot', name: 'Spot drilling', driver: `centre the ⌀${input.profile.boreDiaMm} hole before drilling — ${secStr(t.spotSec)}`, value: opCost(t.spotSec), color: COLORS.drill },
     { key: 'drill', name: 'Drilling', driver: `⌀${input.profile.boreDiaMm} × ${input.profile.boreDepthMm} mm bore — ${secStr(t.drillSec)}`, value: opCost(t.drillSec), color: COLORS.drill },
     { key: 'bore', name: 'Boring', driver: `finish bore ⌀${input.profile.boreDiaMm} — ${secStr(t.boreSec)}`, value: opCost(t.boreSec), color: COLORS.bore },
     { key: 'groove', name: 'Grooving', driver: `${input.profile.grooveCount} groove${input.profile.grooveCount === 1 ? '' : 's'} — ${secStr(t.grooveSec)}`, value: opCost(t.grooveSec), color: COLORS.groove },
@@ -235,17 +240,22 @@ export function calculateMachiningCosts(
   const toolFor = (op: EstimatedTurningOp, fallback: string) =>
     t.toolAssignments.find(a => a.op === op)?.label ?? fallback;
   const p = input.profile;
-  const opSrc: Array<{ name: string; sec: number; tool: string; driver: string; color: string }> = [
-    { name: 'Facing', sec: t.facingSec, tool: toolFor('face', 'OD turning tool'), driver: `${p.faceCount} face${p.faceCount === 1 ? '' : 's'}`, color: COLORS.facing },
-    { name: 'Rough turning', sec: t.roughSec, tool: toolFor('rough', 'OD turning tool'), driver: `${r1(removedVol)} cm³ removed`, color: COLORS.rough },
-    { name: 'Drilling', sec: t.drillSec, tool: toolFor('drill', 'Carbide drill'), driver: `⌀${p.boreDiaMm} × ${p.boreDepthMm} mm`, color: COLORS.drill },
-    { name: 'Boring', sec: t.boreSec, tool: toolFor('bore', 'Boring bar'), driver: `bore to ⌀${p.boreDiaMm}`, color: COLORS.bore },
-    { name: 'Finish turning', sec: t.finishSec, tool: toolFor('finish', 'OD finishing tool'), driver: `${r1(p.lengthMm)} mm OD`, color: COLORS.finish },
-    { name: 'Grooving', sec: t.grooveSec, tool: toolFor('groove', 'Unassigned groove tool'), driver: `${p.grooveCount} groove${p.grooveCount === 1 ? '' : 's'}`, color: COLORS.groove },
-    { name: 'Threading', sec: t.threadSec, tool: toolFor('thread', 'Unassigned thread tool'), driver: `${p.threadCount} thread${p.threadCount === 1 ? '' : 's'}`, color: COLORS.thread },
-    { name: 'Part-off', sec: t.partingSec, tool: toolFor('partoff', 'Parting blade'), driver: 'cut to length', color: COLORS.parting },
-    { name: 'Tapping', sec: t.tapSec, tool: toolFor('tap', 'Unassigned tap tool'), driver: (p.threads ?? []).map((th) => `${Math.max(1, th.count ?? 1)}x ${th.callout}`).join(', ') || 'threads', color: COLORS.thread },
-    { name: 'Off-axis features', sec: t.crossSec, tool: toolFor('cross', 'Unassigned cross tool'), driver: `${p.crossFeatureList?.length ?? 0} cross feature${(p.crossFeatureList?.length ?? 0) === 1 ? '' : 's'}`, color: COLORS.drill },
+  // Each entry carries its OP. The tool for a plan row used to be found by
+  // ARRAY INDEX into t.toolAssignments, which silently assumed the two lists were
+  // the same length in the same order — adding one operation here misaligned
+  // every row after it and read a tool off the end of the array.
+  const opSrc: Array<{ op: EstimatedTurningOp; name: string; sec: number; tool: string; driver: string; color: string }> = [
+    { op: 'face', name: 'Facing', sec: t.facingSec, tool: toolFor('face', 'OD turning tool'), driver: `${p.faceCount} face${p.faceCount === 1 ? '' : 's'}`, color: COLORS.facing },
+    { op: 'rough', name: 'Rough turning', sec: t.roughSec, tool: toolFor('rough', 'OD turning tool'), driver: `${r1(removedVol)} cm³ removed`, color: COLORS.rough },
+    { op: 'spot', name: 'Spot drilling', sec: t.spotSec, tool: toolFor('drill', 'Spot drill'), driver: `centre ⌀${p.boreDiaMm}`, color: COLORS.drill },
+    { op: 'drill', name: 'Drilling', sec: t.drillSec, tool: toolFor('drill', 'Carbide drill'), driver: `⌀${p.boreDiaMm} × ${p.boreDepthMm} mm`, color: COLORS.drill },
+    { op: 'bore', name: 'Boring', sec: t.boreSec, tool: toolFor('bore', 'Boring bar'), driver: `bore to ⌀${p.boreDiaMm}`, color: COLORS.bore },
+    { op: 'finish', name: 'Finish turning', sec: t.finishSec, tool: toolFor('finish', 'OD finishing tool'), driver: `${r1(p.lengthMm)} mm OD`, color: COLORS.finish },
+    { op: 'groove', name: 'Grooving', sec: t.grooveSec, tool: toolFor('groove', 'Unassigned groove tool'), driver: `${p.grooveCount} groove${p.grooveCount === 1 ? '' : 's'}`, color: COLORS.groove },
+    { op: 'thread', name: 'Threading', sec: t.threadSec, tool: toolFor('thread', 'Unassigned thread tool'), driver: `${p.threadCount} thread${p.threadCount === 1 ? '' : 's'}`, color: COLORS.thread },
+    { op: 'partoff', name: 'Part-off', sec: t.partingSec, tool: toolFor('partoff', 'Parting blade'), driver: 'cut to length', color: COLORS.parting },
+    { op: 'tap', name: 'Tapping', sec: t.tapSec, tool: toolFor('tap', 'Unassigned tap tool'), driver: (p.threads ?? []).map((th) => `${Math.max(1, th.count ?? 1)}x ${th.callout}`).join(', ') || 'threads', color: COLORS.thread },
+    { op: 'cross', name: 'Off-axis features', sec: t.crossSec, tool: toolFor('cross', 'Unassigned cross tool'), driver: `${p.crossFeatureList?.length ?? 0} cross feature${(p.crossFeatureList?.length ?? 0) === 1 ? '' : 's'}`, color: COLORS.drill },
   ];
   const planOps: PlanOperation[] = opSrc
     // Keep every operation that carries real time. The old half-second floor was
@@ -256,7 +266,7 @@ export function calculateMachiningCosts(
     // disagreed and the drill looked un-costed. It never was: the seconds are in
     // the cycle either way — only the display dropped them.
     .filter((o) => o.sec > 0)
-    .map((o) => ({ name: o.name, tool: o.tool, seconds: cutSec(o.sec), cost: opCost(o.sec), driver: o.driver, color: o.color }));
+    .map((o) => ({ op: o.op, name: o.name, tool: o.tool, seconds: cutSec(o.sec), cost: opCost(o.sec), driver: o.driver, color: o.color }));
   const setup1Sec = planOps.reduce((a, o) => a + o.seconds, 0) + t.airSec / eff + cnc.barLoadSec;
   const setup1Cost = planOps.reduce((a, o) => a + o.cost, 0) + airCost(t.airSec) + cnc.barLoadSec * ratePerSec;
   const planSetups = [
@@ -305,8 +315,8 @@ export function calculateMachiningCosts(
     });
   }
   const planToolAgg = new Map<string, { name: string; ops: number; seconds: number }>();
-  for (const [i, o] of planOps.entries()) {
-    const identity = t.toolAssignments[i].identity;
+  for (const o of planOps) {
+    const identity = t.toolAssignments.find((a) => a.op === o.op)?.identity ?? `unassigned:${o.op}`;
     const cur = planToolAgg.get(identity) ?? { name: o.tool, ops: 0, seconds: 0 };
     cur.ops += 1;
     cur.seconds += o.seconds;
