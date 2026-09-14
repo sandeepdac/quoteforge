@@ -64,6 +64,17 @@ export interface DrawnPart {
   offAxisFeatureCount?: number;
   /** Finish / treatment callouts that imply a secondary operation. */
   finish?: string;
+  /**
+   * Surface finish achieved BY MACHINING, Ra in micrometres.
+   *
+   * Only set where the turned or milled surface itself has to hold the callout,
+   * because that is what fixes the finishing feed (turning.ts,
+   * finishFeedForRaMmPerRev). A finish produced by a LATER process is
+   * deliberately left undefined: the Guide Rod's ⌀6 is Ra 0.8 because it is
+   * GROUND, and slowing its turning to simulate that would be charging the lathe
+   * for the grinder's work.
+   */
+  machinedRaUm?: number;
   notes?: string[];
 }
 
@@ -116,6 +127,8 @@ export const DRAWN_PARTS: DrawnPart[] = [
     filletRadiiMm: [],
     offAxisFeatureCount: 0,
     finish: 'CLEAN AND BURR FREE',
+    // Turned, not ground: the lathe has to leave this finish.
+    machinedRaUm: 0.4,
     notes: ['Hex bar, 25.40 across flats', '70.00 long, ⌀21.0 body',
             'Ra 0.4 sealing faces — free from scratches and chatter marks'],
   },
@@ -226,6 +239,7 @@ export const DRAWN_PARTS: DrawnPart[] = [
     finish: 'CLEAN AND BURR FREE',
     notes: ['□40.0 square flange, ⌀42.50 PCD', 'Position tolerance ⌀0.1 A on the 4 holes',
             'Ra 0.4 sealing face'],
+    machinedRaUm: 0.4,
   },
   {
     drawing: 'Kepler_00884-A', title: 'Fixture B — Simplified re-design',

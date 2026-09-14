@@ -17,7 +17,7 @@ import type { MaterialProps } from './materials';
 import { crossFeaturesSec, drillHoleSec, tapThreadsSec, DEFAULT_CROSS_CONFIG, DEFAULT_DRILL_CONFIG } from './drilling';
 import type { ThreadSpec } from './drilling';
 import type { ShopTool, TurningToolAssembly } from '../types';
-import { countToolSelections, resolveTurningTool, TURNING_SEQUENCE, type ToolAssignment } from './turningTools';
+import { countToolSelections, resolveTurningTool, TURNING_SEQUENCE, type ToolAssignment, type EstimatedTurningOp } from './turningTools';
 
 /** A turned part reduced to the drivers a cycle-time model needs. */
 export interface TurningProfile {
@@ -66,6 +66,17 @@ export interface TurningProfile {
    * now. See drilling.ts for why the two cannot share a time model.
    */
   threads?: ThreadSpec[];
+  /**
+   * Surface finish the drawing asks for, Ra in micrometres.
+   *
+   * This is a CYCLE-TIME driver, not a note. The finishing feed a tool can take
+   * is fixed by the finish it has to leave (see finishFeedForRaMmPerRev), so a
+   * sealing face at Ra 0.4 is turned at a third of the feed of a plain Ra 3.2
+   * surface with the same insert. Lance's VOC housing calls out
+   * "Ra 0.4 sealing faces - free from scratches and chatter marks" and we were
+   * costing it as an ordinary turned diameter.
+   */
+  surfaceFinishRaUm?: number;
 }
 
 export interface TurningConfig {
@@ -110,6 +121,55 @@ export interface TurningTimes {
   toolAssignments: ToolAssignment[];
 }
 
+/** Ra (um) an ordinary turned surface gets with no special measures. */
+export const DEFAULT_TURNED_RA_UM = 3.2;
+/** At or below this Ra a single pass will not hold it: a spring pass follows. */
+export const SPRING_PASS_RA_UM = 0.8;
+
+/**
+ * THE FEED A FINISH ALLOWS — the equation that ties a TOOL to a cycle time.
+ *
+ * Theoretical roughness left by a round-nosed turning tool:
+ *
+ *     Ra ~ fn^2 / (32 * r)        (Ra and fn in mm, r = nose radius in mm)
+ *  => fn = sqrt(32 * r * Ra)
+ *
+ * Two consequences the model was blind to, both of them large:
+ *
+ *   A SMALLER NOSE RADIUS IS SLOWER. A 0.4 mm finishing insert must feed at
+ *   0.7x the rate of an 0.8 mm one to leave the same finish. The tool library
+ *   records the radius per operation and it reached nothing but a tool-change
+ *   count, so the two cut identically.
+ *
+ *   A FINER FINISH IS SLOWER, steeply, because the relation is a square root:
+ *   Ra 3.2 allows 0.29 mm/rev on an 0.8 insert, Ra 0.4 allows 0.10.
+ *
+ * Handbook relation, not a fitted constant. Real inserts with wiper geometry
+ * beat it, which is why this is applied as a CAP on the material's feed rather
+ * than as the feed itself: it can only slow a cut down, never speed one up.
+ */
+export function finishFeedForRaMmPerRev(noseRadiusMm: number, raUm: number): number {
+  const r = Math.max(0.05, noseRadiusMm);
+  const raMm = Math.max(0.05, raUm) / 1000;
+  return Math.sqrt(32 * r * raMm);
+}
+
+/**
+ * How much a boring bar has to be slowed for its overhang.
+ *
+ * A bar cutting four diameters deep is at the edge of chatter; past that, feed
+ * and depth come off fast. Standard shop practice for a steel bar, expressed as
+ * a multiplier on feed. The deep-bore parts in the calibration set are exactly
+ * where the model reads fastest, and this is one reason why.
+ */
+export function boringOverhangDerate(lengthOverDiameter: number): number {
+  if (lengthOverDiameter <= 3) return 1;
+  if (lengthOverDiameter <= 4) return 0.8;
+  if (lengthOverDiameter <= 6) return 0.6;
+  if (lengthOverDiameter <= 8) return 0.4;
+  return 0.25;
+}
+
 export const DEFAULT_TURNING_CONFIG: TurningConfig = {
   maxRpm: 6000,
   // Editable provisional allowance, not a verified machine specification.
@@ -143,10 +203,49 @@ export function estimateTurningTimes(
   const od = Math.max(0.5, profile.odMm);
   const min = (v: number) => v * 60; // minutes → seconds
 
+  // TOOLS ARE RESOLVED BEFORE ANYTHING IS TIMED.
+  //
+  // They used to be resolved at the end, purely to count tool changes, which is
+  // why the library's nose radii and insert geometry reached no cutting time at
+  // all: an 0.4 mm finishing insert and an 0.8 mm rougher produced identical
+  // seconds. What a tool can take is an INPUT to the cut, not a label on it.
+  const toolFor = (op: EstimatedTurningOp) =>
+    resolveTurningTool(op, cfg.toolLibrary ?? [], cfg.toolAssemblies);
+  const noseRadiusFor = (op: EstimatedTurningOp, fallback: number) => {
+    const r = toolFor(op).noseRadiusMm;
+    return typeof r === 'number' && Number.isFinite(r) && r > 0 ? r : fallback;
+  };
+
+  // The finish the drawing asks for, and the feed it allows on each tool. This
+  // can only ever SLOW a cut: a tool that could feed faster still has to leave
+  // the surface the drawing wants.
+  const raUm = Number.isFinite(profile.surfaceFinishRaUm) && (profile.surfaceFinishRaUm ?? 0) > 0
+    ? (profile.surfaceFinishRaUm as number)
+    : DEFAULT_TURNED_RA_UM;
+  // FEED IS A PROPERTY OF THE TOOL AND THE FINISH, NOT OF THE MATERIAL.
+  //
+  // The material table carries feedFinish 0.10 mm/rev for fourteen of its
+  // sixteen materials and 0.08 for the other two — a flat placeholder rather
+  // than material data, and already below what an ordinary Ra 3.2 surface
+  // allows. Capping the physics with it meant the tool's nose radius and the
+  // drawing's finish callout could never move a cycle time at all.
+  //
+  // The honest split is the textbook one: the MATERIAL sets surface speed (Vc,
+  // and so rpm, where the table really does vary 100-250 m/min); the TOOL and
+  // the required finish set feed per rev. Both still price the cut.
+  const feedForFinish = (op: EstimatedTurningOp, _materialFeed: number, fallbackRadius: number) =>
+    finishFeedForRaMmPerRev(noseRadiusFor(op, fallbackRadius), raUm);
+  // Below ~Ra 0.8 a single pass does not hold the finish — it is followed by a
+  // spring pass at the same feed with no depth of cut.
+  const finishPasses = raUm <= SPRING_PASS_RA_UM ? 2 : 1;
+
   // Facing — spiral from OD to centre on each end face (rpm taken at a mid radius).
   const faceRpm = rpm(m.cuttingSpeedFinish, od * 0.5, cfg.maxRpm);
+  // A SEALING FACE is the surface most often carrying the fine Ra callout, and
+  // the facing tool's own nose radius decides what feed that allows.
+  const faceFeed = feedForFinish('face', m.feedFinish, 0.8);
   const facingSec = profile.faceCount > 0
-    ? profile.faceCount * min((od / 2) / (m.feedFinish * faceRpm))
+    ? profile.faceCount * finishPasses * min((od / 2) / Math.max(0.001, faceFeed * faceRpm))
     : 0;
 
   // Roughing — remove the bulk at the roughing MRR.
@@ -155,9 +254,11 @@ export function estimateTurningTimes(
     ? min((removalVolCm3 * cfg.roughFraction) / mrr)
     : 0;
 
-  // Finish turning — one pass along the OD.
+  // Finish turning — one pass along the OD, at the feed the FINISHING INSERT can
+  // take for the finish the drawing asks for.
   const finishRpm = rpm(m.cuttingSpeedFinish, od, cfg.maxRpm);
-  const finishSec = min(profile.lengthMm / (m.feedFinish * finishRpm));
+  const finishFeed = feedForFinish('finish', m.feedFinish, 0.4);
+  const finishSec = finishPasses * min(profile.lengthMm / Math.max(0.001, finishFeed * finishRpm));
 
   // Drilling + boring. A hole is drilled from solid only up to the max drill
   // size; anything larger is drilled to that pilot and then bored OUT to size
@@ -187,13 +288,19 @@ export function estimateTurningTimes(
     // final diameter (conservative — the bar runs slower on a big bore).
     const boreRpm = rpm(m.cuttingSpeedFinish, profile.boreDiaMm, cfg.maxRpm);
     const radial = (profile.boreDiaMm - drillDia) / 2;
+    // OVERHANG. A boring bar reaching four diameters into a hole is at the edge
+    // of chatter, and past that feed and depth come off fast. The model ran every
+    // bore at full feed however deep it was, which is one reason the deep-bore
+    // parts are the ones it reads fastest on.
+    const overhang = boringOverhangDerate(depth / Math.max(0.1, profile.boreDiaMm));
     let boreRoughSec = 0;
     if (radial > 0.1) {
-      const ap = Math.max(0.3, m.depthOfCutRough * 0.6); // internal cuts run lighter
+      const ap = Math.max(0.3, m.depthOfCutRough * 0.6 * overhang); // internal cuts run lighter
       const boringPasses = Math.ceil(radial / ap);
-      boreRoughSec = boringPasses * min(depth / (m.feedRough * boreRpm));
+      boreRoughSec = boringPasses * min(depth / Math.max(0.001, m.feedRough * overhang * boreRpm));
     }
-    const boreFinishSec = min(depth / (m.feedFinish * boreRpm));
+    const boreFeed = feedForFinish('bore', m.feedFinish, 0.4) * overhang;
+    const boreFinishSec = finishPasses * min(depth / Math.max(0.001, boreFeed * boreRpm));
     boreSec = boreRoughSec + boreFinishSec;
   }
 
@@ -236,8 +343,7 @@ export function estimateTurningTimes(
 
   const times = { face: facingSec, rough: roughSec, finish: finishSec, drill: drillSec,
     bore: boreSec, groove: grooveSec, thread: threadSec, partoff: partingSec, cross: crossSec, tap: tapSec };
-  const toolAssignments = TURNING_SEQUENCE.filter(op => times[op] > 0)
-    .map(op => resolveTurningTool(op, cfg.toolLibrary ?? [], cfg.toolAssemblies));
+  const toolAssignments = TURNING_SEQUENCE.filter(op => times[op] > 0).map(toolFor);
   const { distinctTools: toolCount, selections: toolChangeCount } = countToolSelections(toolAssignments);
   const rapidSec = cuttingSec * 0.05;
   // Settings are PERSISTED. A blob saved before a field existed — or edited to
