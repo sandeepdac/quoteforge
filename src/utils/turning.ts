@@ -240,7 +240,15 @@ export function estimateTurningTimes(
     .map(op => resolveTurningTool(op, cfg.toolLibrary ?? [], cfg.toolAssemblies));
   const { distinctTools: toolCount, selections: toolChangeCount } = countToolSelections(toolAssignments);
   const rapidSec = cuttingSec * 0.05;
-  const airSec = toolChangeCount * cfg.toolChangeSec + rapidSec;
+  // Settings are PERSISTED. A blob saved before a field existed — or edited to
+  // an empty string in the Settings form — comes back undefined, and the failure
+  // mode here is not a slightly wrong number: NaN propagates silently out of
+  // cycle time, through machineCost, and into a quoted price that renders as
+  // "£NaN" or, worse, sums to nothing anyone notices. Default at the boundary.
+  const toolChangeSec = Number.isFinite(cfg.toolChangeSec) && cfg.toolChangeSec > 0
+    ? cfg.toolChangeSec
+    : DEFAULT_TURNING_CONFIG.toolChangeSec;
+  const airSec = toolChangeCount * toolChangeSec + rapidSec;
 
   return { facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec,
     airSec, cuttingSec, toolCount, toolChangeCount, rapidSec, toolAssignments, operationCount: toolAssignments.length };
