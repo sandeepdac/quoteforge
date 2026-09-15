@@ -23,6 +23,7 @@ import { DEFAULT_CNC_SETTINGS, DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor, nextStandardBar } from './materials';
 import { estimateTurningTimes, TurningProfile } from './turning';
 import { deriveRouteSetup, routeRateMultiplier, type RouteSetupOp } from './setupModel';
+import { TOOL_CHANGE_SEC } from './machineSelection';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
 import type { SecondaryOperation } from './secondaryOps';
 import type { EstimatedTurningOp } from './turningTools';
@@ -115,12 +116,18 @@ export function calculateMachiningCosts(
   const buyToFlyRatio = stockVolumeCm3 > 0 ? partVol / stockVolumeCm3 : 0;
 
   // --- Cycle time (theoretical → actual via efficiency) --------------------
+  // TOOL CHANGE IS THE MACHINE'S, not one number for the whole floor. A turret
+  // indexes in about a second; a machining-centre ATC takes five. The shop's own
+  // setting still wins when no machine has been chosen yet.
+  const toolChangeSec = routeOps?.length
+    ? TOOL_CHANGE_SEC[routeOps[0].machine.kind] ?? cnc.toolChangeSec
+    : cnc.toolChangeSec;
   const t = estimateTurningTimes(
     // The bar is computed right here; passing it stops roughing's pass count
     // falling back to a guess at the stock allowance.
     { ...input.profile, barDiameterMm }, m, removedVol, {
     maxRpm: cnc.maxRpm,
-    toolChangeSec: cnc.toolChangeSec,
+    toolChangeSec,
     roughFraction: 0.9,
     maxDrillDiaMm: cnc.maxDrillDiaMm ?? 20,
     toolLibrary: cnc.toolLibrary ?? DEFAULT_TURNING_TOOLS,
@@ -222,7 +229,7 @@ export function calculateMachiningCosts(
     // stops adding up to the subtotal it is supposed to explain.
     { key: 'tap', name: 'Tapping', driver: `${(input.profile.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ') || 'none'} — ${secStr(t.tapSec)}`, value: opCost(t.tapSec), color: COLORS.thread },
     { key: 'cross', name: 'Off-axis features (driven tool)', driver: `${input.profile.crossFeatureList?.length ?? 0} feature${(input.profile.crossFeatureList?.length ?? 0) === 1 ? '' : 's'} off the turning axis — ${secStr(t.crossSec)}`, value: opCost(t.crossSec), color: COLORS.drill },
-    { key: 'noncut', name: 'Tool selections', driver: `${t.toolCount} distinct tools; ${t.toolChangeCount} selections × ${cnc.toolChangeSec}s ÷ ${r1(eff * 100)}% efficiency (includes initial selection; adjacent shared tools counted once)`, seconds: t.toolChangeCount * cnc.toolChangeSec / eff, value: airCost(t.toolChangeCount * cnc.toolChangeSec), color: COLORS.noncut },
+    { key: 'noncut', name: 'Tool selections', driver: `${t.toolCount} distinct tools; ${t.toolChangeCount} selections × ${r1(toolChangeSec)}s ÷ ${r1(eff * 100)}% efficiency (includes initial selection; adjacent shared tools counted once)`, seconds: t.toolChangeCount * toolChangeSec / eff, value: airCost(t.toolChangeCount * toolChangeSec), color: COLORS.noncut },
     { key: 'rapids', name: 'Rapid movement allowance', driver: `5% of theoretical cutting time ÷ ${r1(eff * 100)}% efficiency — provisional, not measured travel`, seconds: t.rapidSec / eff, value: airCost(t.rapidSec), color: COLORS.noncut },
     { key: 'loading', name: 'Load / unload / bar feed', driver: `${cnc.barLoadSec}s per part — shop allowance, separate from tool selection`, seconds: cnc.barLoadSec, value: cnc.barLoadSec * ratePerSec, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min preparation, excluding ${derivedProgrammingMin} min CAM billed separately. Full first-order breakdown: ${derivedSetup.explanation} — batch ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
@@ -266,7 +273,16 @@ export function calculateMachiningCosts(
     // disagreed and the drill looked un-costed. It never was: the seconds are in
     // the cycle either way — only the display dropped them.
     .filter((o) => o.sec > 0)
-    .map((o) => ({ op: o.op, name: o.name, tool: o.tool, seconds: cutSec(o.sec), cost: opCost(o.sec), driver: o.driver, color: o.color }));
+    .map((o, i, all) => ({
+      op: o.op, name: o.name, tool: o.tool, seconds: cutSec(o.sec), cost: opCost(o.sec), color: o.color,
+      // Say what the row does NOT include. "Drilling 1.7 s" is true — brass at
+      // 4000 rpm really does go through 14 mm in under a second — but read on
+      // its own it looks impossible, because a machinist counts getting the
+      // drill to the cut as part of drilling. The tool change is a separate
+      // line, so the row says so rather than leaving the reader to discover it.
+      driver: `${o.driver} · ${r1(cutSec(o.sec))}s at the cut`
+        + (i === 0 || all[i - 1].tool !== o.tool ? ` + ${r1(toolChangeSec / eff)}s to bring this tool round` : ' · same tool as above, no change'),
+    }));
   const setup1Sec = planOps.reduce((a, o) => a + o.seconds, 0) + t.airSec / eff + cnc.barLoadSec;
   const setup1Cost = planOps.reduce((a, o) => a + o.cost, 0) + airCost(t.airSec) + cnc.barLoadSec * ratePerSec;
   const planSetups = [

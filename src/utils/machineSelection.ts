@@ -190,6 +190,37 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
   }),
 };
 
+/**
+ * TOOL CHANGE — the INDEX ONLY, and it belongs to the machine.
+ *
+ * This was one global 8 s, and 8 s is a machining-centre figure: an ATC swinging
+ * an arm, gripping, retracting, rotating the magazine and re-seating. A lathe
+ * turret does not do that. It indexes a station in a fraction of a second, and a
+ * sliding head with gang tooling does not index at all — the slide simply moves
+ * the next tool into the cut.
+ *
+ * The 8 s was defensible when NOTHING modelled the moves between cuts, because
+ * it was standing in for the whole transition. Now that the rapid, the spindle
+ * settle and the clearance feed are each charged per operation (turning.ts,
+ * opApproachSec), leaving it at 8 s charges the same seconds twice: every
+ * transition on the VOC housing came to 10.3 s, which is not a thing any lathe
+ * does.
+ *
+ * So this is the index alone, per machine kind, and the moves are charged where
+ * they happen. Ordinary figures a shop can argue with — turret index times are
+ * published in machine specifications, usually 0.15-0.3 s station to station.
+ */
+export const TOOL_CHANGE_SEC: Record<MachineKind, number> = {
+  // Gang tooling on a guide bush: the slide repositions, nothing rotates.
+  'sliding-head': 0.8,
+  // Turret index plus the retract to a position it is safe to index from.
+  'lathe': 1.5,
+  // Turret for the turning tools, but the driven spindle takes a real tool change.
+  'turn-mill': 3,
+  // ATC tool-to-tool on a machining centre — this is where 8 s came from.
+  'mill': 5,
+};
+
 /** All machine ids in catalog order — the default "owns everything" set. */
 export const ALL_MACHINE_IDS: MachineId[] = [
   'hanwha', 'star-sr20', 'star-sr32', 'ntx-1000', 'nl-2000',
