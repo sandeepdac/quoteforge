@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import Logo from '../common/Logo';
+import { BUILD_LABEL, BUILD_TITLE, BUILD_DIRTY } from '../../buildInfo';
 
 const navItems = [
   { name: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -35,6 +36,20 @@ export default function Sidebar() {
         <h1 className="text-lg font-bold tracking-tight text-foreground">
           Quote<span className="text-primary">Forge</span>
         </h1>
+        {/* Which code is this? The commit, because package.json is 0.0.0 and
+            says nothing. A "+" means the build carried uncommitted changes, so
+            it is not any commit and the badge alone cannot identify it. */}
+        <span
+          title={BUILD_TITLE}
+          className={cn(
+            'self-start mt-0.5 px-1.5 py-0.5 rounded font-mono text-[10px] leading-none border',
+            BUILD_DIRTY
+              ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
+              : 'bg-muted text-muted-foreground border-border'
+          )}
+        >
+          {BUILD_LABEL}
+        </span>
       </div>
 
       <nav className="flex-1 px-4 space-y-1 py-1">
