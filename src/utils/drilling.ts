@@ -80,6 +80,13 @@ export function peckDepthMm(diaMm: number, depthMm: number): number {
   return 0.5 * diaMm;                     // deep hole: half-diameter bites
 }
 
+/**
+ * Drilling surface speed as a fraction of the material's turning speed.
+ * Published free-machining brass data: "drilling runs slowest, at roughly 40% of
+ * the turning speed, because the chip can only escape back up the flute."
+ */
+export const DRILL_SPEED_FRACTION = 0.4;
+
 /** Seconds to drill ONE hole, cutting plus peck retracts plus approach. */
 export function drillHoleSec(
   hole: HoleSpec,
@@ -90,8 +97,14 @@ export function drillHoleSec(
   const L = Math.max(0.1, hole.depthMm);
 
   // rpm from surface speed, capped by the machine. Drills run slower than the
-  // turning finish speed — a twist drill's corner is its weakest point.
-  const vc = Math.max(10, m.cuttingSpeedRough * 0.5);
+  // turning finish speed — a twist drill's corner is its weakest point, and the
+  // chip can only escape back up the flute.
+  //
+  // 0.4, not the 0.5 this used: published CZ121 data puts drilling at "roughly
+  // 40% of the turning speed" for exactly that chip-evacuation reason, and the
+  // same ratio is the usual rule across materials. At 0.5 the model was running
+  // every drill about 25% fast.
+  const vc = Math.max(10, m.cuttingSpeedRough * DRILL_SPEED_FRACTION);
   const rpm = Math.min(cfg.maxRpm, (vc * 1000) / (Math.PI * d));
   const feedMmPerMin = Math.max(1, drillFeedPerRev(d, m) * rpm);
 

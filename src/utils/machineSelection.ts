@@ -93,6 +93,18 @@ export interface MachineSpec {
    */
   setupCharacterMin: number;
   /**
+   * Rapid traverse (mm/min) — how fast the machine moves when it is NOT cutting.
+   *
+   * This was a flat 10 m/min for the whole floor, which happens to be exactly
+   * right for a standard Haas VF-2 (400 ipm) and badly wrong for everything
+   * else: a Star SR-32 rapids at 24 m/min and an NTX 1000 at 40-50. Every
+   * approach, retract and peck retract is timed from this, so on the NTX the
+   * model was charging four times the air it should.
+   *
+   * Values marked SOURCED come from the manufacturer's published specification.
+   */
+  rapidTraverseMmPerMin: number;
+  /**
    * Charge-out rate per HOUR, in the shop's currency. This is a real cost
    * centre: a 5-axis mill-turn is not "10% more" than a VMC, it is a different
    * class of asset with a rate to match. DEFAULTS — confirm with the shop.
@@ -129,41 +141,47 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     id: 'hanwha', name: 'Hanwha Sliding-Head', kind: 'sliding-head',
     liveTooling: true, axes: 5, maxBarDiaMm: 10, maxChuckDiaMm: 45,
     setupCharacterMin: 240, // assumed: same class as the SR-20, untested
-    accuracyMm: 0.01, hourlyRate: 48,
+    accuracyMm: 0.01, rapidTraverseMmPerMin: 24000, // assumed: same class as the Star sliding heads, untested
+    hourlyRate: 48,
     note: 'Small bar-fed precision turning to ⌀10 bar (⌀45 turned). Driven tools: profiles, drilling, tapping, thread whirling.',
   }),
   'star-sr20': spec({
     id: 'star-sr20', name: 'Star SR-20 Sliding-Head', kind: 'sliding-head',
     liveTooling: true, axes: 5, maxBarDiaMm: 20, maxTurnLengthMm: 350,
     setupCharacterMin: 240, // OBSERVED 240 (029068)
-    accuracyMm: 0.005, hourlyRate: 52,
+    accuracyMm: 0.005, rapidTraverseMmPerMin: 24000, // assumed from the SR-32 specification, same series
+    hourlyRate: 52,
     note: 'Bar-fed to ⌀20 × 350 mm. Tightest tolerance on the floor (0.005 mm). Driven tools + thread whirling.',
   }),
   'star-sr32': spec({
     id: 'star-sr32', name: 'Star SR-32 Sliding-Head', kind: 'sliding-head',
     liveTooling: true, axes: 5, maxBarDiaMm: 32, maxTurnLengthMm: 310,
     setupCharacterMin: 900, // OBSERVED 900 (OLY014_01297) - 3.75x the SR-20, unexplained
-    accuracyMm: 0.01, hourlyRate: 58,
+    accuracyMm: 0.01, rapidTraverseMmPerMin: 24000, // SOURCED: Star SR-32J, 24 m/min
+    hourlyRate: 58,
     note: 'Bar-fed to ⌀32 × 310 mm. Driven tools: profiles, drilling, tapping, thread whirling.',
   }),
   'ntx-1000': spec({
     id: 'ntx-1000', name: 'DMG Mori NTX 1000 (5-axis Mill-Turn)', kind: 'turn-mill',
     liveTooling: true, axes: 5, maxBarDiaMm: 65, maxChuckDiaMm: 125, maxTurnLengthMm: 200,
     setupCharacterMin: 900, // OBSERVED 600 and 1200, mean 900 - the 2x spread is unmodelled
-    accuracyMm: 0.01, hourlyRate: 135,
+    accuracyMm: 0.01, rapidTraverseMmPerMin: 40000, // SOURCED: DMG Mori NTX 1000, X/Y/Z 40/40/50 m/min - the slowest axis
+    hourlyRate: 135,
     note: 'The only 5-axis machine on the floor: B-axis milling spindle, turning and milling in one clamp. Also mills PRISMATIC work done-complete in soft jaws — the reason a compound-angle part belongs here and not on a VMC. Premium rate, repaid by eliminating setups.',
   }),
   'nl-2000': spec({
     id: 'nl-2000', name: 'Mori NL 2000 Mill-Turn', kind: 'turn-mill',
     liveTooling: true, axes: 4, maxBarDiaMm: 65, maxChuckDiaMm: 430, maxTurnLengthMm: 450,
     setupCharacterMin: 210, // OBSERVED 180 and 240 (031169, 035838)
-    accuracyMm: 0.01, hourlyRate: 88,
+    accuracyMm: 0.01, rapidTraverseMmPerMin: 30000, // assumed: large-capacity turning centre of this class
+    hourlyRate: 88,
     note: 'Large-capacity mill-turn: ⌀65 bar, but chucks to ⌀430 × 450 mm. Driven tools with Y ±70 for off-axis work. One rotary axis, so a compound angle still needs fixturing.',
   }),
   'hi-turner': spec({
     id: 'hi-turner', name: 'Hi Turner CNC Lathe', kind: 'lathe',
     liveTooling: false, axes: 2, maxBarDiaMm: 38, maxChuckDiaMm: 250, maxTurnLengthMm: 250,
     setupCharacterMin: 120, // assumed: 2-axis, the simplest setup on the floor
+    rapidTraverseMmPerMin: 12000, // assumed: conventional 2-axis CNC lathe
     hourlyRate: 42,
     note: 'Straightforward turning to ⌀250 × 250 mm. No live tooling — off-axis features need a separate milling op.',
   }),
@@ -171,6 +189,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     id: 'haas-vf2', name: 'Haas VF-2 (4-axis VMC)', kind: 'mill',
     liveTooling: true, axes: 4, envelopeMm: { x: 762, y: 406, z: 508 },
     setupCharacterMin: 240, // assumed as a FIRST op; observed 60 as a second op (035838)
+    rapidTraverseMmPerMin: 10200, // SOURCED: Haas VF-2, 400 ipm standard (20.3 m/min with the XRT option)
     hourlyRate: 55,
     note: 'Vertical machining centre with a 4th axis — indexes around ONE axis to reach the faces about it without a re-fixture. A compound angle needs two rotations, so it still costs a tilted fixture here.',
   }),
@@ -178,6 +197,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     id: 'sabre', name: 'Sabre Machining Centre', kind: 'mill',
     liveTooling: true, axes: 3, envelopeMm: { x: 2000, y: 500, z: 500 },
     setupCharacterMin: 240, // assumed: 3-axis machining centre, untested
+    rapidTraverseMmPerMin: 15000, // assumed: large-format 3-axis machining centre
     hourlyRate: 58,
     note: 'Large-format milling to 2 m. Metals plus graphite, ABS, polycarbonate, nylon, POM and PEEK. Three axes: one clamp, one direction.',
   }),
@@ -185,7 +205,8 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     id: 'h-mini-mill-300', name: 'H Mini Mill 300', kind: 'mill',
     liveTooling: true, axes: 3, maxBarDiaMm: 60, envelopeMm: { x: 370, y: 300, z: 450 },
     setupCharacterMin: 405, // OBSERVED 210 and 600 as SECOND ops, mean 405
-    accuracyMm: 0.01, hourlyRate: 40,
+    accuracyMm: 0.01, rapidTraverseMmPerMin: 20000, // assumed: small high-speed machining centre
+    hourlyRate: 40,
     note: 'Small machining centre with ⌀10–60 collet / bar workholding, billet to 370 mm. CONFIRM its exact classification with the shop.',
   }),
 };

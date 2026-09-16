@@ -78,3 +78,27 @@ describe('a plan row says what it does not include', () => {
     expect(shared.length).toBeGreaterThan(0);
   });
 });
+
+describe('rapid traverse is the machine\'s, and sourced where published', () => {
+  // A flat 10 m/min is exactly a standard Haas VF-2 (400 ipm) and nothing else.
+  // Every approach, retract and peck retract is timed from it.
+  it('carries a published figure for the machines with one', () => {
+    expect(MACHINE_CATALOG['haas-vf2'].rapidTraverseMmPerMin).toBe(10200);   // 400 ipm
+    expect(MACHINE_CATALOG['star-sr32'].rapidTraverseMmPerMin).toBe(24000);  // Star SR-32J
+    expect(MACHINE_CATALOG['ntx-1000'].rapidTraverseMmPerMin).toBe(40000);   // NTX 1000
+  });
+
+  it('every machine has a positive, finite rate', () => {
+    for (const id of Object.keys(MACHINE_CATALOG) as (keyof typeof MACHINE_CATALOG)[]) {
+      const v = MACHINE_CATALOG[id].rapidTraverseMmPerMin;
+      expect(Number.isFinite(v), id).toBe(true);
+      expect(v, id).toBeGreaterThan(0);
+    }
+  });
+
+  it('a faster-rapid machine spends less time in the air on the same part', () => {
+    // Star SR-32 rapids 24 m/min against the VF-2's 10.2. Same geometry, same
+    // cutting, and the difference is entirely non-cutting travel.
+    expect(price('star-sr32').cycleTimeSec).toBeLessThan(price('haas-vf2').cycleTimeSec);
+  });
+});

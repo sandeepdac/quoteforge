@@ -21,7 +21,7 @@ import {
 } from '../types';
 import { DEFAULT_CNC_SETTINGS, DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor, nextStandardBar } from './materials';
-import { estimateTurningTimes, TurningProfile } from './turning';
+import { estimateTurningTimes, DEFAULT_OP_APPROACH, TurningProfile } from './turning';
 import { deriveRouteSetup, routeRateMultiplier, type RouteSetupOp } from './setupModel';
 import { TOOL_CHANGE_SEC } from './machineSelection';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
@@ -122,6 +122,11 @@ export function calculateMachiningCosts(
   const toolChangeSec = routeOps?.length
     ? TOOL_CHANGE_SEC[routeOps[0].machine.kind] ?? cnc.toolChangeSec
     : cnc.toolChangeSec;
+  // ...and so is the rapid rate. Sourced per machine where a specification was
+  // published; see MachineSpec.rapidTraverseMmPerMin.
+  const rapidMmPerMin = routeOps?.length
+    ? routeOps[0].machine.rapidTraverseMmPerMin || DEFAULT_OP_APPROACH.rapidMmPerMin
+    : DEFAULT_OP_APPROACH.rapidMmPerMin;
   const t = estimateTurningTimes(
     // The bar is computed right here; passing it stops roughing's pass count
     // falling back to a guess at the stock allowance.
@@ -133,6 +138,7 @@ export function calculateMachiningCosts(
     toolLibrary: cnc.toolLibrary ?? DEFAULT_TURNING_TOOLS,
     toolAssemblies: cnc.turningToolAssemblies,
     facingAllowanceMm: cnc.facingAllowanceMm,
+    opApproach: { ...DEFAULT_OP_APPROACH, rapidMmPerMin },
   });
   // Per-op actual seconds and cost (efficiency applied to cutting/air alike).
   const ratePerSec = machineRatePerMin / 60;

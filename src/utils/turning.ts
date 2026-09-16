@@ -135,6 +135,15 @@ export interface TurningTimes {
 
 /** Ra (um) an ordinary turned surface gets with no special measures. */
 export const DEFAULT_TURNED_RA_UM = 3.2;
+/**
+ * How much of the theoretical feed is actually usable.
+ *
+ * Real turned roughness runs 20-50% above the theoretical Ra = f^2/(32r) value.
+ * Since Ra goes as the SQUARE of feed, holding a called-out finish against a 35%
+ * overshoot means feeding at about 1/sqrt(1.35) = 0.86 of what the formula says.
+ */
+export const ACHIEVABLE_RA_DERATE = 0.86;
+
 /** At or below this Ra a single pass will not hold it: a spring pass follows. */
 export const SPRING_PASS_RA_UM = 0.8;
 
@@ -163,7 +172,13 @@ export const SPRING_PASS_RA_UM = 0.8;
 export function finishFeedForRaMmPerRev(noseRadiusMm: number, raUm: number): number {
   const r = Math.max(0.05, noseRadiusMm);
   const raMm = Math.max(0.05, raUm) / 1000;
-  return Math.sqrt(32 * r * raMm);
+  // THE FORMULA IS THE FLOOR, NOT THE ANSWER. Theoretical Ra assumes no tool
+  // wear and perfectly stable cutting; published guidance is that real roughness
+  // runs 20-50% above it once vibration, built-up edge and tearing are in play.
+  // A shop aiming at a drawing's Ra therefore feeds SLOWER than the formula
+  // allows, and using the theoretical feed directly quietly assumes every part
+  // is cut on a new insert in a rigid setup.
+  return Math.sqrt(32 * r * raMm) * ACHIEVABLE_RA_DERATE;
 }
 
 /**
@@ -332,6 +347,10 @@ export function estimateTurningTimes(
 
   // Non-cutting seconds owed by one operation occurrence. NOT the turret index —
   // that is charged separately, once per actual tool change.
+  // The machine's OWN rapid rate. A flat 10 m/min is a standard Haas VF-2 and
+  // nothing else: a Star SR-32 rapids at 24 m/min, an NTX 1000 at 40-50. Every
+  // approach, retract and peck retract is timed from this.
+  const rapid = cfg.opApproach?.rapidMmPerMin ?? DEFAULT_OP_APPROACH.rapidMmPerMin;
   const approach = (feedMmPerMin: number) => opApproachSec(feedMmPerMin, cfg.opApproach);
   const reposition = (feedMmPerMin: number) => repositionSec(feedMmPerMin, cfg.opApproach);
   // n occurrences of the same feature with the same tool: one approach, then a
@@ -411,9 +430,10 @@ export function estimateTurningTimes(
     drillSec = drillHoleSec({ diameterMm: drillDia, depthMm: depth }, m, {
       ...DEFAULT_DRILL_CONFIG,
       maxRpm: cfg.maxRpm,
+      rapidMmPerMin: rapid,
     });
     // Spot it first, or the drill wanders off the axis the drawing dimensions from.
-    spotSec = spotDrillSec(drillDia, m, { ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm });
+    spotSec = spotDrillSec(drillDia, m, { ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm, rapidMmPerMin: rapid });
 
     // Boring: open from the drilled hole to the final bore. rpm taken at the
     // final diameter (conservative — the bar runs slower on a big bore).
@@ -474,6 +494,7 @@ export function estimateTurningTimes(
     ...DEFAULT_CROSS_CONFIG,
     maxRpm: cfg.maxRpm,
     maxDrillDiaMm: cfg.maxDrillDiaMm,
+    rapidMmPerMin: rapid,
   });
 
   // Tapping. A thread is the one operation with no geometric signature — the

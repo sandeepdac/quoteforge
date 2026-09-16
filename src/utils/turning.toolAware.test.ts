@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   estimateTurningTimes, finishFeedForRaMmPerRev, boringOverhangDerate,
-  DEFAULT_TURNING_CONFIG, DEFAULT_TURNED_RA_UM, type TurningProfile,
+  DEFAULT_TURNING_CONFIG, DEFAULT_TURNED_RA_UM, ACHIEVABLE_RA_DERATE, type TurningProfile,
 } from './turning';
 import { materialPropsFor } from './materials';
 import type { ShopTool } from '../types';
@@ -22,10 +22,22 @@ const cfg = (finishNose: number, toolLibrary = tools(finishNose)) =>
   ({ ...DEFAULT_TURNING_CONFIG, toolLibrary });
 
 describe('the feed a finish allows: Ra = fn^2 / (32r)', () => {
-  it('matches the handbook relation', () => {
-    // Ra 3.2 um on an 0.8 mm nose: sqrt(32 * 0.8 * 0.0032) = 0.286 mm/rev.
-    expect(finishFeedForRaMmPerRev(0.8, 3.2)).toBeCloseTo(0.286, 3);
-    expect(finishFeedForRaMmPerRev(0.4, 0.4)).toBeCloseTo(0.072, 3);
+  it('matches the handbook relation, derated to what is achievable', () => {
+    // Ra 3.2 um on an 0.8 mm nose: sqrt(32 * 0.8 * 0.0032) = 0.286 mm/rev in
+    // theory. Published guidance is that real roughness runs 20-50% above the
+    // theoretical value, so holding the callout means feeding at ~0.86 of it.
+    const theoretical = (r: number, ra: number) => Math.sqrt(32 * r * (ra / 1000));
+    expect(theoretical(0.8, 3.2)).toBeCloseTo(0.286, 3);
+    expect(finishFeedForRaMmPerRev(0.8, 3.2)).toBeCloseTo(0.286 * ACHIEVABLE_RA_DERATE, 3);
+    expect(finishFeedForRaMmPerRev(0.4, 0.4)).toBeCloseTo(0.072 * ACHIEVABLE_RA_DERATE, 3);
+  });
+
+  it('never returns MORE than the theoretical formula allows', () => {
+    // The derate can only slow a cut down. If it ever exceeded the theory the
+    // model would be promising a finish the tool geometry cannot leave.
+    for (const [r, ra] of [[0.4, 0.4], [0.8, 3.2], [1.2, 6.3]] as const) {
+      expect(finishFeedForRaMmPerRev(r, ra)).toBeLessThan(Math.sqrt(32 * r * (ra / 1000)));
+    }
   });
 
   it('a FINER finish demands a slower feed', () => {
