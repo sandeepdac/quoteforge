@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateTurningTimes, opApproachSec, DEFAULT_TURNING_CONFIG, type TurningProfile } from './turning';
+import { estimateTurningTimes, opApproachSec, repositionSec, DEFAULT_TURNING_CONFIG, type TurningProfile } from './turning';
 import { DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor } from './materials';
 
@@ -54,12 +54,16 @@ describe('no operation costs less than a real operation', () => {
     expect(opApproachSec(50)).toBeGreaterThan(opApproachSec(5000));
   });
 
-  it('a part with four grooves pays four approaches, not one', () => {
+  it('a part with four grooves pays four PLUNGES, and one approach', () => {
+    // This assertion used to demand four x the single-groove time, which encoded
+    // an over-charge: it made every groove fetch the tool again. The plunges
+    // scale; the approach does not.
     const [, base, mat] = cases[0];
     const m = materialPropsFor(mat);
     const one = estimateTurningTimes({ ...base, grooveCount: 1 }, m, 30, cfg);
     const four = estimateTurningTimes({ ...base, grooveCount: 4 }, m, 30, cfg);
-    expect(four.grooveSec).toBeCloseTo(one.grooveSec * 4, 1);
+    expect(four.grooveSec).toBeGreaterThan(one.grooveSec);
+    expect(four.grooveSec).toBeLessThan(one.grooveSec * 4);
   });
 
   it('facing two ends costs about twice facing one', () => {
@@ -155,5 +159,44 @@ describe('every plan row names the tool that actually runs it', () => {
     expect(drill, 'no drill row in the plan').toBeTruthy();
     expect(spot!.tool).not.toBe(drill!.tool);
     expect(spot!.tool.toLowerCase()).toMatch(/spot|centre|center/);
+  });
+});
+
+describe('a tool already in the cut is not fetched again', () => {
+  const [, base, mat] = cases[0];
+  const m = () => materialPropsFor(mat);
+
+  it('the FIRST groove pays a full approach and the rest pay a hop', () => {
+    // Four grooves used to be four full approaches — 120 mm of rapid and a 1.5 s
+    // spindle settle each — when after the first the tool is at the diameter and
+    // the spindle is at speed. What happens between grooves is a short index
+    // along Z, and charging more than that is inventing work.
+    const one = estimateTurningTimes({ ...base, grooveCount: 1 }, m(), 30, cfg);
+    const four = estimateTurningTimes({ ...base, grooveCount: 4 }, m(), 30, cfg);
+    const perExtra = (four.grooveSec - one.grooveSec) / 3;
+    expect(perExtra).toBeLessThan(one.grooveSec);          // cheaper than the first
+    expect(four.grooveSec).toBeGreaterThan(one.grooveSec); // but never free
+  });
+
+  it('more grooves still cost more, monotonically', () => {
+    let prev = 0;
+    for (const grooveCount of [1, 2, 4, 8]) {
+      const t = estimateTurningTimes({ ...base, grooveCount }, m(), 30, cfg);
+      expect(t.grooveSec, `${grooveCount} grooves`).toBeGreaterThan(prev);
+      prev = t.grooveSec;
+    }
+  });
+
+  it('two FACES are not treated as a repeat — they are at opposite ends', () => {
+    // The tool cannot hop 25 mm from one end of the part to the other: the
+    // second face is reached by re-gripping or by the sub-spindle.
+    const one = estimateTurningTimes({ ...base, faceCount: 1 }, m(), 30, cfg);
+    const two = estimateTurningTimes({ ...base, faceCount: 2 }, m(), 30, cfg);
+    expect(two.facingSec).toBeCloseTo(one.facingSec * 2, 1);
+  });
+
+  it('a repeat hop is shorter than an approach but longer than nothing', () => {
+    expect(repositionSec(1000)).toBeLessThan(opApproachSec(1000));
+    expect(repositionSec(1000)).toBeGreaterThan(0);
   });
 });

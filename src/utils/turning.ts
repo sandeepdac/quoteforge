@@ -213,6 +213,11 @@ export interface OpApproach {
   settleSec: number;
   /** Gap above the metal taken at feed rather than rapid. */
   clearanceMm: number;
+  /**
+   * Short move to the NEXT identical feature with the same tool already loaded —
+   * groove to groove along Z. No turret index, no spindle change, just a hop.
+   */
+  repositionTravelMm: number;
 }
 
 export const DEFAULT_OP_APPROACH: OpApproach = {
@@ -220,6 +225,7 @@ export const DEFAULT_OP_APPROACH: OpApproach = {
   rapidMmPerMin: 10000,
   settleSec: 1.5,
   clearanceMm: 2,
+  repositionTravelMm: 25,
 };
 
 /**
@@ -231,6 +237,26 @@ export function opApproachSec(feedMmPerMin: number, cfg: OpApproach = DEFAULT_OP
   const rapidSec = (cfg.rapidTravelMm / Math.max(1, cfg.rapidMmPerMin)) * 60;
   const clearanceSec = (cfg.clearanceMm / Math.max(0.001, feedMmPerMin)) * 60;
   return rapidSec + cfg.settleSec + clearanceSec;
+}
+
+/**
+ * Moving the SAME tool to the next identical feature.
+ *
+ * Four grooves were charged four full approaches — 120 mm of rapid and a 1.5 s
+ * spindle settle each — when after the first one the tool is already at the
+ * diameter and the spindle is already at speed. What actually happens between
+ * groove one and groove two is a short index along Z and a plunge.
+ *
+ * So the first occurrence pays the approach and the rest pay this. No settle,
+ * because nothing about the spindle changed; the clearance feed stays, because
+ * the tool still has to come off the work and back into it.
+ */
+export function repositionSec(feedMmPerMin: number, cfg: OpApproach = DEFAULT_OP_APPROACH): number {
+  const travel = Number.isFinite(cfg.repositionTravelMm) && cfg.repositionTravelMm > 0
+    ? cfg.repositionTravelMm : DEFAULT_OP_APPROACH.repositionTravelMm;
+  const rapidSec = (travel / Math.max(1, cfg.rapidMmPerMin)) * 60;
+  const clearanceSec = (cfg.clearanceMm / Math.max(0.001, feedMmPerMin)) * 60;
+  return rapidSec + clearanceSec;
 }
 
 export const DEFAULT_TURNING_CONFIG: TurningConfig = {
@@ -307,6 +333,11 @@ export function estimateTurningTimes(
   // Non-cutting seconds owed by one operation occurrence. NOT the turret index —
   // that is charged separately, once per actual tool change.
   const approach = (feedMmPerMin: number) => opApproachSec(feedMmPerMin, cfg.opApproach);
+  const reposition = (feedMmPerMin: number) => repositionSec(feedMmPerMin, cfg.opApproach);
+  // n occurrences of the same feature with the same tool: one approach, then a
+  // short hop to each of the rest.
+  const repeated = (n: number, feedMmPerMin: number) =>
+    n > 0 ? approach(feedMmPerMin) + (n - 1) * reposition(feedMmPerMin) : 0;
   const faceAllowMm = Number.isFinite(cfg.facingAllowanceMm) && (cfg.facingAllowanceMm ?? 0) > 0
     ? (cfg.facingAllowanceMm as number) : 2;
 
@@ -325,6 +356,9 @@ export function estimateTurningTimes(
     ? profile.faceCount * (
         faceRoughPasses * min((od / 2) / faceRoughFeedMmPerMin)
         + finishPasses * min((od / 2) / faceFinishFeedMmPerMin)
+        // A full approach per face, deliberately: the two faces are at opposite
+        // ends of the part, so the second is reached by re-gripping or by the
+        // sub-spindle — never by hopping 25 mm along Z.
         + approach(faceFinishFeedMmPerMin)
       )
     : 0;
@@ -409,11 +443,13 @@ export function estimateTurningTimes(
   }
 
   // Grooving — plunge a ~3 mm tool to ~10% of OD, per groove.
-  // EACH groove is its own operation: position along Z, plunge, dwell to break
-  // the chip, retract. Four grooves are four approaches, not one.
+  // EACH groove is its own plunge, but only the FIRST pays a full approach: after
+  // that the tool is at the diameter and the spindle is at speed, and what
+  // happens between grooves is a short index along Z.
   const grooveFeedMmPerMin = Math.max(0.001, 0.05 * rpm(m.cuttingSpeedFinish, od, cfg.maxRpm));
   const grooveSec = profile.grooveCount > 0
-    ? profile.grooveCount * (min((od * 0.1) / grooveFeedMmPerMin) + approach(grooveFeedMmPerMin))
+    ? profile.grooveCount * min((od * 0.1) / grooveFeedMmPerMin)
+      + repeated(profile.grooveCount, grooveFeedMmPerMin)
     : 0;
 
   // Threading — multi-pass over the thread length, per threaded feature.
