@@ -77,7 +77,19 @@ export interface MilledPlanInput {
   opCost: (sec: number) => number;
   toolChangeSec: number;
   /** Rapid-motion allowance relative to cutting time; excludes tool changes. */
-  rapidFraction?: number;
+  /**
+   * Non-cutting seconds EVERY planned operation owes: rapid clear of the
+   * fixture, across to the next feature, plunge to the clearance plane, and the
+   * last couple of millimetres at feed before the cutter touches metal.
+   *
+   * This replaces a "rapid allowance" of 8% of cutting time — a proportion, not
+   * a move. It could not tell a part with twenty short operations from one with
+   * two long ones, which is exactly the difference between a busy plate and a
+   * plain block, and it scaled with cutting time so a faster cutter also got a
+   * shorter approach. Turning was corrected the same way; see turning.ts,
+   * opApproachSec.
+   */
+  approachSecPerOp?: number;
   colors: Record<string, string>;
 }
 
@@ -376,7 +388,8 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
       driver: o.driver,
       color: o.color,
     }));
-    const rapidSec = mine.reduce((sum, o) => sum + o.sec, 0) * (inp.rapidFraction ?? 0);
+    // One approach per operation, not a percentage of the cutting.
+    const rapidSec = operations.length * (inp.approachSecPerOp ?? 0);
     const seconds = operations.reduce((a, o) => a + o.seconds, 0) + (changeSec + rapidSec) / inp.eff;
     const cost = operations.reduce((a, o) => a + o.cost, 0) + inp.opCost(changeSec + rapidSec);
     planSetups.push({

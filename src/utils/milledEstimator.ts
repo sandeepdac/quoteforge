@@ -28,7 +28,12 @@ import { millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, Milling
 import { roughingMrrCm3PerMin, rpm as turningRpm } from './turning';
 import { buildMilledPlan } from './milledPlanner';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
-import { drillHoleSec, drillHolesSec, pairHoles, crossFeaturesSec, tapThreadsSec, DEFAULT_DRILL_CONFIG, DEFAULT_CROSS_CONFIG } from './drilling';
+import { drillHoleSec, drillHolesSec, spotDrillsSec, pairHoles, crossFeaturesSec, tapThreadsSec, DEFAULT_DRILL_CONFIG, DEFAULT_CROSS_CONFIG } from './drilling';
+import { opApproachSec, DEFAULT_OP_APPROACH } from './turning';
+import { TOOL_CHANGE_SEC } from './machineSelection';
+
+/** A mill's approach crosses the table and plunges; a lathe's slides along Z. */
+const MILL_APPROACH_TRAVEL_MM = 250;
 import { deriveRouteSetup, type RouteSetupOp } from './setupModel';
 import type { ThreadSpec } from './drilling';
 import type { SecondaryOperation } from './secondaryOps';
@@ -332,6 +337,22 @@ export function calculateMilledCosts(
   // runs cutting slower (more time), above 100 faster. Scales CUTTING time only.
   const feedMult = 100 / Math.max(1, cnc.feedrateRatioPercent ?? 100);
   const machineRatePerMin = cnc.machineRatePerMin * (machineRateMultiplier > 0 ? machineRateMultiplier : 1);
+  // TOOL CHANGE AND RAPID BELONG TO THE MACHINE, exactly as they do for turning
+  // (cncEstimator.ts). Milling carried a flat 10 s change and an 8% rapid
+  // allowance for every machine on the floor, so a part on the 40 m/min NTX and
+  // the same part on the 10.2 m/min VF-2 moved between cuts at the same speed.
+  const toolChangeSec = routeOps?.length
+    ? TOOL_CHANGE_SEC[routeOps[0].machine.kind] ?? (cnc.millToolChangeSec ?? 10)
+    : (cnc.millToolChangeSec ?? 10);
+  const rapidMmPerMin = routeOps?.length
+    ? routeOps[0].machine.rapidTraverseMmPerMin || DEFAULT_OP_APPROACH.rapidMmPerMin
+    : DEFAULT_OP_APPROACH.rapidMmPerMin;
+  // A milling approach is longer than a turning one: the cutter has to clear the
+  // fixture, cross to the next feature and plunge, rather than move along a
+  // slide. The clearance is taken at a representative plunge feed.
+  const approachSecPerOp = opApproachSec(
+    Math.max(1, m.feedPerToothMm * 3 * 2000),
+    { ...DEFAULT_OP_APPROACH, rapidMmPerMin, rapidTravelMm: MILL_APPROACH_TRAVEL_MM });
   const qty = Math.max(1, Math.round(quantity || 1));
   const p = input.profile;
 
@@ -490,6 +511,14 @@ export function calculateMilledCosts(
   const holeSpecs = p.holeDiametersMm
     ? remainingHoles
     : Array.from({ length: holes }, () => ({ diameterMm: 6, depthMm: throughDepthMm }));
+  // Spot every hole before drilling it: a twist drill wanders off the mark until
+  // its margins engage, and on a mill that is the difference between a hole on
+  // position and one that is not. Turning got this in 22842fb.
+  const spotSec = spotDrillsSec(holeSpecs, m, {
+    ...DEFAULT_DRILL_CONFIG,
+    maxRpm: cnc.maxRpm,
+    rapidMmPerMin,
+  });
   const drillSec = drillHolesSec(holeSpecs, m, {
     ...DEFAULT_DRILL_CONFIG,
     maxRpm: cnc.millMaxRpm ?? DEFAULT_DRILL_CONFIG.maxRpm,
@@ -559,8 +588,9 @@ export function calculateMilledCosts(
   const edgeSec = countersinkSec + chamferSec;
 
   // --- Cycle time (theoretical → actual via efficiency) --------------------
-  const cuttingSec = roughSec + turningSec + facingSec + finishSec + drillSec + edgeSec + crossSec + tapSec;
-  const toolChangeSec = cnc.millToolChangeSec ?? 10;
+  const cuttingSec = roughSec + turningSec + facingSec + finishSec + spotSec + drillSec + edgeSec + crossSec + tapSec;
+
+
   const ratePerSec = machineRatePerMin / 60;
   const opCost = (sec: number) => (sec / eff) * ratePerSec;
 
@@ -606,7 +636,7 @@ export function calculateMilledCosts(
     eff,
     opCost,
     toolChangeSec,
-    rapidFraction: 0.08,
+    approachSecPerOp,
     colors: COLORS,
   });
   // Allocate runtime to the machine that owns each holding. Previously every
@@ -633,7 +663,10 @@ export function calculateMilledCosts(
       cost: operation.cost * rateFactor,
     }));
     const cuttingCost = setup.operations.reduce((sum, operation) => sum + operation.cost, 0);
-    const rapidSec = setup.operations.reduce((sum, operation) => sum + operation.seconds, 0) * 0.08;
+    // Divided by eff to match how the planner charged it — the planner applies
+    // eff to (changeSec + rapidSec) together, and recomputing only one of them
+    // raw made plan.totalCost drift from plan.totalSeconds.
+    const rapidSec = (setup.operations.length * approachSecPerOp) / eff;
     const nonCutCost = (setup.toolChanges * toolChangeSec / eff + rapidSec) * (ratePerMin / 60);
     setup.cost = cuttingCost + nonCutCost;
   }
@@ -641,7 +674,8 @@ export function calculateMilledCosts(
   // Use the same tools and non-cutting events in the price and traveller.
   const toolCount = plan.tools.length;
   const toolChanges = plan.setups.reduce((sum, setup) => sum + setup.toolChanges, 0);
-  const airSec = toolChanges * toolChangeSec + cuttingSec * 0.08;
+  const plannedOpCount = plan.setups.reduce((sum, setup) => sum + setup.operations.length, 0);
+  const airSec = toolChanges * toolChangeSec + plannedOpCount * approachSecPerOp;
   const cycleTimeSec = plan.totalSeconds;
   const machineCost = plan.totalCost;
   const primaryRuntimeCost = (cycleTimeSec / 60) * primaryRatePerMin;
@@ -739,13 +773,13 @@ export function calculateMilledCosts(
     { key: 'tap', name: 'Tapping', driver: tapSec > 0 ? `${(p.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ')} — ${secStr(tapSec)}` : '', value: opCost(tapSec), color: COLORS.thread ?? COLORS.drill },
     { key: 'edge', name: 'Countersink / chamfer', driver: edgeSec > 0 ? `${countersinkCount ? `${countersinkCount} countersink${countersinkCount === 1 ? '' : 's'}` : ''}${countersinkCount && chamferCount ? ' + ' : ''}${chamferCount ? `${chamferCount} chamfer${chamferCount === 1 ? '' : 's'}` : ''} measured from the solid — ${secStr(edgeSec)}` : '', value: opCost(edgeSec), color: COLORS.facing },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
-    { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${toolChanges} tool changes × ${toolChangeSec}s plus 8% rapid allowance (before efficiency)`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
+    { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${toolChanges} tool changes × ${r1(toolChangeSec)}s, plus ${plannedOpCount} approaches × ${r1(approachSecPerOp)}s at ${Math.round(rapidMmPerMin / 1000)} m/min rapid (before efficiency)`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min preparation, excluding ${derivedProgrammingMin} min CAM billed separately. Full first-order breakdown: ${derivedSetup.explanation} — batch ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
     { key: 'nre', name: `CAM programming (one-time) ÷ ${qty}`, driver: `${r1(programmingMin)} min NRE over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty} — not billed again on reorder`, value: programmingPerUnit, color: COLORS.nre },
     { key: 'fixture', name: `Soft jaws / fixture ÷ ${qty}`, driver: needsSoftJaws ? `${setups} setups${p.bossCount > 0 ? `, ${p.bossCount} boss` : ''} → work-holding, made once (one-time)` : '', value: fixtureCost, color: COLORS.fixture },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${toolCount} operations`, value: toolingCost, color: COLORS.tooling },
-    ...(Math.abs(routeRuntimeAdjustment) > 0.005 ? [{ key: 'machine-rate', name: 'Multi-machine runtime rate', driver: routeOps!.map((op) => `${op.machine.name}: ${op.machine.hourlyRate}/hr × ${Math.max(1, Math.round(op.setups))} holding${op.setups > 1 ? 's' : ''}`).join('; '), value: routeRuntimeAdjustment, color: COLORS.turn }] : []),
+    ...(routeOps?.length && Math.abs(routeRuntimeAdjustment) > 0.005 ? [{ key: 'machine-rate', name: 'Multi-machine runtime rate', driver: routeOps.map((op) => `${op.machine.name}: ${op.machine.hourlyRate}/hr × ${Math.max(1, Math.round(op.setups))} holding${op.setups > 1 ? 's' : ''}`).join('; '), value: routeRuntimeAdjustment, color: COLORS.turn }] : []),
     ...secondaryOpsLineItems(input.secondaryOps, qty),
   ].filter((li) => Math.abs(li.value) > 0);
 
