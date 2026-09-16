@@ -92,6 +92,14 @@ export default function MachiningCostTable({ costs, overheadPercent, currency = 
                           <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: o.color }} />
                           <span className="text-foreground">{o.name}</span>
                         </span>
+                        {/* The TIME column is the cut alone. Without this line a
+                            reader sees "Drilling 2s" and rightly disbelieves it,
+                            because a machinist counts getting the drill there as
+                            part of drilling — and that is on the tool-selections
+                            row further down. The driver says so. */}
+                        {o.driver ? (
+                          <span className="block text-[10px] text-muted-foreground pl-3.5">{o.driver}</span>
+                        ) : null}
                       </td>
                       <td className={`${cell} text-muted-foreground`}>{o.tool}</td>
                       <td className={`${num} text-muted-foreground`}>{secs(o.seconds)}</td>

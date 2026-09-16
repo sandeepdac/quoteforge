@@ -4,6 +4,7 @@ import {
   DEFAULT_TURNING_CONFIG, DEFAULT_TURNED_RA_UM, ACHIEVABLE_RA_DERATE, type TurningProfile,
 } from './turning';
 import { materialPropsFor } from './materials';
+import { standardDrillMm, boringStockMm, STANDARD_DRILL_MM } from './drilling';
 import type { ShopTool } from '../types';
 
 const brass = materialPropsFor('Brass CZ121');
@@ -120,5 +121,38 @@ describe('a boring bar is slowed by its own overhang', () => {
     // has nothing to do with overhang.
     const d60 = estimateTurningTimes({ ...profile, boreDepthMm: 60 }, brass, 55, cfg(0.4));
     expect(deep.boreSec / 120).toBeGreaterThan(d60.boreSec / 60);
+  });
+});
+
+describe('a bored diameter is drilled UNDER and bored to size', () => {
+  it('the drill is a size a shop stocks, not the measured decimal', () => {
+    // ⌀11.80 is not a drill. The nearest stocked sizes are 11.5 and 12.0, and a
+    // dimensioned bore is drilled under and bored anyway.
+    expect(STANDARD_DRILL_MM).not.toContain(11.8);
+    expect(standardDrillMm(11.8 - boringStockMm(11.8))).toBe(10.5);
+    expect(standardDrillMm(6.4)).toBe(6);
+    expect(standardDrillMm(0.2)).toBeGreaterThan(0);
+  });
+
+  it('leaves the boring bar real stock to remove', () => {
+    const stock = boringStockMm(11.8);
+    expect(stock).toBeGreaterThanOrEqual(1);
+    const drill = standardDrillMm(11.8 - stock);
+    expect((11.8 - drill) / 2).toBeGreaterThan(0.1);   // radial > the model's threshold
+  });
+
+  it('so boring a dimensioned hole costs MORE than boring nothing did', () => {
+    // Previously drillDia = min(boreDia, maxDrill) = boreDia, radial = 0, and
+    // "Boring" was a finish pass over a hole already at size.
+    const bored = estimateTurningTimes(profile, brass, 55, cfg(0.4));
+    const solid = estimateTurningTimes({ ...profile, boreDiaMm: 0, boreDepthMm: 0 }, brass, 55, cfg(0.4));
+    expect(solid.boreSec).toBe(0);
+    expect(bored.boreSec).toBeGreaterThan(3);
+  });
+
+  it('stock scales with the bore, and is capped', () => {
+    expect(boringStockMm(5)).toBe(1);        // floor
+    expect(boringStockMm(20)).toBe(2);       // a tenth
+    expect(boringStockMm(100)).toBe(3);      // cap
   });
 });

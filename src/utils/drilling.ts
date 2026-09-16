@@ -87,6 +87,36 @@ export function peckDepthMm(diaMm: number, depthMm: number): number {
  */
 export const DRILL_SPEED_FRACTION = 0.4;
 
+/**
+ * Drills a shop actually stocks, mm. Metric jobber sizes: 0.5 steps to 13, then
+ * 0.5 to 25. A shop holds more sizes than this in the small range, but nobody
+ * holds an arbitrary decimal, and that is the point of the list.
+ */
+export const STANDARD_DRILL_MM: number[] = [
+  1, 1.5, 2, 2.5, 3, 3.3, 3.5, 4, 4.2, 4.5, 5, 5.5, 6, 6.5, 6.8, 7, 7.5, 8, 8.5,
+  9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 14.5, 15, 16, 17, 18, 19,
+  20, 21, 22, 23, 24, 25,
+];
+
+/** The largest stocked drill at or below a target diameter. */
+export function standardDrillMm(targetMm: number): number {
+  let best = STANDARD_DRILL_MM[0];
+  for (const d of STANDARD_DRILL_MM) if (d <= targetMm) best = d;
+  return Math.min(best, Math.max(0.1, targetMm));
+}
+
+/**
+ * Stock left on DIAMETER for the boring bar when a hole has to be bored to size.
+ *
+ * A drill does not hold a dimensioned bore: it cuts oversize, out of round and
+ * with a poor finish. Any diameter the drawing dimensions is drilled UNDER and
+ * bored. Roughly a tenth of the diameter, never less than 1 mm — enough for a
+ * roughing pass and a finish pass to clean up what the drill left.
+ */
+export function boringStockMm(boreDiaMm: number): number {
+  return Math.min(3, Math.max(1, boreDiaMm * 0.1));
+}
+
 /** Seconds to drill ONE hole, cutting plus peck retracts plus approach. */
 export function drillHoleSec(
   hole: HoleSpec,

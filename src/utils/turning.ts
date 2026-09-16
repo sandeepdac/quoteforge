@@ -14,7 +14,7 @@
  * consistently they give a repeatable number the efficiency factor can calibrate.
  */
 import type { MaterialProps } from './materials';
-import { crossFeaturesSec, drillHoleSec, spotDrillSec, tapThreadsSec, DEFAULT_CROSS_CONFIG, DEFAULT_DRILL_CONFIG } from './drilling';
+import { crossFeaturesSec, drillHoleSec, spotDrillSec, tapThreadsSec, standardDrillMm, boringStockMm, DEFAULT_CROSS_CONFIG, DEFAULT_DRILL_CONFIG } from './drilling';
 import type { ThreadSpec } from './drilling';
 import type { ShopTool, TurningToolAssembly } from '../types';
 import { countToolSelections, resolveTurningTool, TURNING_SEQUENCE, type ToolAssignment, type EstimatedTurningOp } from './turningTools';
@@ -109,6 +109,12 @@ export interface TurningConfig {
 export interface TurningTimes {
   /** Spot/centre drilling — the operation before the drill. */
   spotSec: number;
+  /**
+   * The drill actually used (mm) — a stocked size UNDER the finished bore, not
+   * the bore's own diameter. Carried so the plan can name the tool that runs,
+   * rather than labelling a ⌀10.5 drill with the ⌀11.8 it is drilling toward.
+   */
+  drillDiaMm: number;
   facingSec: number;
   roughSec: number;
   finishSec: number;
@@ -415,9 +421,23 @@ export function estimateTurningTimes(
   let drillSec = 0;
   let spotSec = 0;
   let boreSec = 0;
+  let drillDiaMm = 0;
   if (profile.boreDiaMm > 0 && profile.boreDepthMm > 0) {
     const depth = profile.boreDepthMm;
-    const drillDia = Math.min(profile.boreDiaMm, cfg.maxDrillDiaMm);
+    // DRILL UNDER, THEN BORE TO SIZE.
+    //
+    // This used to drill straight to the finished diameter — min(boreDia,
+    // maxDrill) — which left the boring bar nothing to remove and made "Boring"
+    // a finish pass over a hole already at size. It also assumed a drill exists
+    // at whatever decimal the model measured: ⌀11.80 is not a drill, it is a
+    // BORED dimension, and the nearest stocked sizes are 11.5 and 12.0.
+    //
+    // A drill cannot hold a dimensioned bore anyway — it cuts oversize, out of
+    // round and rough — so anything the drawing dimensions is drilled under and
+    // bored. Now the drill is a size a shop owns and the bore has real stock.
+    const boreStock = boringStockMm(profile.boreDiaMm);
+    const drillDia = standardDrillMm(Math.min(profile.boreDiaMm - boreStock, cfg.maxDrillDiaMm));
+    drillDiaMm = drillDia;
     // Pilot / through drill to the drillable diameter, on the same arithmetic
     // the milling side uses (drilling.ts) so one hole does not cost two
     // different amounts depending on which estimator happens to see it.
@@ -521,6 +541,6 @@ export function estimateTurningTimes(
     : DEFAULT_TURNING_CONFIG.toolChangeSec;
   const airSec = toolChangeCount * toolChangeSec + rapidSec;
 
-  return { spotSec, facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec,
+  return { spotSec, drillDiaMm, facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec,
     airSec, cuttingSec, toolCount, toolChangeCount, rapidSec, toolAssignments, operationCount: toolAssignments.length };
 }
