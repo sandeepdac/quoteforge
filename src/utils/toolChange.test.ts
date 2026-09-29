@@ -55,20 +55,30 @@ describe('a tool change is the machine\'s, not one number for the floor', () => 
 
   it('the cost line quotes the figure actually used, not the shop default', () => {
     const c = price('star-sr32');
-    const row = c.lineItems.find((li) => li.key === 'noncut')!;
+    // The index is no longer a row of its own \u2014 it is inside the idle column of
+    // the operation that calls for it, where it is shown as ACTUAL seconds like
+    // the rest of that row. The MACHINE's own figure is stated once, on the row
+    // that says where the indexes went.
     // Matched on the whole figure: "0.8s" contains "8s" as a substring, so a
     // naive toContain passes for the wrong reason.
+    const row = c.lineItems.find((li) => li.key === 'loading')!;
     expect(row.driver).toMatch(new RegExp(`\u00d7 ${TOOL_CHANGE_SEC['sliding-head']}s\\b`));
     expect(row.driver).not.toMatch(new RegExp(`\u00d7 ${DEFAULT_SHOP_SETTINGS.cnc!.toolChangeSec}s\\b`));
+    // And it is really inside the operations: every row's idle is nonzero and
+    // at least one says the index is in there.
+    const drivers = c.plan!.setups.flatMap((s) => s.operations).map((o) => o.driver).join(' | ');
+    expect(drivers).toMatch(/idle includes [\d.]+s to bring this tool round/);
   });
 });
 
 describe('a plan row says what it does not include', () => {
-  it('each operation names its time at the cut and the change to get there', () => {
+  it('each operation names its cutting time, its idle time and the change to get there', () => {
     const rows = price('nl-2000').plan!.setups.flatMap((s) => s.operations);
     const drill = rows.find((r) => r.op === 'drill')!;
-    expect(drill.driver).toMatch(/at the cut/);
+    expect(drill.driver).toMatch(/s cutting \+ [\d.]+s idle/);
     expect(drill.driver).toMatch(/bring this tool round|same tool as above/);
+    // The words are backed by the numbers on the row, not just printed.
+    expect(drill.cuttingSeconds! + drill.idleSeconds!).toBeCloseTo(drill.seconds, 8);
   });
 
   it('two operations sharing a tool do not each pay for a change', () => {
@@ -76,6 +86,14 @@ describe('a plan row says what it does not include', () => {
     const shared = rows.filter((r) => /same tool as above/.test(r.driver ?? ''));
     // Facing and rough turning run the same insert in the default inventory.
     expect(shared.length).toBeGreaterThan(0);
+  });
+
+  it('a turned part has an idle column on every operation', () => {
+    // The point of the split: no operation reads as pure metal. Even a cut that
+    // removes almost nothing had to be reached, and a cycle sheet shows that.
+    const rows = price('nl-2000').plan!.setups.flatMap((s) => s.operations);
+    expect(rows.length).toBeGreaterThan(4);
+    for (const r of rows) expect(r.idleSeconds).toBeGreaterThan(0);
   });
 });
 

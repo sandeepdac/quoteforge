@@ -14,7 +14,7 @@
  * consistently they give a repeatable number the efficiency factor can calibrate.
  */
 import type { MaterialProps } from './materials';
-import { crossFeaturesSec, drillHoleSec, spotDrillSec, tapThreadsSec, standardDrillMm, boringStockMm, DEFAULT_CROSS_CONFIG, DEFAULT_DRILL_CONFIG } from './drilling';
+import { crossFeaturesSplit, drillHoleSplit, spotDrillSplit, tapThreadsSplit, standardDrillMm, boringStockMm, DEFAULT_CROSS_CONFIG, DEFAULT_DRILL_CONFIG } from './drilling';
 import type { ThreadSpec } from './drilling';
 import type { ShopTool, TurningToolAssembly } from '../types';
 import { countToolSelections, resolveTurningTool, TURNING_SEQUENCE, type ToolAssignment, type EstimatedTurningOp } from './turningTools';
@@ -119,6 +119,36 @@ export interface TurningConfig {
   opApproach?: OpApproach;
 }
 
+/**
+ * ONE OPERATION, THE WAY A CYCLE SHEET WRITES IT.
+ *
+ * Turncircuit's sheets have two columns per line — cutting and idle — and total
+ * them separately at the foot. The model used to have neither: an operation's
+ * approach, settle and clearance were ADDED INTO its cutting seconds, and the
+ * turret indexes were swept into one "Tool selections" row at the bottom
+ * alongside a flat 5%-of-cutting rapid allowance that was never measured.
+ *
+ * That made three things impossible at once. The breakdown could not be read
+ * next to a sheet, because one column of ours covered two of theirs. The
+ * Feedrate override scaled rapids and spindle settles as though they were cuts.
+ * And a comparison could not tell a cutting error from an idle error — an
+ * operation 30% fast on metal and 30% slow on air reads as exactly right.
+ *
+ * So each operation now carries both, and the totals are the sum of the rows.
+ */
+export interface TurningOpTime {
+  op: EstimatedTurningOp;
+  /** Seconds the tool spends removing metal. */
+  cuttingSec: number;
+  /**
+   * Seconds it spends not removing metal, and why: the turret index that brings
+   * the tool round (charged to the operation that CAUSES the change, and only
+   * when the tool actually changes), positioning rapids, spindle settle, the
+   * clearance gap fed through before contact, and every pass or peck retract.
+   */
+  idleSec: number;
+}
+
 export interface TurningTimes {
   /** Spot/centre drilling — the operation before the drill. */
   spotSec: number;
@@ -142,10 +172,14 @@ export interface TurningTimes {
   crossSec: number;
   /** Tapping — internal threads, feed locked to the pitch. */
   tapSec: number;
-  /** Non-cutting: tool changes + rapids between cuts. */
+  /** Non-cutting: tool changes + approaches + retracts. Sum of opTimes idle. */
   airSec: number;
-  /** Sum of all cutting operations (excludes air). */
+  /** Sum of all cutting operations (excludes air). Sum of opTimes cutting. */
   cuttingSec: number;
+  /** Same figure as `airSec`, named for what it is on a cycle sheet. */
+  idleSec: number;
+  /** Every operation that carries time, with its two columns. */
+  opTimes: TurningOpTime[];
   /** Distinct assemblies (unassigned operation groups are provisional tools). */
   toolCount: number;
   operationCount: number;
@@ -412,16 +446,19 @@ export function estimateTurningTimes(
   const faceRoughFeedMmPerMin = Math.max(0.001, m.feedRough * faceRpm);
   const faceFinishFeedMmPerMin = Math.max(0.001, faceFeed * faceRpm);
   const faceRoughPasses = Math.max(0, Math.ceil(faceAllowMm / Math.max(0.1, m.depthOfCutRough)) - 1);
-  const facingSec = profile.faceCount > 0
+  const facingCutSec = profile.faceCount > 0
     ? profile.faceCount * (
         faceRoughPasses * min((od / 2) / faceRoughFeedMmPerMin)
         + finishPasses * min((od / 2) / faceFinishFeedMmPerMin)
-        // A full approach per face, deliberately: the two faces are at opposite
-        // ends of the part, so the second is reached by re-gripping or by the
-        // sub-spindle — never by hopping 25 mm along Z.
-        + approach(faceFinishFeedMmPerMin)
       )
     : 0;
+  // A full approach per face, deliberately: the two faces are at opposite ends
+  // of the part, so the second is reached by re-gripping or by the sub-spindle
+  // — never by hopping 25 mm along Z.
+  const facingIdleSec = profile.faceCount > 0
+    ? profile.faceCount * approach(faceFinishFeedMmPerMin)
+    : 0;
+  const facingSec = facingCutSec + facingIdleSec;
 
   // Roughing — remove the bulk at the roughing MRR.
   const mrr = roughingMrrCm3PerMin(m);
@@ -436,17 +473,19 @@ export function estimateTurningTimes(
   const roughReturnSec = roughPasses
     * ((cfg.opApproach ?? DEFAULT_OP_APPROACH).rapidTravelMm
        / Math.max(1, (cfg.opApproach ?? DEFAULT_OP_APPROACH).rapidMmPerMin)) * 60;
-  const roughSec = removalVolCm3 > 0 && mrr > 0
-    ? min((removalVolCm3 * cfg.roughFraction) / mrr) + roughReturnSec + approach(roughFeedMmPerMin)
-    : 0;
+  const cuttingRough = removalVolCm3 > 0 && mrr > 0;
+  const roughCutSec = cuttingRough ? min((removalVolCm3 * cfg.roughFraction) / mrr) : 0;
+  const roughIdleSec = cuttingRough ? roughReturnSec + approach(roughFeedMmPerMin) : 0;
+  const roughSec = roughCutSec + roughIdleSec;
 
   // Finish turning — one pass along the OD, at the feed the FINISHING INSERT can
   // take for the finish the drawing asks for.
   const finishRpm = rpm(m.cuttingSpeedFinish, od, cfg.maxRpm);
   const finishFeed = feedForFinish('finish', m.feedFinish, 0.4);
   const finishFeedMmPerMin = Math.max(0.001, finishFeed * finishRpm);
-  const finishSec = finishPasses * min(profile.lengthMm / finishFeedMmPerMin)
-    + approach(finishFeedMmPerMin);
+  const finishCutSec = finishPasses * min(profile.lengthMm / finishFeedMmPerMin);
+  const finishIdleSec = approach(finishFeedMmPerMin);
+  const finishSec = finishCutSec + finishIdleSec;
 
   // Drilling + boring. A hole is drilled from solid only up to the max drill
   // size; anything larger is drilled to that pilot and then bored OUT to size
@@ -457,6 +496,12 @@ export function estimateTurningTimes(
   let spotSec = 0;
   let boreSec = 0;
   let drillDiaMm = 0;
+  let drillCutSec = 0;
+  let drillIdleSec = 0;
+  let spotCutSec = 0;
+  let spotIdleSec = 0;
+  let boreCutSec = 0;
+  let boreIdleSec = 0;
   if (profile.boreDiaMm > 0 && profile.boreDepthMm > 0) {
     const depth = profile.boreDepthMm;
     // DRILL UNDER, THEN BORE TO SIZE.
@@ -482,13 +527,19 @@ export function estimateTurningTimes(
     // two ⌀11 holes are 125 mm deep — an L/D of eleven — and the real cost is
     // the twenty-odd full retracts needed to clear the chips, not 40% on top of
     // a single plunge.
-    drillSec = drillHoleSec({ diameterMm: drillDia, depthMm: depth }, m, {
+    const drillSplit = drillHoleSplit({ diameterMm: drillDia, depthMm: depth }, m, {
       ...DEFAULT_DRILL_CONFIG,
       maxRpm: cfg.maxRpm,
       rapidMmPerMin: rapid,
     });
+    drillCutSec = drillSplit.cuttingSec;
+    drillIdleSec = drillSplit.idleSec;
+    drillSec = drillCutSec + drillIdleSec;
     // Spot it first, or the drill wanders off the axis the drawing dimensions from.
-    spotSec = spotDrillSec(drillDia, m, { ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm, rapidMmPerMin: rapid });
+    const spotSplit = spotDrillSplit(drillDia, m, { ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm, rapidMmPerMin: rapid });
+    spotCutSec = spotSplit.cuttingSec;
+    spotIdleSec = spotSplit.idleSec;
+    spotSec = spotCutSec + spotIdleSec;
 
     // Boring: open from the drilled hole to the final bore. rpm taken at the
     // final diameter (conservative — the bar runs slower on a big bore).
@@ -514,7 +565,9 @@ export function estimateTurningTimes(
       ? Math.ceil(radial / Math.max(0.3, m.depthOfCutRough * 0.6 * overhang))
         * (depth / Math.max(1, (cfg.opApproach ?? DEFAULT_OP_APPROACH).rapidMmPerMin)) * 60
       : 0;
-    boreSec = boreRoughSec + boreFinishSec + borePassRetractSec + approach(boreFeedMmPerMin);
+    boreCutSec = boreRoughSec + boreFinishSec;
+    boreIdleSec = borePassRetractSec + approach(boreFeedMmPerMin);
+    boreSec = boreCutSec + boreIdleSec;
   }
 
   // Grooving — plunge a ~3 mm tool to ~10% of OD, per groove.
@@ -522,25 +575,42 @@ export function estimateTurningTimes(
   // that the tool is at the diameter and the spindle is at speed, and what
   // happens between grooves is a short index along Z.
   const grooveFeedMmPerMin = Math.max(0.001, 0.05 * rpm(m.cuttingSpeedFinish, od, cfg.maxRpm));
-  const grooveSec = profile.grooveCount > 0
+  const grooveCutSec = profile.grooveCount > 0
     ? profile.grooveCount * min((od * 0.1) / grooveFeedMmPerMin)
-      + repeated(profile.grooveCount, grooveFeedMmPerMin)
     : 0;
+  const grooveIdleSec = profile.grooveCount > 0
+    ? repeated(profile.grooveCount, grooveFeedMmPerMin)
+    : 0;
+  const grooveSec = grooveCutSec + grooveIdleSec;
 
   // Threading — multi-pass over the thread length, per threaded feature.
-  const threadSec = profile.threadCount > 0
-    ? profile.threadCount * (() => {
-        const threadLen = Math.min(1.5 * od, profile.lengthMm * 0.3);
-        const pitch = 1.5; // mm — typical; refined from the drawing callout later
-        const passes = 6;
-        return min((passes * threadLen) / (pitch * rpm(m.cuttingSpeedFinish, od, cfg.maxRpm)));
-      })()
+  const threadLenMm = Math.min(1.5 * od, profile.lengthMm * 0.3);
+  const threadPitchMm = 1.5; // mm — typical; refined from the drawing callout later
+  const threadPasses = 6;
+  const threadRpm = rpm(m.cuttingSpeedFinish, od, cfg.maxRpm);
+  const threadCutSec = profile.threadCount > 0
+    ? profile.threadCount
+      * min((threadPasses * threadLenMm) / (threadPitchMm * threadRpm))
     : 0;
+  // A THREADING CYCLE IS NOT SIX CONTINUOUS PASSES. Between each one the tool
+  // retracts clear, rapids the full thread length back to the start and steps
+  // in for the next depth — six passes means five of those return trips plus
+  // the approach to the first. This was the one operation charged no
+  // non-cutting time at all, which is why it alone had an empty idle column.
+  const threadIdleSec = profile.threadCount > 0
+    ? profile.threadCount * (
+        approach(threadPitchMm * threadRpm)
+        + (threadPasses - 1) * (threadLenMm / Math.max(1, rapid)) * 60
+      )
+    : 0;
+  const threadSec = threadCutSec + threadIdleSec;
 
   // Part-off — plunge to centre at a reduced speed.
   const partRpm = rpm(m.cuttingSpeedFinish * 0.6, od, cfg.maxRpm);
   const partFeedMmPerMin = Math.max(0.001, 0.08 * partRpm);
-  const partingSec = min((od / 2) / partFeedMmPerMin) + approach(partFeedMmPerMin);
+  const partingCutSec = min((od / 2) / partFeedMmPerMin);
+  const partingIdleSec = approach(partFeedMmPerMin);
+  const partingSec = partingCutSec + partingIdleSec;
 
   // Off-axis work: cross holes, flats, keyways. This used to be a boolean the
   // time model never read, so a cross-drilled part cost exactly what a plain one
@@ -550,10 +620,16 @@ export function estimateTurningTimes(
   for (const h of profile.additionalBores ?? []) {
     const d = standardDrillMm(Math.min(h.diameterMm, cfg.maxDrillDiaMm));
     if (d <= 0 || h.depthMm <= 0) continue;
-    spotSec += spotDrillSec(d, m, { ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm, rapidMmPerMin: rapid });
-    drillSec += drillHoleSec({ diameterMm: d, depthMm: h.depthMm }, m, {
+    const s = spotDrillSplit(d, m, { ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm, rapidMmPerMin: rapid });
+    spotCutSec += s.cuttingSec;
+    spotIdleSec += s.idleSec;
+    spotSec += s.cuttingSec + s.idleSec;
+    const dr = drillHoleSplit({ diameterMm: d, depthMm: h.depthMm }, m, {
       ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm, rapidMmPerMin: rapid,
     });
+    drillCutSec += dr.cuttingSec;
+    drillIdleSec += dr.idleSec;
+    drillSec += dr.cuttingSec + dr.idleSec;
   }
 
   // --- Deburring -----------------------------------------------------------
@@ -568,36 +644,49 @@ export function estimateTurningTimes(
     if (h.depthMm >= profile.lengthMm * 0.95) deburrEdges.push(h.diameterMm);
   }
   for (const th of profile.threads ?? []) deburrEdges.push(th.tapDrillMm);
-  let deburrSec = 0;
+  let deburrCutSec = 0;
+  let deburrIdleSec = 0;
   for (const dia of deburrEdges) {
     const edgeRpm = rpm(m.cuttingSpeedFinish, Math.max(0.5, dia), cfg.maxRpm);
     const feedMmPerMin = Math.max(0.001, m.feedFinish * edgeRpm);
     // The chamfer face, taken at 45 degrees.
-    deburrSec += min((DEBURR_CHAMFER_MM * Math.SQRT2) / feedMmPerMin) + approach(feedMmPerMin);
+    deburrCutSec += min((DEBURR_CHAMFER_MM * Math.SQRT2) / feedMmPerMin);
+    deburrIdleSec += approach(feedMmPerMin);
   }
+  const deburrSec = deburrCutSec + deburrIdleSec;
 
-  const crossSec = crossFeaturesSec(profile.crossFeatureList, m, {
+  const cross = crossFeaturesSplit(profile.crossFeatureList, m, {
     ...DEFAULT_CROSS_CONFIG,
     maxRpm: cfg.maxRpm,
     maxDrillDiaMm: cfg.maxDrillDiaMm,
     rapidMmPerMin: rapid,
   });
+  const crossSec = cross.cuttingSec + cross.idleSec;
 
   // Tapping. A thread is the one operation with no geometric signature — the
   // solid holds only the tap drill — so these arrive as callouts, measured or
   // proposed, never inferred from a face.
-  const tapSec = tapThreadsSec(profile.threads, m);
-
-  const cuttingSec =
-    facingSec + roughSec + finishSec + spotSec + drillSec + boreSec + grooveSec + threadSec
-    + partingSec + crossSec + tapSec + deburrSec;
+  const tap = tapThreadsSplit(profile.threads, m);
+  const tapSec = tap.cuttingSec + tap.idleSec;
 
   const times = { face: facingSec, rough: roughSec, finish: finishSec, spot: spotSec, drill: drillSec,
     bore: boreSec, groove: grooveSec, thread: threadSec, partoff: partingSec, cross: crossSec,
     tap: tapSec, deburr: deburrSec };
-  const toolAssignments = TURNING_SEQUENCE.filter(op => times[op] > 0).map(toolFor);
+  // The cutting half and the idle half of each of those, in the same keys.
+  const cut: Record<EstimatedTurningOp, number> = {
+    face: facingCutSec, rough: roughCutSec, finish: finishCutSec, spot: spotCutSec,
+    drill: drillCutSec, bore: boreCutSec, groove: grooveCutSec, thread: threadCutSec,
+    partoff: partingCutSec, cross: cross.cuttingSec, tap: tap.cuttingSec, deburr: deburrCutSec,
+  };
+  const idle: Record<EstimatedTurningOp, number> = {
+    face: facingIdleSec, rough: roughIdleSec, finish: finishIdleSec, spot: spotIdleSec,
+    drill: drillIdleSec, bore: boreIdleSec, groove: grooveIdleSec, thread: threadIdleSec,
+    partoff: partingIdleSec, cross: cross.idleSec, tap: tap.idleSec, deburr: deburrIdleSec,
+  };
+
+  const liveOps = TURNING_SEQUENCE.filter(op => times[op] > 0);
+  const toolAssignments = liveOps.map(toolFor);
   const { distinctTools: toolCount, selections: toolChangeCount } = countToolSelections(toolAssignments);
-  const rapidSec = cuttingSec * 0.05;
   // Settings are PERSISTED. A blob saved before a field existed — or edited to
   // an empty string in the Settings form — comes back undefined, and the failure
   // mode here is not a slightly wrong number: NaN propagates silently out of
@@ -606,8 +695,34 @@ export function estimateTurningTimes(
   const toolChangeSec = Number.isFinite(cfg.toolChangeSec) && cfg.toolChangeSec > 0
     ? cfg.toolChangeSec
     : DEFAULT_TURNING_CONFIG.toolChangeSec;
-  const airSec = toolChangeCount * toolChangeSec + rapidSec;
+
+  // THE TURRET INDEX BELONGS TO THE OPERATION THAT CAUSES IT.
+  //
+  // It used to be counted globally and shown as one "Tool selections" row, so a
+  // reader could see that eleven changes had been charged but not which
+  // operation waited for one — and two operations sharing a tool looked exactly
+  // as expensive as two that did not. The count is unchanged (the first
+  // operation pays for its tool arriving; a run of operations on one tool pays
+  // once), it is simply attributed.
+  const opTimes: TurningOpTime[] = liveOps.map((op, i) => ({
+    op,
+    cuttingSec: cut[op],
+    idleSec: idle[op]
+      // `identity`, the same key countToolSelections counts by — so the per-op
+      // indexes still sum to exactly toolChangeCount × toolChangeSec.
+      + (i === 0 || toolAssignments[i].identity !== toolAssignments[i - 1].identity ? toolChangeSec : 0),
+  }));
+
+  // THE TOTALS ARE NOW THE SUM OF THE ROWS, which is the property that makes the
+  // breakdown auditable: every second in the cycle sits on some operation's
+  // line. What is deliberately GONE is `rapidSec = cuttingSec * 0.05` — a flat
+  // allowance that was never measured travel, added on top of approaches and
+  // retracts that ARE now counted move by move. Keeping both would charge the
+  // same air twice, and a provisional lump is the wrong one to keep.
+  const cuttingSec = opTimes.reduce((a, o) => a + o.cuttingSec, 0);
+  const idleSec = opTimes.reduce((a, o) => a + o.idleSec, 0);
 
   return { spotSec, deburrSec, drillDiaMm, facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec,
-    airSec, cuttingSec, toolCount, toolChangeCount, rapidSec, toolAssignments, operationCount: toolAssignments.length };
+    airSec: idleSec, idleSec, cuttingSec, opTimes, toolCount, toolChangeCount, rapidSec: 0,
+    toolAssignments, operationCount: toolAssignments.length };
 }

@@ -152,6 +152,18 @@ export interface PlanOperation {
   tool: string;
   /** Estimated time for this op (s), after the efficiency factor. */
   seconds: number;
+  /**
+   * The cutting half of `seconds` — the tool actually removing metal.
+   *
+   * A cycle sheet has two columns per operation and totals them separately,
+   * because they are different quantities: cutting time is speed, feed and
+   * distance, while idle time is the turret, the rapid rate and the spindle
+   * settling. One combined number cannot be compared against a shop's own sheet
+   * and hides an operation that is fast on metal and slow on air.
+   */
+  cuttingSeconds?: number;
+  /** The rest of `seconds`: tool change, approach, retract, clearance, pecks. */
+  idleSeconds?: number;
   /** Machine cost of this op. */
   cost: number;
   /** What drives the time — the number this op was computed from. */
