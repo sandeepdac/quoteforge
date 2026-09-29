@@ -102,7 +102,7 @@ describe('a hole is spotted before it is drilled', () => {
   it('the spot is counted in cutting time, not lost', () => {
     const [, base, mat] = cases[0];
     const t = estimateTurningTimes(base, materialPropsFor(mat), 30, cfg);
-    const named = t.spotSec + t.facingSec + t.roughSec + t.finishSec + t.drillSec
+    const named = t.spotSec + t.deburrSec + t.facingSec + t.roughSec + t.finishSec + t.drillSec
       + t.boreSec + t.grooveSec + t.threadSec + t.partingSec + t.crossSec + t.tapSec;
     expect(named).toBeCloseTo(t.cuttingSec, 6);
   });

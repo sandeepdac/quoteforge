@@ -56,6 +56,7 @@ const TURNING_COPY: Record<TurningOp, string> = {
   drill: 'Drills the pilot hole on centre, deep enough for the boring bar to open out.',
   bore: 'Opens the drilled pilot out to the finished bore diameter.',
   finish: 'Final light pass along the OD — brings it to size and surface finish.',
+  deburr: 'Breaks the edges a drill or a threading tool leaves behind — the drawing asks for burr free.',
   partoff: 'Parts the finished component off the bar at length.',
 };
 
@@ -66,6 +67,7 @@ const TURNING_LABEL: Record<TurningOp, string> = {
   drill: 'Drill pilot',
   bore: 'Bore',
   finish: 'Finish turn',
+  deburr: 'Deburr',
   partoff: 'Part-off',
 };
 

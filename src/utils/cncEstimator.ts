@@ -225,6 +225,7 @@ export function calculateMachiningCosts(
     { key: 'facing', name: 'Facing', driver: `${input.profile.faceCount} face${input.profile.faceCount === 1 ? '' : 's'} — ${secStr(t.facingSec)}`, value: opCost(t.facingSec), color: COLORS.facing },
     { key: 'rough', name: 'Rough turning', driver: `${r1(removedVol)} cm³ removed @ ${Math.round(m.cuttingSpeedRough * m.feedRough * m.depthOfCutRough)} cm³/min — ${secStr(t.roughSec)}`, value: opCost(t.roughSec), color: COLORS.rough },
     { key: 'finish', name: 'Finish turning', driver: `${r1(input.profile.lengthMm)} mm @ ${m.cuttingSpeedFinish} m/min — ${secStr(t.finishSec)}`, value: opCost(t.finishSec), color: COLORS.finish },
+    { key: 'deburr', name: 'Deburring', driver: `breaking the edges the cutters leave — ${secStr(t.deburrSec)}`, value: opCost(t.deburrSec), color: COLORS.finish },
     { key: 'spot', name: 'Spot drilling', driver: `centre the ⌀${r1(t.drillDiaMm)} drill before it wanders — ${secStr(t.spotSec)}`, value: opCost(t.spotSec), color: COLORS.drill },
     { key: 'drill', name: 'Drilling', driver: `⌀${r1(t.drillDiaMm)} drill × ${r1(input.profile.boreDepthMm)} mm deep — ${secStr(t.drillSec)}`, value: opCost(t.drillSec), color: COLORS.drill },
     { key: 'bore', name: 'Boring', driver: `finish bore ⌀${input.profile.boreDiaMm} — ${secStr(t.boreSec)}`, value: opCost(t.boreSec), color: COLORS.bore },
@@ -260,6 +261,7 @@ export function calculateMachiningCosts(
   const opSrc: Array<{ op: EstimatedTurningOp; name: string; sec: number; tool: string; driver: string; color: string }> = [
     { op: 'face', name: 'Facing', sec: t.facingSec, tool: toolFor('face', 'OD turning tool'), driver: `${p.faceCount} face${p.faceCount === 1 ? '' : 's'}`, color: COLORS.facing },
     { op: 'rough', name: 'Rough turning', sec: t.roughSec, tool: toolFor('rough', 'OD turning tool'), driver: `${r1(removedVol)} cm³ removed`, color: COLORS.rough },
+    { op: 'deburr', name: 'Deburring', sec: t.deburrSec, tool: toolFor('deburr', 'Chamfer / deburr tool'), driver: 'break the edges — drawing says burr free', color: COLORS.finish },
     { op: 'spot', name: 'Spot drilling', sec: t.spotSec, tool: toolFor('spot', 'Spot / centre drill'), driver: `centre the ⌀${r1(t.drillDiaMm)} drill`, color: COLORS.drill },
     { op: 'drill', name: 'Drilling', sec: t.drillSec, tool: toolFor('drill', 'Carbide drill'), driver: `⌀${r1(t.drillDiaMm)} × ${r1(p.boreDepthMm)} mm deep`, color: COLORS.drill },
     { op: 'bore', name: 'Boring', sec: t.boreSec, tool: toolFor('bore', 'Boring bar'), driver: `⌀${r1(t.drillDiaMm)} → ⌀${r1(p.boreDiaMm)}, ${r1((p.boreDiaMm - t.drillDiaMm) / 2)} mm off the wall`, color: COLORS.bore },

@@ -354,6 +354,25 @@ async function analyzeSolid(
         // appears in it two or three times; these are the operations, and they
         // are what the cycle-time model costs.
         crossFeatureList: p.crossFeatureList,
+        // EVERY OTHER ON-AXIS HOLE. The service reports them all; the profile
+        // used to carry only `boreDiaMm`, so the VOC housing's ⌀10 through-hole
+        // — a whole drilling operation on the shop's own cycle sheet — was
+        // invisible to the time model. Paired with its depth, and the main bore
+        // excluded so it is not timed twice.
+        additionalBores: (() => {
+          const milled = svc?.milled as { holeDiametersMm?: number[]; holeDepthsMm?: number[] } | undefined;
+          const dias = milled?.holeDiametersMm ?? [];
+          const depths = milled?.holeDepthsMm ?? [];
+          const out: Array<{ diameterMm: number; depthMm: number }> = [];
+          let mainSeen = false;
+          dias.forEach((d, i) => {
+            const near = Math.abs(d - p.boreDiaMm) < 0.05;
+            if (near && !mainSeen) { mainSeen = true; return; }   // that one is the bore
+            const depth = depths[i];
+            if (d > 0 && typeof depth === 'number' && depth > 0) out.push({ diameterMm: d, depthMm: depth });
+          });
+          return out.length ? out : undefined;
+        })(),
       };
       profileSource = 'brep-service';
     } else {

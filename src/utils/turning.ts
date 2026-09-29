@@ -83,6 +83,19 @@ export interface TurningProfile {
    * strokes. Absent on older payloads; the facing allowance then stands in.
    */
   barDiameterMm?: number;
+  /**
+   * On-axis holes BEYOND the main bore, as the geometry found them.
+   *
+   * The profile carried exactly one bore, so a part with two coaxial holes was
+   * timed for one. Lance's VOC housing is the case: ⌀11.8 x 14 at the mouth AND
+   * ⌀10 through 70 mm, which his sheet drills in two operations — a carbide
+   * pilot to 40 mm and an HSS drill the rest of the way — for 72 s the model
+   * could not see, because the second hole was not in the profile at all.
+   *
+   * The geometry service has always reported both (holeDiametersMm [11.8, 10]);
+   * only the turned profile threw the rest away.
+   */
+  additionalBores?: Array<{ diameterMm: number; depthMm: number }>;
 }
 
 export interface TurningConfig {
@@ -109,6 +122,8 @@ export interface TurningConfig {
 export interface TurningTimes {
   /** Spot/centre drilling — the operation before the drill. */
   spotSec: number;
+  /** Breaking the edges a cutter leaves — see deburrSec. */
+  deburrSec: number;
   /**
    * The drill actually used (mm) — a stocked size UNDER the finished bore, not
    * the bore's own diameter. Carried so the plan can name the tool that runs,
@@ -149,6 +164,26 @@ export const DEFAULT_TURNED_RA_UM = 3.2;
  * overshoot means feeding at about 1/sqrt(1.35) = 0.86 of what the formula says.
  */
 export const ACHIEVABLE_RA_DERATE = 0.86;
+
+/**
+ * DEBURRING — an operation the model did not have, and the shop times.
+ *
+ * Both of Turncircuit's cycle sheets carry it explicitly: "deburr bore chamfer"
+ * and "deburr thread" on the housing, "deburr 3.3mm dia slots thro" on the
+ * hollow arm — where breaking the edges costs EXACTLY what cutting the slots
+ * cost. Every drawing in the set says CLEAN AND BURR FREE. A drill that breaks
+ * through leaves a burr on the far side; a thread leaves one at its mouth.
+ *
+ * WHAT DECIDES ITS TIME. On a lathe the work is spinning, so an edge chamfer is
+ * a short feed across the chamfer face, not a traverse around the circumference.
+ * The cut is therefore tiny and the operation is dominated by GETTING THERE —
+ * which is the same rule as every other operation here: something that removes
+ * almost nothing still costs its approach.
+ *
+ * The chamfer width is a shop figure. Nothing here is taken from the sheets;
+ * they are what revealed the operation was missing, not what sets its length.
+ */
+export const DEBURR_CHAMFER_MM = 0.3;
 
 /** At or below this Ra a single pass will not hold it: a spring pass follows. */
 export const SPRING_PASS_RA_UM = 0.8;
@@ -510,6 +545,37 @@ export function estimateTurningTimes(
   // Off-axis work: cross holes, flats, keyways. This used to be a boolean the
   // time model never read, so a cross-drilled part cost exactly what a plain one
   // did. See crossFeaturesSec for what each of these actually involves.
+  // Every other on-axis hole: spotted and drilled like the main one. They are
+  // drilled, not bored — only a dimensioned bore gets a boring bar.
+  for (const h of profile.additionalBores ?? []) {
+    const d = standardDrillMm(Math.min(h.diameterMm, cfg.maxDrillDiaMm));
+    if (d <= 0 || h.depthMm <= 0) continue;
+    spotSec += spotDrillSec(d, m, { ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm, rapidMmPerMin: rapid });
+    drillSec += drillHoleSec({ diameterMm: d, depthMm: h.depthMm }, m, {
+      ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm, rapidMmPerMin: rapid,
+    });
+  }
+
+  // --- Deburring -----------------------------------------------------------
+  // One edge per hole mouth, a second where the hole breaks through, and one per
+  // thread. The cut is a chamfer's width at finishing feed; the cost is the
+  // approach, because on a spinning part that is what the operation really is.
+  const deburrEdges: number[] = [];
+  if (profile.boreDiaMm > 0 && profile.boreDepthMm > 0) deburrEdges.push(profile.boreDiaMm);
+  for (const h of profile.additionalBores ?? []) {
+    deburrEdges.push(h.diameterMm);
+    // Through the part: the far side gets a burr too.
+    if (h.depthMm >= profile.lengthMm * 0.95) deburrEdges.push(h.diameterMm);
+  }
+  for (const th of profile.threads ?? []) deburrEdges.push(th.tapDrillMm);
+  let deburrSec = 0;
+  for (const dia of deburrEdges) {
+    const edgeRpm = rpm(m.cuttingSpeedFinish, Math.max(0.5, dia), cfg.maxRpm);
+    const feedMmPerMin = Math.max(0.001, m.feedFinish * edgeRpm);
+    // The chamfer face, taken at 45 degrees.
+    deburrSec += min((DEBURR_CHAMFER_MM * Math.SQRT2) / feedMmPerMin) + approach(feedMmPerMin);
+  }
+
   const crossSec = crossFeaturesSec(profile.crossFeatureList, m, {
     ...DEFAULT_CROSS_CONFIG,
     maxRpm: cfg.maxRpm,
@@ -524,10 +590,11 @@ export function estimateTurningTimes(
 
   const cuttingSec =
     facingSec + roughSec + finishSec + spotSec + drillSec + boreSec + grooveSec + threadSec
-    + partingSec + crossSec + tapSec;
+    + partingSec + crossSec + tapSec + deburrSec;
 
   const times = { face: facingSec, rough: roughSec, finish: finishSec, spot: spotSec, drill: drillSec,
-    bore: boreSec, groove: grooveSec, thread: threadSec, partoff: partingSec, cross: crossSec, tap: tapSec };
+    bore: boreSec, groove: grooveSec, thread: threadSec, partoff: partingSec, cross: crossSec,
+    tap: tapSec, deburr: deburrSec };
   const toolAssignments = TURNING_SEQUENCE.filter(op => times[op] > 0).map(toolFor);
   const { distinctTools: toolCount, selections: toolChangeCount } = countToolSelections(toolAssignments);
   const rapidSec = cuttingSec * 0.05;
@@ -541,6 +608,6 @@ export function estimateTurningTimes(
     : DEFAULT_TURNING_CONFIG.toolChangeSec;
   const airSec = toolChangeCount * toolChangeSec + rapidSec;
 
-  return { spotSec, drillDiaMm, facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec,
+  return { spotSec, deburrSec, drillDiaMm, facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec,
     airSec, cuttingSec, toolCount, toolChangeCount, rapidSec, toolAssignments, operationCount: toolAssignments.length };
 }

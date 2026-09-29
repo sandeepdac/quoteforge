@@ -31,8 +31,8 @@ describe('estimateTurningTimes', () => {
     const t = estimateTurningTimes(profile, m, 25);
     expect(t.cuttingSec).toBeGreaterThan(0);
     // facing, rough, finish, drill, bore, groove, thread, part-off = 8
-    // 9, not 8: spotting is now its own operation on its own tool.
-    expect(t.toolCount).toBe(9);
+    // 10: spotting and deburring are each their own operation on their own tool.
+    expect(t.toolCount).toBe(10);
     expect(t.airSec).toBeGreaterThan(0);
   });
 

@@ -264,7 +264,7 @@ export interface MachiningCosts {
  * is the primary calibration control.
  */
 /** The turning operations the reference toolpath expands, in machining order. */
-export type TurningOp = 'face' | 'rough' | 'spot' | 'drill' | 'bore' | 'finish' | 'partoff';
+export type TurningOp = 'face' | 'rough' | 'spot' | 'drill' | 'bore' | 'finish' | 'deburr' | 'partoff';
 
 /**
  * One entry in the shop's turning tool library — maps an operation to the real

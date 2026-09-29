@@ -27,6 +27,7 @@ export const DEFAULT_TURNING_TOOLS: ShopTool[] = [
   { op: 'drill', station: 'T0202', description: 'Carbide drill (pilot / through)' },
   { op: 'bore', station: 'T0505', description: 'Boring bar — CCGT 060204 (opens bore to size)', noseRadiusMm: 0.4 },
   { op: 'finish', station: 'T0303', description: 'OD finish — SDJCR + DCGT 070204-AL', noseRadiusMm: 0.4 },
+  { op: 'deburr', station: 'T0707', description: 'Chamfer / deburr tool (breaks the edges a cutter leaves)' },
   { op: 'partoff', station: 'T0404', description: 'Part-off blade — 3 mm insert' },
 ];
 
