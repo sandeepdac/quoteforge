@@ -71,6 +71,20 @@ export default function MachiningPlanPanel({ plan, setupTimeMin, currency = '$' 
 
               {isOpen && (
                 <div className="pb-2">
+                  {/* CUTTING AND IDLE, the two columns a cycle sheet keeps apart.
+                      An operation's time is speed-feed-distance plus the turret
+                      index, the approach and the retracts that got the tool
+                      there — and on a short cut the second half is the larger.
+                      Showing one blended number made the short operations look
+                      impossible and hid where the time actually goes. */}
+                  <div className="flex items-center gap-2 pl-10 pr-4 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    <span className="w-2 shrink-0" />
+                    <span className="flex-1 min-w-0" />
+                    <span className="tabular-nums w-16 text-right shrink-0">Cutting</span>
+                    <span className="tabular-nums w-16 text-right shrink-0">Idle</span>
+                    <span className="tabular-nums w-20 text-right shrink-0">Total</span>
+                    <span className="tabular-nums w-20 text-right shrink-0">Cost</span>
+                  </div>
                   {s.operations.map((op, i) => (
                     <div
                       key={i}
@@ -83,7 +97,13 @@ export default function MachiningPlanPanel({ plan, setupTimeMin, currency = '$' 
                           {op.tool} · {op.driver}
                         </span>
                       </span>
-                      <span className="text-[11px] text-muted-foreground tabular-nums w-20 text-right shrink-0">{secs(op.seconds)}</span>
+                      <span className="text-[11px] text-muted-foreground tabular-nums w-16 text-right shrink-0">
+                        {op.cuttingSeconds === undefined ? '—' : secs(op.cuttingSeconds)}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground tabular-nums w-16 text-right shrink-0">
+                        {op.idleSeconds === undefined ? '—' : secs(op.idleSeconds)}
+                      </span>
+                      <span className="text-[11px] text-foreground tabular-nums w-20 text-right shrink-0">{secs(op.seconds)}</span>
                       <span className="text-[11px] text-muted-foreground tabular-nums w-20 text-right shrink-0">{money(op.cost)}</span>
                     </div>
                   ))}

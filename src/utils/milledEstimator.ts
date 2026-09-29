@@ -662,13 +662,13 @@ export function calculateMilledCosts(
       ...operation,
       cost: operation.cost * rateFactor,
     }));
-    const cuttingCost = setup.operations.reduce((sum, operation) => sum + operation.cost, 0);
-    // Divided by eff to match how the planner charged it — the planner applies
-    // eff to (changeSec + rapidSec) together, and recomputing only one of them
+    // The non-cutting seconds are INSIDE the operation rows now — each one
+    // carries its approach and, on a tool's first use, its change — so the
+    // setup is just the sum of its rows. There is no lump left to re-derive
+    // here, which also closes the old trap: the planner divided
+    // (changeSec + rapidSec) by eff together, and recomputing only one of them
     // raw made plan.totalCost drift from plan.totalSeconds.
-    const rapidSec = (setup.operations.length * approachSecPerOp) / eff;
-    const nonCutCost = (setup.toolChanges * toolChangeSec / eff + rapidSec) * (ratePerMin / 60);
-    setup.cost = cuttingCost + nonCutCost;
+    setup.cost = setup.operations.reduce((sum, operation) => sum + operation.cost, 0);
   }
   plan.totalCost = plan.setups.reduce((sum, setup) => sum + setup.cost, 0);
   // Use the same tools and non-cutting events in the price and traveller.

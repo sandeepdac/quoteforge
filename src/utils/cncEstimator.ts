@@ -151,6 +151,34 @@ export function calculateMachiningCosts(
   const opCost = (sec: number) => cutSec(sec) * ratePerSec;
   const airCost = (sec: number) => (sec / eff) * ratePerSec;
   const cycleTimeSec = (t.cuttingSec * feedMult) / eff + t.airSec / eff + cnc.barLoadSec;
+
+  // EVERY OPERATION'S TWO COLUMNS, the way a cycle sheet writes them.
+  //
+  // The breakdown used to charge each operation one blended figure and then add
+  // two lumps at the bottom: every turret index in a single "Tool selections"
+  // row, and a flat 5%-of-cutting "Rapid movement allowance" that was labelled
+  // provisional because it was never measured travel. A reader could see that
+  // eleven tool changes had been paid for but not which operation waited for
+  // one, and the approach time was inside the cutting number, so "Drilling
+  // 1.7 s" was a true figure that no machinist could recognise.
+  //
+  // Now each row owns its own idle — its index, its approach, its retracts —
+  // and the feedrate override applies to the cutting half only, which is what
+  // it always meant: turning a feed down does not slow a rapid.
+  const opSplit = new Map(t.opTimes.map(o => [o.op, o]));
+  const splitFor = (op: EstimatedTurningOp) =>
+    opSplit.get(op) ?? { op, cuttingSec: 0, idleSec: 0 };
+  /** Actual seconds for one operation: cutting scaled by the override, idle not. */
+  const opSecs = (op: EstimatedTurningOp) => {
+    const s = splitFor(op);
+    return (s.cuttingSec * feedMult + s.idleSec) / eff;
+  };
+  const opTotalCost = (op: EstimatedTurningOp) => opSecs(op) * ratePerSec;
+  /** "3.1s cutting + 12.4s idle" — the phrase the cycle sheets are read in. */
+  const splitStr = (op: EstimatedTurningOp) => {
+    const s = splitFor(op);
+    return `${r1((s.cuttingSec * feedMult) / eff)}s cutting + ${r1(s.idleSec / eff)}s idle`;
+  };
   const machineCost = (cycleTimeSec / 60) * machineRatePerMin;
 
   // --- Setup (amortised over the batch) ------------------------------------
@@ -222,23 +250,25 @@ export function calculateMachiningCosts(
   const secStr = (sec: number) => `${r1(cutSec(sec))} s`;
   const lineItems: CostLineItem[] = [
     { key: 'material', name: 'Bar stock', driver: `⌀${barDiameterMm} × ${r1(barLengthMm)} mm ${m.label} — ${stockWeightKg.toFixed(3)} kg @ $${input.materialPricePerKg.toFixed(2)}/kg`, value: materialCost, color: COLORS.material },
-    { key: 'facing', name: 'Facing', driver: `${input.profile.faceCount} face${input.profile.faceCount === 1 ? '' : 's'} — ${secStr(t.facingSec)}`, value: opCost(t.facingSec), color: COLORS.facing },
-    { key: 'rough', name: 'Rough turning', driver: `${r1(removedVol)} cm³ removed @ ${Math.round(m.cuttingSpeedRough * m.feedRough * m.depthOfCutRough)} cm³/min — ${secStr(t.roughSec)}`, value: opCost(t.roughSec), color: COLORS.rough },
-    { key: 'finish', name: 'Finish turning', driver: `${r1(input.profile.lengthMm)} mm @ ${m.cuttingSpeedFinish} m/min — ${secStr(t.finishSec)}`, value: opCost(t.finishSec), color: COLORS.finish },
-    { key: 'deburr', name: 'Deburring', driver: `breaking the edges the cutters leave — ${secStr(t.deburrSec)}`, value: opCost(t.deburrSec), color: COLORS.finish },
-    { key: 'spot', name: 'Spot drilling', driver: `centre the ⌀${r1(t.drillDiaMm)} drill before it wanders — ${secStr(t.spotSec)}`, value: opCost(t.spotSec), color: COLORS.drill },
-    { key: 'drill', name: 'Drilling', driver: `⌀${r1(t.drillDiaMm)} drill × ${r1(input.profile.boreDepthMm)} mm deep — ${secStr(t.drillSec)}`, value: opCost(t.drillSec), color: COLORS.drill },
-    { key: 'bore', name: 'Boring', driver: `finish bore ⌀${input.profile.boreDiaMm} — ${secStr(t.boreSec)}`, value: opCost(t.boreSec), color: COLORS.bore },
-    { key: 'groove', name: 'Grooving', driver: `${input.profile.grooveCount} groove${input.profile.grooveCount === 1 ? '' : 's'} — ${secStr(t.grooveSec)}`, value: opCost(t.grooveSec), color: COLORS.groove },
-    { key: 'thread', name: 'Threading', driver: `${input.profile.threadCount} thread${input.profile.threadCount === 1 ? '' : 's'} — ${secStr(t.threadSec)}`, value: opCost(t.threadSec), color: COLORS.thread },
-    { key: 'parting', name: 'Part-off', driver: `${secStr(t.partingSec)}`, value: opCost(t.partingSec), color: COLORS.parting },
+    { key: 'facing', name: 'Facing', driver: `${input.profile.faceCount} face${input.profile.faceCount === 1 ? '' : 's'} — ${splitStr('face')}`, seconds: opSecs('face'), value: opTotalCost('face'), color: COLORS.facing },
+    { key: 'rough', name: 'Rough turning', driver: `${r1(removedVol)} cm³ removed @ ${Math.round(m.cuttingSpeedRough * m.feedRough * m.depthOfCutRough)} cm³/min — ${splitStr('rough')}`, seconds: opSecs('rough'), value: opTotalCost('rough'), color: COLORS.rough },
+    { key: 'finish', name: 'Finish turning', driver: `${r1(input.profile.lengthMm)} mm @ ${m.cuttingSpeedFinish} m/min — ${splitStr('finish')}`, seconds: opSecs('finish'), value: opTotalCost('finish'), color: COLORS.finish },
+    { key: 'deburr', name: 'Deburring', driver: `breaking the edges the cutters leave — ${splitStr('deburr')}`, seconds: opSecs('deburr'), value: opTotalCost('deburr'), color: COLORS.finish },
+    { key: 'spot', name: 'Spot drilling', driver: `centre the ⌀${r1(t.drillDiaMm)} drill before it wanders — ${splitStr('spot')}`, seconds: opSecs('spot'), value: opTotalCost('spot'), color: COLORS.drill },
+    { key: 'drill', name: 'Drilling', driver: `⌀${r1(t.drillDiaMm)} drill × ${r1(input.profile.boreDepthMm)} mm deep — ${splitStr('drill')}`, seconds: opSecs('drill'), value: opTotalCost('drill'), color: COLORS.drill },
+    { key: 'bore', name: 'Boring', driver: `finish bore ⌀${input.profile.boreDiaMm} — ${splitStr('bore')}`, seconds: opSecs('bore'), value: opTotalCost('bore'), color: COLORS.bore },
+    { key: 'groove', name: 'Grooving', driver: `${input.profile.grooveCount} groove${input.profile.grooveCount === 1 ? '' : 's'} — ${splitStr('groove')}`, seconds: opSecs('groove'), value: opTotalCost('groove'), color: COLORS.groove },
+    { key: 'thread', name: 'Threading', driver: `${input.profile.threadCount} thread${input.profile.threadCount === 1 ? '' : 's'} — ${splitStr('thread')}`, seconds: opSecs('thread'), value: opTotalCost('thread'), color: COLORS.thread },
+    { key: 'parting', name: 'Part-off', driver: `${splitStr('partoff')}`, seconds: opSecs('partoff'), value: opTotalCost('partoff'), color: COLORS.parting },
     // Off-axis work is inside `machineCost`, so without this row the breakdown
     // stops adding up to the subtotal it is supposed to explain.
-    { key: 'tap', name: 'Tapping', driver: `${(input.profile.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ') || 'none'} — ${secStr(t.tapSec)}`, value: opCost(t.tapSec), color: COLORS.thread },
-    { key: 'cross', name: 'Off-axis features (driven tool)', driver: `${input.profile.crossFeatureList?.length ?? 0} feature${(input.profile.crossFeatureList?.length ?? 0) === 1 ? '' : 's'} off the turning axis — ${secStr(t.crossSec)}`, value: opCost(t.crossSec), color: COLORS.drill },
-    { key: 'noncut', name: 'Tool selections', driver: `${t.toolCount} distinct tools; ${t.toolChangeCount} selections × ${r1(toolChangeSec)}s ÷ ${r1(eff * 100)}% efficiency (includes initial selection; adjacent shared tools counted once)`, seconds: t.toolChangeCount * toolChangeSec / eff, value: airCost(t.toolChangeCount * toolChangeSec), color: COLORS.noncut },
-    { key: 'rapids', name: 'Rapid movement allowance', driver: `5% of theoretical cutting time ÷ ${r1(eff * 100)}% efficiency — provisional, not measured travel`, seconds: t.rapidSec / eff, value: airCost(t.rapidSec), color: COLORS.noncut },
-    { key: 'loading', name: 'Load / unload / bar feed', driver: `${cnc.barLoadSec}s per part — shop allowance, separate from tool selection`, seconds: cnc.barLoadSec, value: cnc.barLoadSec * ratePerSec, color: COLORS.noncut },
+    { key: 'tap', name: 'Tapping', driver: `${(input.profile.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ') || 'none'} — ${splitStr('tap')}`, seconds: opSecs('tap'), value: opTotalCost('tap'), color: COLORS.thread },
+    { key: 'cross', name: 'Off-axis features (driven tool)', driver: `${input.profile.crossFeatureList?.length ?? 0} feature${(input.profile.crossFeatureList?.length ?? 0) === 1 ? '' : 's'} off the turning axis — ${splitStr('cross')}`, seconds: opSecs('cross'), value: opTotalCost('cross'), color: COLORS.drill },
+    // No "Tool selections" row and no "Rapid movement allowance" row: both are
+    // now inside the operations above, on the lines that cause them. This one
+    // stays because it belongs to no operation — it is the bar feed and the
+    // door, which is exactly how Turncircuit's sheets open too.
+    { key: 'loading', name: 'Load / unload / bar feed', driver: `${cnc.barLoadSec}s per part — ${t.toolChangeCount} turret ${t.toolChangeCount === 1 ? 'index' : 'indexes'} × ${r1(toolChangeSec)}s are charged on the operations that call for them, not here`, seconds: cnc.barLoadSec, value: cnc.barLoadSec * ratePerSec, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min preparation, excluding ${derivedProgrammingMin} min CAM billed separately. Full first-order breakdown: ${derivedSetup.explanation} — batch ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${t.operationCount} operations — provisional allowance, not a tool-life calculation`, value: toolingCost, color: COLORS.tooling },
@@ -281,18 +311,34 @@ export function calculateMachiningCosts(
     // disagreed and the drill looked un-costed. It never was: the seconds are in
     // the cycle either way — only the display dropped them.
     .filter((o) => o.sec > 0)
-    .map((o, i, all) => ({
-      op: o.op, name: o.name, tool: o.tool, seconds: cutSec(o.sec), cost: opCost(o.sec), color: o.color,
-      // Say what the row does NOT include. "Drilling 1.7 s" is true — brass at
-      // 4000 rpm really does go through 14 mm in under a second — but read on
-      // its own it looks impossible, because a machinist counts getting the
-      // drill to the cut as part of drilling. The tool change is a separate
-      // line, so the row says so rather than leaving the reader to discover it.
-      driver: `${o.driver} · ${r1(cutSec(o.sec))}s at the cut`
-        + (i === 0 || all[i - 1].tool !== o.tool ? ` + ${r1(toolChangeSec / eff)}s to bring this tool round` : ' · same tool as above, no change'),
-    }));
-  const setup1Sec = planOps.reduce((a, o) => a + o.seconds, 0) + t.airSec / eff + cnc.barLoadSec;
-  const setup1Cost = planOps.reduce((a, o) => a + o.cost, 0) + airCost(t.airSec) + cnc.barLoadSec * ratePerSec;
+    .map((o, i, all) => {
+      const s = splitFor(o.op);
+      const changed = i === 0 || all[i - 1].tool !== o.tool;
+      return {
+        op: o.op,
+        name: o.name,
+        tool: o.tool,
+        // The row's OWN total now — cutting, approach, retract and the index
+        // that brought this tool round. It used to be cutting-plus-approach
+        // with the index sitting in a separate row at the bottom, which is why
+        // "Drilling 1.7 s" looked impossible: true for the metal, but a
+        // machinist counts getting the drill there as part of drilling.
+        seconds: opSecs(o.op),
+        cuttingSeconds: (s.cuttingSec * feedMult) / eff,
+        idleSeconds: s.idleSec / eff,
+        cost: opTotalCost(o.op),
+        color: o.color,
+        driver: `${o.driver} · ${splitStr(o.op)}`
+          + (changed
+            ? ` (idle includes ${r1(toolChangeSec / eff)}s to bring this tool round)`
+            : ' · same tool as above, no index'),
+      };
+    });
+  // The plan now accounts for the whole cycle on its own rows: no air lump to
+  // add back, because there is no longer one. Bar load is still outside the
+  // operations because it belongs to the job, not to a cut.
+  const setup1Sec = planOps.reduce((a, o) => a + o.seconds, 0) + cnc.barLoadSec;
+  const setup1Cost = planOps.reduce((a, o) => a + o.cost, 0) + cnc.barLoadSec * ratePerSec;
   const planSetups = [
     // NAMED "Op", not "Setup". These groups are FIXTURINGS and the time against
     // them is CUTTING time; "Setup labour" further down is the time to prepare

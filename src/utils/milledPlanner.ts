@@ -379,19 +379,33 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   for (let s = 1; s <= setups; s++) {
     const mine = ops.filter((o) => o.setup === s);
     const distinctTools = new Set(mine.map((o) => o.tool)).size;
-    const changeSec = distinctTools * inp.toolChangeSec;
-    const operations: PlanOperation[] = mine.map((o) => ({
-      name: o.name,
-      tool: o.tool,
-      seconds: o.sec / inp.eff,
-      cost: inp.opCost(o.sec),
-      driver: o.driver,
-      color: o.color,
-    }));
-    // One approach per operation, not a percentage of the cutting.
-    const rapidSec = operations.length * (inp.approachSecPerOp ?? 0);
-    const seconds = operations.reduce((a, o) => a + o.seconds, 0) + (changeSec + rapidSec) / inp.eff;
-    const cost = operations.reduce((a, o) => a + o.cost, 0) + inp.opCost(changeSec + rapidSec);
+    // EVERY OPERATION CARRIES ITS OWN IDLE, as on a cycle sheet and as the
+    // turning side now does. The ATC change and the approach used to be summed
+    // into one per-setup lump added after the rows, so the plan showed six
+    // operations and a total that none of them accounted for.
+    //
+    // The change is charged on a tool's FIRST appearance in the setup, which is
+    // the same count the lump used (distinct tools × the change), so this moves
+    // the seconds onto the rows without inventing or losing any.
+    const seen = new Set<string>();
+    const operations: PlanOperation[] = mine.map((o) => {
+      const firstUse = !seen.has(o.tool);
+      seen.add(o.tool);
+      const idleSec = (inp.approachSecPerOp ?? 0) + (firstUse ? inp.toolChangeSec : 0);
+      return {
+        name: o.name,
+        tool: o.tool,
+        seconds: (o.sec + idleSec) / inp.eff,
+        cuttingSeconds: o.sec / inp.eff,
+        idleSeconds: idleSec / inp.eff,
+        cost: inp.opCost(o.sec + idleSec),
+        driver: `${o.driver} · ${r1(o.sec / inp.eff)}s cutting + ${r1(idleSec / inp.eff)}s idle`
+          + (firstUse ? ' (idle includes the tool change)' : ' · tool already in the spindle'),
+        color: o.color,
+      };
+    });
+    const seconds = operations.reduce((a, o) => a + o.seconds, 0);
+    const cost = operations.reduce((a, o) => a + o.cost, 0);
     planSetups.push({
       index: s,
       // "Op", not "Setup": this group's time is CUTTING time, and the quote

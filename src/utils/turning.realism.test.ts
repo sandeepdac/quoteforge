@@ -99,12 +99,19 @@ describe('a hole is spotted before it is drilled', () => {
     expect(t.drillSec).toBe(0);
   });
 
-  it('the spot is counted in cutting time, not lost', () => {
+  it('the spot is counted in the cycle, not lost', () => {
     const [, base, mat] = cases[0];
     const t = estimateTurningTimes(base, materialPropsFor(mat), 30, cfg);
+    // The per-operation figures are TOTALS (cutting plus that operation's own
+    // approach and retracts) and exclude the turret index, which is charged
+    // separately per change. Together they must be the whole cycle.
     const named = t.spotSec + t.deburrSec + t.facingSec + t.roughSec + t.finishSec + t.drillSec
       + t.boreSec + t.grooveSec + t.threadSec + t.partingSec + t.crossSec + t.tapSec;
-    expect(named).toBeCloseTo(t.cuttingSec, 6);
+    expect(named + t.toolChangeCount * cfg.toolChangeSec).toBeCloseTo(t.cuttingSec + t.idleSec, 6);
+    // And the two columns are a partition of it: nothing counted twice, nothing
+    // dropped between them.
+    expect(t.opTimes.reduce((a, o) => a + o.cuttingSec, 0)).toBeCloseTo(t.cuttingSec, 6);
+    expect(t.opTimes.reduce((a, o) => a + o.idleSec, 0)).toBeCloseTo(t.idleSec, 6);
   });
 
   it('the spot drill is a DIFFERENT tool from the drill, so it costs a change', () => {

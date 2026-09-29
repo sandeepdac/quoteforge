@@ -78,10 +78,12 @@ describe('deburring is an operation, not an afterthought', () => {
     expect(three.deburrSec / one.deburrSec).toBeLessThan(4);
   });
 
-  it('it is counted in cutting time, and the named operations still sum', () => {
+  it('it is counted in the cycle, and the named operations still sum', () => {
     const t = estimateTurningTimes(housing, brass, 55, cfg);
     const named = t.spotSec + t.deburrSec + t.facingSec + t.roughSec + t.finishSec + t.drillSec
       + t.boreSec + t.grooveSec + t.threadSec + t.partingSec + t.crossSec + t.tapSec;
-    expect(named).toBeCloseTo(t.cuttingSec, 6);
+    // Each named figure is that operation's own total; the turret indexes are
+    // the remainder, charged once per actual change.
+    expect(named + t.toolChangeCount * cfg.toolChangeSec).toBeCloseTo(t.cuttingSec + t.idleSec, 6);
   });
 });
