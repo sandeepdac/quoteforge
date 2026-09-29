@@ -55,6 +55,46 @@ export interface MaterialProps {
 
 type Row = Omit<MaterialProps, 'family'>;
 
+/**
+ * AUDITED AGAINST PUBLISHED DATA — and the table was not the problem.
+ *
+ * The hypothesis was that this table sits at catalogue MAXIMUM on every axis
+ * (Vc, feed, depth of cut), that three optimistic choices multiply, and that
+ * this explains why the model reads about a quarter of Turncircuit's measured
+ * cycle times. It was checked, and it is wrong.
+ *
+ *   BRASS CZ121 (CuZn39Pb3). Ours 300/400. A general recommendation is 200
+ *   m/min and a typical turning range 200-300 — but the Copper Development
+ *   Association reports free-cutting brass turned above 3,000 SFM (915 m/min)
+ *   and tested to 4,000 SFM, against 12L14 steel peaking at 1,200 SFM. So 400
+ *   is nowhere near a ceiling; it is mid-range for the material.
+ *
+ *   STAINLESS 303. Ours 130/170. Quoted at 270-360 m/min "at stable
+ *   conditions", and at 90-220 m/min for roughing in Outokumpu's own guideline.
+ *   Ours sits inside the roughing range, on the conservative side.
+ *
+ *   STAINLESS 316. Ours 100/140. Sources span 55-91 m/min at one end and
+ *   150-200 at the other. Ours is between them.
+ *
+ *   ALUMINIUM 6082. Ours 400/600 against 500-1000 m/min. We are at the LOW end.
+ *
+ * So the table is not uniformly optimistic; its errors, where they exist, point
+ * in BOTH directions and are small. NOTHING IS CHANGED HERE as a result — an
+ * audit that finds nothing is still an answer, and it removes a suspect.
+ *
+ * WHAT THE AUDIT DID FIND is the condition attached to every published figure,
+ * stated plainly in Outokumpu's guideline: the values "assume favorable cutting
+ * conditions: a well-matched insert grade, rigid tool and workpiece clamping,
+ * good-quality raw material, short tool overhang, and adequate coolant. Adjust
+ * down for interrupted cuts, poor rigidity, or thin-wall parts."
+ *
+ * A job shop cutting one-offs and small batches on mixed material with
+ * general-purpose inserts meets few of those conditions — and Turncircuit's own
+ * roughing cut on the VOC housing back-solves to Vc 103 m/min against this
+ * table's 300. That distance from book is real, it is a property of the SHOP
+ * rather than of the material, and the model already has a home for it in the
+ * efficiency factor. It does not belong in this table.
+ */
 const TABLE: Record<MaterialFamily, Row> = {
   'free-steel':     { label: 'Free-cutting Steel (12L14/EN1A)', densityGCm3: 7.85, machinability: 1.6, isPlastic: false, cuttingSpeedRough: 200, cuttingSpeedFinish: 250, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 3.0, feedPerToothMm: 0.060 },
   'mild-steel':     { label: 'Medium-carbon Steel (EN8/1045)',  densityGCm3: 7.85, machinability: 1.0, isPlastic: false, cuttingSpeedRough: 150, cuttingSpeedFinish: 190, feedRough: 0.30, feedFinish: 0.10, depthOfCutRough: 2.5, feedPerToothMm: 0.050 },
