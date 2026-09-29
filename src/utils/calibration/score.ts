@@ -16,6 +16,29 @@
  * on mean. Getting the mean right is what a multiplier does.
  */
 import { QUOTED_PARTS, QuotedPart, totalSetupMin, machiningCycleMinPerPart, machiningOps, impliedRatePerHour } from './quotes';
+import { CYCLE_SHEETS, sheetCycleSec } from './cycleSheets';
+
+/**
+ * THE CYCLE TARGET, and why it changed.
+ *
+ * A cycle model predicts how long the machine runs. It was being scored against
+ * the router's booked minutes, and the router is a QUOTED figure, not a
+ * measurement: the VOC housing books 45 min and the machine takes 8.28, the
+ * hollow arm books 60 for head-1 work its sheet does in 23.02.
+ *
+ * Where a cycle sheet exists it is the target, because it is the only figure
+ * that is the same KIND of number as the model's output. Where none exists the
+ * router still stands in, and the part is marked `measured: false` so an
+ * aggregate can never quietly mix the two and call the result accuracy.
+ *
+ * This changes no model constant and no price. It replaces a broken
+ * thermometer.
+ */
+function cycleTargetMin(p: QuotedPart): { min: number; measured: boolean } {
+  const sheet = CYCLE_SHEETS.find((s) => s.drawing === p.drawing);
+  if (sheet) return { min: sheetCycleSec(sheet) / 60, measured: true };
+  return { min: machiningCycleMinPerPart(p), measured: false };
+}
 
 export interface PartScore {
   drawing: string;
@@ -24,6 +47,8 @@ export interface PartScore {
   setupRatio: number | null;
   cycleRatio: number | null;
   priceRatio: number | null;
+  /** True when cycleRatio was scored against a real cycle sheet, not the router. */
+  cycleTargetMeasured: boolean;
   lanceSetupMin: number;
   modelSetupMin: number | null;
   impliedRate: number;
@@ -56,9 +81,10 @@ export function scoreParts(
     if (!p) continue;
     const pricing = p.pricing.find((x) => x.qty === r.qty) ?? p.pricing[0];
     const lanceSetup = totalSetupMin(p);
-    // SPINDLE minutes only. Scoring a cycle model against a figure that also
-    // carries final inspection charged it for work it never claimed to do.
-    const lanceCycle = machiningCycleMinPerPart(p);
+    // The MEASURED cycle where the shop gave us one, the router only as a
+    // stand-in — see cycleTargetMin.
+    const target = cycleTargetMin(p);
+    const lanceCycle = target.min;
     parts.push({
       drawing: p.drawing,
       qty: pricing.qty,
@@ -66,6 +92,7 @@ export function scoreParts(
       modelSetupMin: r.modelSetupMin,
       setupRatio: r.modelSetupMin ? r.modelSetupMin / lanceSetup : null,
       cycleRatio: r.modelCycleMin && lanceCycle ? r.modelCycleMin / lanceCycle : null,
+      cycleTargetMeasured: target.measured,
       priceRatio: r.modelPrice ? r.modelPrice / pricing.quotedPrice : null,
       impliedRate: impliedRatePerHour(p, p.pricing.indexOf(pricing)),
       machiningOps: machiningOps(p).length,
