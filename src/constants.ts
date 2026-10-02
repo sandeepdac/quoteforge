@@ -23,8 +23,24 @@ export const DEFAULT_SECONDARY_OPS: SecondaryOperation[] = [
 export const DEFAULT_TURNING_TOOLS: ShopTool[] = [
   { op: 'face', station: 'T0101', description: 'OD rough — DCLNR + CNMG 120408-PM', noseRadiusMm: 0.8 },
   { op: 'rough', station: 'T0101', description: 'OD rough — DCLNR + CNMG 120408-PM', noseRadiusMm: 0.8 },
-  { op: 'spot', station: 'T0606', description: 'Spot / centre drill (starts the hole true)' },
-  { op: 'drill', station: 'T0202', description: 'Carbide drill (pilot / through)' },
+  // SPOTTING IS A SHORT CUT IN FRESH METAL — carbide, and the speed is not what
+  // decides this operation anyway (the approach is).
+  { op: 'spot', station: 'T0606', description: 'Spot / centre drill, solid carbide', substrate: 'carbide' },
+  // HSS, NOT CARBIDE — and the description now agrees with the arithmetic.
+  //
+  // This row said "Carbide drill" and the model duly ran every hole at carbide
+  // speed. A general-purpose drill in a job-shop turret is usually HSS or
+  // HSS-cobalt: it is a fraction of the price, it survives being run a bit wrong,
+  // and on a deep hole in free-cutting brass it is what a shop reaches for.
+  // Turncircuit's own cycle sheet names both tools on one part — "pilot drill
+  // (40 mm deep), solid carbide drill" and then "10 mm HSS drill (70 mm deep)" —
+  // so the deep hole, which dominates the drilling time, runs on HSS.
+  //
+  // This is INVENTORY, not a model constant: it is the one entry on this list
+  // that changes a cycle time by more than two to one, so a shop that drills
+  // everything with solid carbide should say so in Settings → Tooling and get
+  // its time back. The model cannot know what is in the turret.
+  { op: 'drill', station: 'T0202', description: 'HSS drill (pilot / through)', substrate: 'hss' },
   { op: 'bore', station: 'T0505', description: 'Boring bar — CCGT 060204 (opens bore to size)', noseRadiusMm: 0.4 },
   { op: 'finish', station: 'T0303', description: 'OD finish — SDJCR + DCGT 070204-AL', noseRadiusMm: 0.4 },
   { op: 'deburr', station: 'T0707', description: 'Chamfer / deburr tool (breaks the edges a cutter leaves)' },

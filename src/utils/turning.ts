@@ -521,6 +521,18 @@ export function estimateTurningTimes(
   // nothing else: a Star SR-32 rapids at 24 m/min, an NTX 1000 at 40-50. Every
   // approach, retract and peck retract is timed from this.
   const rapid = cfg.opApproach?.rapidMmPerMin ?? DEFAULT_OP_APPROACH.rapidMmPerMin;
+  // WHAT THE DRILL IS MADE OF, from the turret rather than assumed.
+  //
+  // DRILL_SUBSTRATE_VC existed but nothing reached it: every drill ran at
+  // carbide speed because the tool library had no way to say otherwise. The spot
+  // drill is asked separately — it is a different tool in a different station,
+  // and a shop may well spot with carbide and drill deep with HSS.
+  const drillCfg = (op: 'drill' | 'spot') => ({
+    ...DEFAULT_DRILL_CONFIG,
+    maxRpm: cfg.maxRpm,
+    rapidMmPerMin: rapid,
+    substrate: toolFor(op).substrate ?? DEFAULT_DRILL_CONFIG.substrate,
+  });
   const approach = (feedMmPerMin: number) => opApproachSec(feedMmPerMin, cfg.opApproach);
   const reposition = (feedMmPerMin: number) => repositionSec(feedMmPerMin, cfg.opApproach);
   // n occurrences of the same feature with the same tool: one approach, then a
@@ -622,16 +634,12 @@ export function estimateTurningTimes(
     // two ⌀11 holes are 125 mm deep — an L/D of eleven — and the real cost is
     // the twenty-odd full retracts needed to clear the chips, not 40% on top of
     // a single plunge.
-    const drillSplit = drillHoleSplit({ diameterMm: drillDia, depthMm: depth }, m, {
-      ...DEFAULT_DRILL_CONFIG,
-      maxRpm: cfg.maxRpm,
-      rapidMmPerMin: rapid,
-    });
+    const drillSplit = drillHoleSplit({ diameterMm: drillDia, depthMm: depth }, m, drillCfg('drill'));
     drillCutSec = drillSplit.cuttingSec;
     drillIdleSec = drillSplit.idleSec;
     drillSec = drillCutSec + drillIdleSec;
     // Spot it first, or the drill wanders off the axis the drawing dimensions from.
-    const spotSplit = spotDrillSplit(drillDia, m, { ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm, rapidMmPerMin: rapid });
+    const spotSplit = spotDrillSplit(drillDia, m, drillCfg('spot'));
     spotCutSec = spotSplit.cuttingSec;
     spotIdleSec = spotSplit.idleSec;
     spotSec = spotCutSec + spotIdleSec;
@@ -768,13 +776,11 @@ export function estimateTurningTimes(
   for (const h of profile.additionalBores ?? []) {
     const d = standardDrillMm(Math.min(h.diameterMm, cfg.maxDrillDiaMm));
     if (d <= 0 || h.depthMm <= 0) continue;
-    const s = spotDrillSplit(d, m, { ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm, rapidMmPerMin: rapid });
+    const s = spotDrillSplit(d, m, drillCfg('spot'));
     spotCutSec += s.cuttingSec;
     spotIdleSec += s.idleSec;
     spotSec += s.cuttingSec + s.idleSec;
-    const dr = drillHoleSplit({ diameterMm: d, depthMm: h.depthMm }, m, {
-      ...DEFAULT_DRILL_CONFIG, maxRpm: cfg.maxRpm, rapidMmPerMin: rapid,
-    });
+    const dr = drillHoleSplit({ diameterMm: d, depthMm: h.depthMm }, m, drillCfg('drill'));
     drillCutSec += dr.cuttingSec;
     drillIdleSec += dr.idleSec;
     drillSec += dr.cuttingSec + dr.idleSec;
