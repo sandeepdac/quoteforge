@@ -605,6 +605,9 @@ export function calculateMilledCosts(
 
   const ratePerSec = machineRatePerMin / 60;
   const opCost = (sec: number) => (sec / eff) * ratePerSec;
+  // Idle is machine-spec time — the ATC's change, the machine's own rapid — so
+  // no efficiency is applied to it. See cncEstimator for the full reasoning.
+  const airCost = (sec: number) => sec * ratePerSec;
 
   // --- Per-setup / per-operation plan (tool-by-tool job sheet) -------------
   // Built BEFORE setup billing because the plan is the source of truth for how
@@ -647,6 +650,7 @@ export function calculateMilledCosts(
     angledSetups: p.angledSetups,
     eff,
     opCost,
+    airCost,
     toolChangeSec,
     approachSecPerOp,
     colors: COLORS,
@@ -785,7 +789,7 @@ export function calculateMilledCosts(
     { key: 'tap', name: 'Tapping', driver: tapSec > 0 ? `${(p.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ')} — ${secStr(tapSec)}` : '', value: opCost(tapSec), color: COLORS.thread ?? COLORS.drill },
     { key: 'edge', name: 'Countersink / chamfer', driver: edgeSec > 0 ? `${countersinkCount ? `${countersinkCount} countersink${countersinkCount === 1 ? '' : 's'}` : ''}${countersinkCount && chamferCount ? ' + ' : ''}${chamferCount ? `${chamferCount} chamfer${chamferCount === 1 ? '' : 's'}` : ''} measured from the solid — ${secStr(edgeSec)}` : '', value: opCost(edgeSec), color: COLORS.facing },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
-    { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${toolChanges} tool changes × ${r1(toolChangeSec)}s, plus ${plannedOpCount} approaches × ${r1(approachSecPerOp)}s at ${Math.round(rapidMmPerMin / 1000)} m/min rapid (before efficiency)`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
+    { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${toolChanges} tool changes × ${r1(toolChangeSec)}s, plus ${plannedOpCount} approaches × ${r1(approachSecPerOp)}s at ${Math.round(rapidMmPerMin / 1000)} m/min rapid — machine specifications, so no efficiency is applied`, value: airCost(airSec), color: COLORS.noncut },
     // Both numbers stated, the derate already inside the cutting rows above.
     { key: 'realisation', name: 'Cutting conditions (already in the rows above)', driver: `book speeds → ×${real.multiplier.toFixed(2)} on cutting time. ${real.explanation}. ${real.applied.map((x) => `${x.name} ${x.value} (${x.why})`).join('; ')}`, seconds: 0, value: 0, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min preparation, excluding ${derivedProgrammingMin} min CAM billed separately. Full first-order breakdown: ${derivedSetup.explanation} — batch ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },

@@ -73,8 +73,10 @@ export interface MilledPlanInput {
    */
   angledSetups?: number;
   eff: number;
-  /** theoretical sec → machine cost. */
+  /** theoretical CUTTING sec → machine cost (efficiency applied). */
   opCost: (sec: number) => number;
+  /** IDLE sec → machine cost. Machine-spec time, so no efficiency is applied. */
+  airCost: (sec: number) => number;
   toolChangeSec: number;
   /** Rapid-motion allowance relative to cutting time; excludes tool changes. */
   /**
@@ -392,14 +394,18 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
       const firstUse = !seen.has(o.tool);
       seen.add(o.tool);
       const idleSec = (inp.approachSecPerOp ?? 0) + (firstUse ? inp.toolChangeSec : 0);
+      // Efficiency scales CUTTING only. Idle here is the ATC's own change time
+      // and a rapid at the machine's own traverse rate — specifications, not
+      // estimates, and nothing is gained by asserting the machine is slower
+      // than it is built to be. Same rule as cncEstimator.
       return {
         name: o.name,
         tool: o.tool,
-        seconds: (o.sec + idleSec) / inp.eff,
+        seconds: o.sec / inp.eff + idleSec,
         cuttingSeconds: o.sec / inp.eff,
-        idleSeconds: idleSec / inp.eff,
-        cost: inp.opCost(o.sec + idleSec),
-        driver: `${o.driver} · ${r1(o.sec / inp.eff)}s cutting + ${r1(idleSec / inp.eff)}s idle`
+        idleSeconds: idleSec,
+        cost: inp.opCost(o.sec) + inp.airCost(idleSec),
+        driver: `${o.driver} · ${r1(o.sec / inp.eff)}s cutting + ${r1(idleSec)}s idle`
           + (firstUse ? ' (idle includes the tool change)' : ' · tool already in the spindle'),
         color: o.color,
       };

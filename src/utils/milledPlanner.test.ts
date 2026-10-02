@@ -156,6 +156,7 @@ describe('countersinks and chamfers come off the solid', () => {
     holeCount: 4, holeDiametersMm: [6, 6, 6, 6], maxDrillMm: 20,
     bossCount: 0, setups: 1, eff: 0.8,
     opCost: (sec: number) => sec / 60,
+    airCost: (sec: number) => sec / 60,
     toolChangeSec: 10,
     colors: { rough: '#1', finish: '#2', drill: '#3', deep: '#4', facing: '#5', turn: '#6' },
   };
