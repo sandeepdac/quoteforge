@@ -160,12 +160,28 @@ export function calculateMachiningCosts(
     boreDiaMm: input.profile.boreDiaMm,
     crossFeatureCount: input.profile.crossFeatureList?.length ?? 0,
   }));
+  // EFFICIENCY APPLIES TO CUTTING, NOT TO IDLE — and that is a correction.
+  //
+  // It used to divide the whole cycle. That made sense when idle was a guess: a
+  // flat tool-change allowance plus 5% of cutting for rapids. It does not make
+  // sense now. Every idle second is built from a MACHINE SPECIFICATION — the
+  // turret's index time, the machine's own rapid traverse, the spindle settle,
+  // the clearance gap, the peck retracts — and dividing those by 0.8 asserts the
+  // turret indexes 25% slower than its datasheet and the slides rapid at 24 m/min
+  // when the machine is built for 30. They do not.
+  //
+  // What efficiency legitimately covers — an override wound back, a feed-hold, a
+  // moment lost — happens while the tool is in the cut, which is where it is now
+  // charged. The honest consequence is that measured idle drops further below
+  // the shop's, and that is a real signal rather than a flattering one: the
+  // per-operation idle model is light, and inflating machine specifications was
+  // hiding by how much.
   const cutSec = (sec: number) => (sec * feedMult * real.multiplier) / eff;
   const opCost = (sec: number) => cutSec(sec) * ratePerSec;
-  const airCost = (sec: number) => (sec / eff) * ratePerSec;
+  const airCost = (sec: number) => sec * ratePerSec;
   const theoreticalCuttingSec = t.cuttingSec;
   const cycleTimeSec =
-    (t.cuttingSec * feedMult * real.multiplier) / eff + t.airSec / eff + cnc.barLoadSec;
+    (t.cuttingSec * feedMult * real.multiplier) / eff + t.airSec + cnc.barLoadSec;
 
   // EVERY OPERATION'S TWO COLUMNS, the way a cycle sheet writes them.
   //
@@ -186,13 +202,13 @@ export function calculateMachiningCosts(
   /** Actual seconds for one operation: cutting scaled by the override, idle not. */
   const opSecs = (op: EstimatedTurningOp) => {
     const s = splitFor(op);
-    return (s.cuttingSec * feedMult * real.multiplier + s.idleSec) / eff;
+    return (s.cuttingSec * feedMult * real.multiplier) / eff + s.idleSec;
   };
   const opTotalCost = (op: EstimatedTurningOp) => opSecs(op) * ratePerSec;
   /** "3.1s cutting + 12.4s idle" — the phrase the cycle sheets are read in. */
   const splitStr = (op: EstimatedTurningOp) => {
     const s = splitFor(op);
-    return `${r1((s.cuttingSec * feedMult * real.multiplier) / eff)}s cutting + ${r1(s.idleSec / eff)}s idle`;
+    return `${r1((s.cuttingSec * feedMult * real.multiplier) / eff)}s cutting + ${r1(s.idleSec)}s idle`;
   };
   const machineCost = (cycleTimeSec / 60) * machineRatePerMin;
 
@@ -347,12 +363,12 @@ export function calculateMachiningCosts(
         // machinist counts getting the drill there as part of drilling.
         seconds: opSecs(o.op),
         cuttingSeconds: (s.cuttingSec * feedMult * real.multiplier) / eff,
-        idleSeconds: s.idleSec / eff,
+        idleSeconds: s.idleSec,
         cost: opTotalCost(o.op),
         color: o.color,
         driver: `${o.driver} · ${splitStr(o.op)}`
           + (changed
-            ? ` (idle includes ${r1(toolChangeSec / eff)}s to bring this tool round)`
+            ? ` (idle includes ${r1(toolChangeSec)}s to bring this tool round)`
             : ' · same tool as above, no index'),
       };
     });
