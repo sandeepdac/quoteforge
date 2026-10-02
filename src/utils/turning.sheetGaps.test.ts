@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateTurningTimes, DEFAULT_TURNING_CONFIG, type TurningProfile } from './turning';
+import { estimateTurningTimes, DEFAULT_TURNING_CONFIG, indexRetractSec, type TurningProfile } from './turning';
 import { DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor } from './materials';
 import { threadFromCallout } from './drilling';
@@ -84,6 +84,7 @@ describe('deburring is an operation, not an afterthought', () => {
       + t.boreSec + t.grooveSec + t.threadSec + t.partingSec + t.crossSec + t.tapSec;
     // Each named figure is that operation's own total; the turret indexes are
     // the remainder, charged once per actual change.
-    expect(named + t.toolChangeCount * cfg.toolChangeSec).toBeCloseTo(t.cuttingSec + t.idleSec, 6);
+    const changeSec = cfg.toolChangeSec + indexRetractSec(cfg.opApproach);
+    expect(named + t.toolChangeCount * changeSec).toBeCloseTo(t.cuttingSec + t.idleSec, 6);
   });
 });

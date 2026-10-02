@@ -4,6 +4,7 @@ import { countToolSelections, resolveTurningTool, seedTurningInventory } from '.
 import { calculateMachiningCosts, type MachiningInput } from './cncEstimator';
 import { generateTurningToolpath } from './toolpath';
 import { materialPropsFor } from './materials';
+import { indexRetractSec } from './turning';
 import type { ShopTool } from '../types';
 
 const input: MachiningInput = { isTurned: true, materialName: 'Brass CZ121', volumeCm3: 8, setups: 1,
@@ -56,7 +57,10 @@ describe('tool library drives turning costing and the plan', () => {
     // Each +2 on the original: a spot drill and a deburr tool, both distinct.
     expect(shared.plan!.tools).toHaveLength(7);
     expect(separate.plan!.tools).toHaveLength(8);
-    expect(separate.machineCost - shared.machineCost).toBeCloseTo(8 / 60, 8);
+    // One more selection: the turret's index PLUS the trip out to where it is
+    // safe to index and back (indexRetractSec), charged at the machine rate.
+    const changeSec = settings.cnc.toolChangeSec + indexRetractSec();
+    expect(separate.machineCost - shared.machineCost).toBeCloseTo(changeSec / 60, 8);
     expect(separate.setupTimeMin - shared.setupTimeMin).toBeCloseTo(settings.cnc.setupTimePerToolMin);
     // NOT CUTTING TIME — and now the plan says exactly where the extra second
     // went. The turret index is charged to the operation that calls for it, so
@@ -67,7 +71,7 @@ describe('tool library drives turning costing and the plan', () => {
     expect(cutOf(separate)).toEqual(cutOf(shared));
     const idle = (c: typeof shared) =>
       c.plan!.setups[0].operations.reduce((s, o) => s + (o.idleSeconds ?? 0), 0);
-    expect(idle(separate) - idle(shared)).toBeCloseTo(8, 8);
+    expect(idle(separate) - idle(shared)).toBeCloseTo(changeSec, 8);
   });
   it.each([1, .8])('reconciles all machine seconds and costs at efficiency %s', efficiencyFactor => {
     const c = calculateMachiningCosts(input, 15, false, .25, { ...settings, cnc: { ...settings.cnc, efficiencyFactor, feedrateRatioPercent: 60 } });
