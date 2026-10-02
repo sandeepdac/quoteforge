@@ -28,6 +28,7 @@ import { millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, Milling
 import { roughingMrrCm3PerMin, rpm as turningRpm } from './turning';
 import { buildMilledPlan } from './milledPlanner';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
+import { realisation } from './realisation';
 import { drillHoleSec, drillHolesSec, spotDrillsSec, pairHoles, crossFeaturesSec, tapThreadsSec, DEFAULT_DRILL_CONFIG, DEFAULT_CROSS_CONFIG } from './drilling';
 import { opApproachSec, DEFAULT_OP_APPROACH } from './turning';
 import { TOOL_CHANGE_SEC } from './machineSelection';
@@ -336,6 +337,17 @@ export function calculateMilledCosts(
   // Client-facing feedrate override (Settings): 100% = programmed feed. Below 100
   // runs cutting slower (more time), above 100 faster. Scales CUTTING time only.
   const feedMult = 100 / Math.max(1, cnc.feedrateRatioPercent ?? 100);
+  // WHAT THE BOOK SPEEDS ACTUALLY DELIVER HERE — see realisation.ts. Applied to
+  // cutting only, in the same place and for the same reason as the feedrate
+  // override, so a milled part and a turned one derate identically.
+  //
+  // A MILLED PART IS ALWAYS AN INTERRUPTED CUT. An end mill's flutes leave the
+  // metal and re-enter it on every revolution — that is what milling IS, and it
+  // is the textbook case the catalogues say to slow down for. So the conditional
+  // factor always applies here, where on a turned part it depends on geometry.
+  const real = realisation(cnc.realisation, true);
+  /** Everything that scales CUTTING time: the override and the derate together. */
+  const cutScale = feedMult * real.multiplier;
   const machineRatePerMin = cnc.machineRatePerMin * (machineRateMultiplier > 0 ? machineRateMultiplier : 1);
   // TOOL CHANGE AND RAPID BELONG TO THE MACHINE, exactly as they do for turning
   // (cncEstimator.ts). Milling carried a flat 10 s change and an 8% rapid
@@ -425,7 +437,7 @@ export function calculateMilledCosts(
 
   // Base (open, part-sized tool) time; the complexity delta is billed separately
   // so the line items sum cleanly to the subtotal.
-  const roughBaseSec = (milledVol > 0 && millMrr > 0 ? (milledVol / millMrr) * 60 : 0) * feedMult;
+  const roughBaseSec = (milledVol > 0 && millMrr > 0 ? (milledVol / millMrr) * 60 : 0) * cutScale;
   const roughSec = roughBaseSec * deepMult;
   // Turning is not subject to the small-tool complexity derate: that models a
   // cutter squeezing into detail, which has no analogue on a spindle.
@@ -448,8 +460,8 @@ export function calculateMilledCosts(
     const roughSec = roughPasses * (depth / (m.feedRough * boreRpm)) * 60;
     const finishSec = (depth / (m.feedFinish * boreRpm)) * 60;
     return sum + pilotSec + roughSec + finishSec;
-  }, 0) * feedMult;
-  const turningVolumeSec = (turnedVol > 0 && turnMrr > 0 ? (turnedVol / turnMrr) * 60 : 0) * feedMult;
+  }, 0) * cutScale;
+  const turningVolumeSec = (turnedVol > 0 && turnMrr > 0 ? (turnedVol / turnMrr) * 60 : 0) * cutScale;
   const turningSec = Math.max(turningBoreSec, turningVolumeSec);
 
   // --- Facing --------------------------------------------------------------
@@ -464,16 +476,16 @@ export function calculateMilledCosts(
         const perFaceSec = faceRpm > 0 && m.feedFinish > 0
           ? ((stockDiaMm / 2) / (m.feedFinish * faceRpm)) * 60
           : 0;
-        return facesToTurn * perFaceSec * feedMult;
+        return facesToTurn * perFaceSec * cutScale;
       })()
-    : (finishRate > 0 ? (footprintCm2 / finishRate) * 60 : 0) * feedMult;
+    : (finishRate > 0 ? (footprintCm2 / finishRate) * 60 : 0) * cutScale;
 
   // --- Finishing: walls + floors of the machined faces ---------------------
   // Contoured parts finish far slower (small ball at fine stepover); the multiplier
   // is 1 for prismatic parts and plates, so simple-part calibration is unchanged.
   const finishSculpt = sculptFinishMult(p);
   const finishAreaCm2 = FINISH_MACHINED_FRACTION * Math.max(0, p.surfaceAreaCm2);
-  const finishBaseSec = (finishRate > 0 ? (finishAreaCm2 / finishRate) * 60 * finishSculpt : 0) * feedMult;
+  const finishBaseSec = (finishRate > 0 ? (finishAreaCm2 / finishRate) * 60 * finishSculpt : 0) * cutScale;
   const finishSec = finishBaseSec * deepMult;
   // Extra seconds attributable to small-tool feature detail (rough + finish).
   const complexitySec = (roughBaseSec + finishBaseSec) * (deepMult - 1);
@@ -522,7 +534,7 @@ export function calculateMilledCosts(
   const drillSec = drillHolesSec(holeSpecs, m, {
     ...DEFAULT_DRILL_CONFIG,
     maxRpm: cnc.millMaxRpm ?? DEFAULT_DRILL_CONFIG.maxRpm,
-  }) * feedMult;
+  }) * cutScale;
 
   // --- Off-axis features the hole finder discarded -------------------------
   //
@@ -550,12 +562,12 @@ export function calculateMilledCosts(
   const crossSec = crossFeaturesSec(extraCross, m, {
     ...DEFAULT_CROSS_CONFIG,
     maxRpm: cnc.millMaxRpm ?? DEFAULT_CROSS_CONFIG.maxRpm,
-  }) * feedMult;
+  }) * cutScale;
 
   // --- Tapping -------------------------------------------------------------
   // The tap drill is already paid for above as a hole; this is the thread cut
   // into it. Feed is locked to the pitch, and the tap has to reverse back out.
-  const tapSec = tapThreadsSec(p.threads, m) * feedMult;
+  const tapSec = tapThreadsSec(p.threads, m) * cutScale;
 
   // --- Conical features: countersinks and chamfers -------------------------
   // These cost nothing at all until now, because the analyser read only planes
@@ -578,13 +590,13 @@ export function calculateMilledCosts(
   const countersinkSec = csinks.reduce(
     (sec, c) => sec + Math.max(1, c.count ?? 1) * (2.0 + 0.25 * Math.max(0, c.diameterMm)) * machDerate,
     0
-  ) * feedMult;
+  ) * cutScale;
   // One lap of the edge at a chamfer-mill feed; a circular chamfer is πd long.
   const CHAMFER_FEED_MM_PER_MIN = 900;
   const chamferSec = chamfs.reduce((sec, c) => {
     const pathMm = Math.PI * Math.max(1, c.diameterMm);
     return sec + Math.max(1, c.count ?? 1) * ((pathMm / CHAMFER_FEED_MM_PER_MIN) * 60) * machDerate;
-  }, 0) * feedMult;
+  }, 0) * cutScale;
   const edgeSec = countersinkSec + chamferSec;
 
   // --- Cycle time (theoretical → actual via efficiency) --------------------
@@ -774,6 +786,8 @@ export function calculateMilledCosts(
     { key: 'edge', name: 'Countersink / chamfer', driver: edgeSec > 0 ? `${countersinkCount ? `${countersinkCount} countersink${countersinkCount === 1 ? '' : 's'}` : ''}${countersinkCount && chamferCount ? ' + ' : ''}${chamferCount ? `${chamferCount} chamfer${chamferCount === 1 ? '' : 's'}` : ''} measured from the solid — ${secStr(edgeSec)}` : '', value: opCost(edgeSec), color: COLORS.facing },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${toolChanges} tool changes × ${r1(toolChangeSec)}s, plus ${plannedOpCount} approaches × ${r1(approachSecPerOp)}s at ${Math.round(rapidMmPerMin / 1000)} m/min rapid (before efficiency)`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
+    // Both numbers stated, the derate already inside the cutting rows above.
+    { key: 'realisation', name: 'Cutting conditions (already in the rows above)', driver: `book speeds → ×${real.multiplier.toFixed(2)} on cutting time. ${real.explanation}. ${real.applied.map((x) => `${x.name} ${x.value} (${x.why})`).join('; ')}`, seconds: 0, value: 0, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min preparation, excluding ${derivedProgrammingMin} min CAM billed separately. Full first-order breakdown: ${derivedSetup.explanation} — batch ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
     { key: 'nre', name: `CAM programming (one-time) ÷ ${qty}`, driver: `${r1(programmingMin)} min NRE over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty} — not billed again on reorder`, value: programmingPerUnit, color: COLORS.nre },
@@ -781,7 +795,8 @@ export function calculateMilledCosts(
     { key: 'tooling', name: 'Tooling / consumables', driver: `${toolCount} operations`, value: toolingCost, color: COLORS.tooling },
     ...(routeOps?.length && Math.abs(routeRuntimeAdjustment) > 0.005 ? [{ key: 'machine-rate', name: 'Multi-machine runtime rate', driver: routeOps.map((op) => `${op.machine.name}: ${op.machine.hourlyRate}/hr × ${Math.max(1, Math.round(op.setups))} holding${op.setups > 1 ? 's' : ''}`).join('; '), value: routeRuntimeAdjustment, color: COLORS.turn }] : []),
     ...secondaryOpsLineItems(input.secondaryOps, qty),
-  ].filter((li) => Math.abs(li.value) > 0);
+    // The realisation row explains the derate and carries no cost of its own.
+  ].filter((li) => Math.abs(li.value) > 0 || li.key === 'realisation');
 
   // --- Batch quantity curve (setup + NRE amortisation) ---------------------
   // First-order price carries the one-time NRE (programming + jaws); the repeat

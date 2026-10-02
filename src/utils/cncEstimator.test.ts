@@ -51,7 +51,15 @@ describe('calculateMachiningCosts (turning cycle-time)', () => {
   it('line items sum to the subtotal and each carries a driver', () => {
     const sum = costs.lineItems.reduce((s, li) => s + li.value, 0);
     expect(sum).toBeCloseTo(costs.subtotal, 4);
-    expect(costs.lineItems.every((li) => li.value > 0 && li.driver.length > 0)).toBe(true);
+    // Every row explains itself, and every row carries money EXCEPT the
+    // realisation row, which states the cutting derate already applied inside
+    // the operations above. It is explanatory by design and its value is 0.
+    expect(costs.lineItems.every((li) => li.driver.length > 0)).toBe(true);
+    const priced = costs.lineItems.filter((li) => li.key !== 'realisation');
+    expect(priced.every((li) => li.value > 0)).toBe(true);
+    const note = costs.lineItems.find((li) => li.key === 'realisation')!;
+    expect(note.value).toBe(0);
+    expect(note.driver).toMatch(/Tool life/);
   });
 
   it('amortises setup over the batch — unit price falls as quantity rises', () => {
