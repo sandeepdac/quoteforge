@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateTurningTimes, DEFAULT_TURNING_CONFIG, type TurningProfile } from './turning';
+import { estimateTurningTimes, DEFAULT_TURNING_CONFIG, indexRetractSec, DEFAULT_OP_APPROACH, type TurningProfile } from './turning';
 import { DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor } from './materials';
 import { CYCLE_SHEETS, sheetCuttingSec, sheetIdleSec } from './calibration/cycleSheets';
@@ -62,6 +62,31 @@ describe('every operation carries its own idle', () => {
     expect(t.idleSec - free.idleSec).toBeCloseTo(t.toolChangeCount * cfg.toolChangeSec, 6);
     expect(t.toolChangeCount).toBeGreaterThan(0);
     expect(t.toolChangeCount).toBeLessThanOrEqual(t.opTimes.length);
+  });
+
+  it('a tool change pays the trip out to where it is safe to index', () => {
+    // A turret cannot rotate where it cuts — its tools sweep a circle — so it
+    // withdraws, indexes, and the new tool comes back. Out and back, and only
+    // on an actual change.
+    const fast = indexRetractSec({ ...DEFAULT_OP_APPROACH, rapidMmPerMin: 30000 });
+    const slow = indexRetractSec({ ...DEFAULT_OP_APPROACH, rapidMmPerMin: 12000 });
+    expect(slow).toBeGreaterThan(fast);          // a slower machine pays more
+    expect(fast).toBeCloseTo((2 * 150 / 30000) * 60, 9);
+    // AND IT IS SMALL, which is the finding. Travel on a modern machine is
+    // cheap: 150 mm out and back at 30 m/min is under a second. Whatever else
+    // is missing from the idle column, it cannot be distance — twelve seconds
+    // of rapid would be six metres of it per operation.
+    expect(fast).toBeLessThan(2);
+  });
+
+  it('operations sharing a tool pay neither the index nor the retract', () => {
+    const t2 = estimateTurningTimes(housing, brass, 55, cfg);
+    const free = estimateTurningTimes(housing, brass, 55, { ...cfg, toolChangeSec: 1e-9 });
+    // Removing the index leaves the retract, so the drop is less than the full
+    // change cost — and it is still counted once per CHANGE, not per operation.
+    const dropped = t2.idleSec - free.idleSec;
+    expect(dropped).toBeCloseTo(t2.toolChangeCount * cfg.toolChangeSec, 6);
+    expect(t2.toolChangeCount).toBeLessThan(t2.opTimes.length + 1);
   });
 
   it('the flat 5%-of-cutting rapid allowance is gone', () => {

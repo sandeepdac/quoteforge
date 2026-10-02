@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateTurningTimes, opApproachSec, repositionSec, DEFAULT_TURNING_CONFIG, type TurningProfile } from './turning';
+import { estimateTurningTimes, opApproachSec, repositionSec, indexRetractSec, DEFAULT_TURNING_CONFIG, type TurningProfile } from './turning';
 import { DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor } from './materials';
 
@@ -107,7 +107,10 @@ describe('a hole is spotted before it is drilled', () => {
     // separately per change. Together they must be the whole cycle.
     const named = t.spotSec + t.deburrSec + t.facingSec + t.roughSec + t.finishSec + t.drillSec
       + t.boreSec + t.grooveSec + t.threadSec + t.partingSec + t.crossSec + t.tapSec;
-    expect(named + t.toolChangeCount * cfg.toolChangeSec).toBeCloseTo(t.cuttingSec + t.idleSec, 6);
+    // A change costs the turret's index PLUS the trip out to where it is safe
+    // to index and back — see indexRetractSec.
+    const changeSec = cfg.toolChangeSec + indexRetractSec(cfg.opApproach);
+    expect(named + t.toolChangeCount * changeSec).toBeCloseTo(t.cuttingSec + t.idleSec, 6);
     // And the two columns are a partition of it: nothing counted twice, nothing
     // dropped between them.
     expect(t.opTimes.reduce((a, o) => a + o.cuttingSec, 0)).toBeCloseTo(t.cuttingSec, 6);

@@ -403,6 +403,25 @@ export interface OpApproach {
    * groove to groove along Z. No turret index, no spindle change, just a hop.
    */
   repositionTravelMm: number;
+  /**
+   * HOW FAR THE TURRET COMES OFF THE WORK BEFORE IT CAN INDEX (mm, one way).
+   *
+   * A turret cannot rotate where it cuts. Its tools stand out around its
+   * periphery, and when it indexes every one of them sweeps a circle — so it
+   * first has to withdraw far enough that the sweep misses the part, the chuck
+   * and the tailstock. Then it indexes, and the new tool comes back in.
+   *
+   * The model charged a flat 120 mm of positioning per operation and nothing
+   * else, which quietly assumed the next tool starts from wherever the last one
+   * finished. It cannot: between them is a trip out to the index position and
+   * back, and it is owed on every CHANGE — not on two operations that share a
+   * tool, which never leave the work.
+   *
+   * The distance is set by the tool projection, which is what has to clear: on
+   * a lathe of this class the tools stand roughly 100-150 mm off the turret
+   * face. Charged out and back, so a change pays twice this.
+   */
+  indexRetractMm: number;
 }
 
 export const DEFAULT_OP_APPROACH: OpApproach = {
@@ -411,7 +430,23 @@ export const DEFAULT_OP_APPROACH: OpApproach = {
   settleSec: 1.5,
   clearanceMm: 2,
   repositionTravelMm: 25,
+  indexRetractMm: 150,
 };
+
+/**
+ * Seconds a tool CHANGE owes for the trip to the index position and back.
+ *
+ * Separate from the index itself (`TOOL_CHANGE_SEC`, the turret's own rotation
+ * time): that is how long the turret takes to turn, this is how long the slides
+ * take to get it somewhere it safely can. Charged only when the tool actually
+ * changes.
+ */
+export function indexRetractSec(cfg: OpApproach = DEFAULT_OP_APPROACH): number {
+  const travel = Number.isFinite(cfg.indexRetractMm) && cfg.indexRetractMm > 0
+    ? cfg.indexRetractMm : DEFAULT_OP_APPROACH.indexRetractMm;
+  // Out and back: the old tool withdraws, the new one returns.
+  return ((2 * travel) / Math.max(1, cfg.rapidMmPerMin)) * 60;
+}
 
 /**
  * Non-cutting seconds owed by ONE operation occurrence — per face, per groove,
@@ -881,13 +916,16 @@ export function estimateTurningTimes(
   // as expensive as two that did not. The count is unchanged (the first
   // operation pays for its tool arriving; a run of operations on one tool pays
   // once), it is simply attributed.
+  // A CHANGE COSTS THE INDEX PLUS THE TRIP TO WHERE IT IS SAFE TO INDEX.
+  // Two operations sharing a tool pay neither: the tool never leaves the work.
+  const changeSec = toolChangeSec + indexRetractSec(cfg.opApproach);
   const opTimes: TurningOpTime[] = liveOps.map((op, i) => ({
     op,
     cuttingSec: cut[op],
     idleSec: idle[op]
       // `identity`, the same key countToolSelections counts by — so the per-op
       // indexes still sum to exactly toolChangeCount × toolChangeSec.
-      + (i === 0 || toolAssignments[i].identity !== toolAssignments[i - 1].identity ? toolChangeSec : 0),
+      + (i === 0 || toolAssignments[i].identity !== toolAssignments[i - 1].identity ? changeSec : 0),
   }));
 
   // THE TOTALS ARE NOW THE SUM OF THE ROWS, which is the property that makes the
