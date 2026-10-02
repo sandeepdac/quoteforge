@@ -122,3 +122,50 @@ describe('every operation carries its own idle', () => {
     expect(Math.abs(t.opTimes.length - sheetCuttingOps)).toBeLessThanOrEqual(3);
   });
 });
+
+/**
+ * TWO HYPOTHESES FOR THE MISSING IDLE, BOTH REFUTED. Recorded so they are not
+ * tried again.
+ *
+ * Measured idle on the VOC housing is 184 s across ten cutting operations. The
+ * model charges 64.5 s. The missing ~120 s is about 12 s PER OPERATION, and two
+ * obvious explanations do not survive arithmetic.
+ */
+describe('what the missing idle is NOT', () => {
+  it('is not travel — a modern machine rapids too fast for that', () => {
+    // The turret retract is real and is now charged. But at 30 m/min, 150 mm
+    // out and back is 0.6 s. To find twelve seconds per operation in rapid
+    // moves you would need SIX METRES of travel per operation, on a part 70 mm
+    // long turned from 36 mm bar.
+    const rapidMmPerMin = 30000;
+    const metresFor12Sec = (12 / 60) * rapidMmPerMin / 1000;
+    expect(metresFor12Sec).toBeGreaterThan(5);
+    // Which is more than the machine's whole Z travel, let alone one move.
+    expect(metresFor12Sec * 1000).toBeGreaterThan(450); // NL2000 max turn length
+  });
+
+  it('is not the spindle ramp — it is already covered by the settle', () => {
+    // Every operation's rpm was derived from the same relations the estimator
+    // uses, and the ramp between consecutive operations summed assuming a
+    // linear 3 s from rest to 6000 rpm, which is generous for a 15-22 kW
+    // turning spindle with a chuck on it:
+    //
+    //   face 6000, rough 3259, spot 6000, drill 1455, bore 6000, finish 4346,
+    //   groove 4346, thread 1521, deburr 6000, partoff 2607
+    //
+    // Total speed change 32,923 rpm → 16.5 s of ramp across the whole part.
+    const rampTotalSec = 16.5;
+    const settleChargedSec = 10 * DEFAULT_OP_APPROACH.settleSec; // 15.0
+    // So swapping the flat settle for a derived ramp is worth +1.5 s on a
+    // 120 s gap — about one per cent. The distribution would improve (grooving
+    // follows finishing at the same speed and should pay nothing) but the total
+    // would not move.
+    expect(Math.abs(rampTotalSec - settleChargedSec)).toBeLessThan(2);
+
+    // THE REDUCTIO. For the ramp alone to account for the gap, the spindle
+    // would have to take about 25 seconds to reach full speed. No turning
+    // spindle does; published figures are a few seconds.
+    const neededFullRangeSec = (120 + settleChargedSec) / (rampTotalSec / 3);
+    expect(neededFullRangeSec).toBeGreaterThan(20);
+  });
+});
