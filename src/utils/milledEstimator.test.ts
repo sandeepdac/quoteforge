@@ -45,7 +45,12 @@ describe('calculateMilledCosts (milling cycle-time)', () => {
   it('line items sum to the subtotal and each carries a driver', () => {
     const sum = costs.lineItems.reduce((s, li) => s + li.value, 0);
     expect(sum).toBeCloseTo(costs.subtotal, 4);
-    expect(costs.lineItems.every((li) => li.value > 0 && li.driver.length > 0)).toBe(true);
+    // Same as turning: the realisation row explains the cutting derate that is
+    // already inside the rows above, so it carries a driver but no money.
+    expect(costs.lineItems.every((li) => li.driver.length > 0)).toBe(true);
+    expect(costs.lineItems.filter((li) => li.key !== 'realisation')
+      .every((li) => li.value > 0)).toBe(true);
+    expect(costs.lineItems.find((li) => li.key === 'realisation')!.value).toBe(0);
   });
 });
 

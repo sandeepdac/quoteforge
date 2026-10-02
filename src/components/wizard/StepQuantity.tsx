@@ -21,6 +21,25 @@ import { cn } from '../../utils/cn';
 import { currencySymbol } from '../../utils/currency';
 import { dimsDesc } from '../../utils/dims';
 import { resolveQuoteCosts } from '../../utils/quoteCosts';
+import {
+  normaliseRealisation, realisation, partNeedsInterruptedDerate,
+  type RealisationFactors,
+} from '../../utils/realisation';
+
+/**
+ * The cutting-conditions sliders, in the order they are argued.
+ *
+ * Each one is a published "adjust down" case. The hints are short because the
+ * full reasoning lives in realisation.ts, where it can be read next to the
+ * arithmetic that uses it.
+ */
+const REALISATION_FIELDS: Array<{ key: keyof RealisationFactors; label: string; hint: string }> = [
+  { key: 'toolLife', label: 'Tool life', hint: 'Book speeds assume ~15 min tool life. A job wants an hour, so it runs slower.' },
+  { key: 'rigidity', label: 'Rigidity / overhang', hint: 'Small parts, slender boring bars, light work-holding.' },
+  { key: 'oneOffProgram', label: 'One-off programming', hint: 'A program that runs ten times is not optimised like one that runs ten thousand.' },
+  { key: 'materialCondition', label: 'Material condition', hint: 'Bar-to-bar hardness spread, scale, no premium stock.' },
+  { key: 'interruptedCut', label: 'Interrupted cut / thin wall', hint: 'Only charged when the geometry calls for it — always on a milled part.' },
+];
 
 interface StepQuantityProps {
   data: any;
@@ -34,6 +53,7 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
   const { customers, materials } = useQuotes();
   const { settings, updateSettings } = useSettings();
   const efficiency = settings.cnc?.efficiencyFactor ?? 0.8;
+  const realisationFactors = normaliseRealisation(settings.cnc?.realisation);
 
   const currentMaterial = materials.find(m => m.id === data.features.materialId) || materials[0];
 
@@ -84,6 +104,17 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
   const shownLineItems = showAllLines ? rankedLineItems : rankedLineItems.slice(0, BREAKDOWN_PREVIEW_LINES);
   const hiddenValue = rankedLineItems.slice(BREAKDOWN_PREVIEW_LINES).reduce((a, li) => a + li.value, 0);
   const mc = isMachining ? (costs as MachiningCosts) : null;
+  // The derate as this PART sees it: a milled part is an interrupted cut by
+  // definition (the flutes leave the metal every revolution), a turned one only
+  // where its geometry says so.
+  const realisationNow = realisation(
+    settings.cnc?.realisation,
+    isMilledPart || partNeedsInterruptedDerate({
+      odMm: cadAnalysis?.turningProfile?.odMm,
+      boreDiaMm: cadAnalysis?.turningProfile?.boreDiaMm,
+      crossFeatureCount: cadAnalysis?.turningProfile?.crossFeatureList?.length ?? 0,
+    }),
+  );
   const fmt = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const quantityPresets = [1, 10, 50, 100, 500];
@@ -342,8 +373,60 @@ export default function StepQuantity({ data, cadAnalysis, onContinue, onBack, on
                   className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
                 />
                 <p className="text-[10px] text-muted-foreground/80 leading-tight">
-                  Calibrate to a job you know: actual time = book time ÷ efficiency. Every quote recalculates live.
+                  Time the machine is not running: feed-hold, door open, a chip cleared mid-cycle.
+                  How fast it cuts when it IS running is set below.
                   Current cycle ~{mc.cycleTimeSec}s.
+                </p>
+              </div>
+            )}
+
+            {/* CUTTING CONDITIONS — what book speeds actually deliver here.
+                Each factor is separately arguable and carries its reasoning, so a
+                machinist can disagree with a number rather than with a black box.
+                Published speeds all assume favourable conditions; a job shop
+                meets almost none of them. */}
+            {mc && (
+              <div className="space-y-2 border-t border-border pt-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Cutting conditions</span>
+                  <span className="text-sm font-bold text-primary tabular-nums">
+                    ×{realisationNow.multiplier.toFixed(2)}
+                  </span>
+                </div>
+                <p className="text-[10px] text-muted-foreground/80 leading-tight">
+                  Handbook speeds assume a rigid setup, a matched insert and good stock. These say what this
+                  shop actually gets. Like a car’s quoted mileage against the real one — each allowance is
+                  separate, and they multiply.
+                </p>
+                {REALISATION_FIELDS.map(({ key, label, hint }) => {
+                  const value = realisationFactors[key];
+                  return (
+                    <div key={key} className="space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-foreground">{label}</span>
+                        <span className="text-[11px] text-muted-foreground tabular-nums">{value.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.4}
+                        max={1}
+                        step={0.01}
+                        value={value}
+                        onChange={(e) => updateSettings({
+                          cnc: {
+                            ...settings.cnc!,
+                            realisation: { ...realisationFactors, [key]: Number(e.target.value) },
+                          },
+                        })}
+                        className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+                      />
+                      <p className="text-[10px] text-muted-foreground/70 leading-tight">{hint}</p>
+                    </div>
+                  );
+                })}
+                <p className="text-[10px] text-muted-foreground/80 leading-tight border-t border-border/60 pt-2">
+                  {realisationNow.explanation}
+                  {!realisationNow.interruptedApplied && ' Interrupted-cut allowance is held back on this part.'}
                 </p>
               </div>
             )}

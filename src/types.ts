@@ -1,5 +1,6 @@
 import type { ExtractedCadAnalysis } from './utils/cadAnalyzer';
 import type { MachineId } from './utils/machineSelection';
+import type { RealisationFactors } from './utils/realisation';
 
 export type QuoteStatus = 'draft' | 'sent' | 'won' | 'lost' | 'expired';
 
@@ -338,10 +339,29 @@ export interface CncSettings {
    */
   setupBillingMode?: 'time' | 'flat' | 'both';
   /**
-   * Shop efficiency factor (0.6–1.0). actual_time = theoretical_time / factor.
-   * The single most important calibration parameter — expose it prominently.
+   * MACHINE-TIME allowance (0.6–1.0). actual_time = theoretical_time / factor.
+   *
+   * Applied to the WHOLE cycle, cutting and idle alike: feed-hold, a door left
+   * open, the operator stepping away, a chip cleared mid-cycle. It is about time
+   * the machine is not running, and it says nothing about how fast it cuts when
+   * it is.
+   *
+   * HOW IT DIFFERS FROM `realisation`. This one used to be the only place a shop
+   * could say "we are slower than the book", so it was carrying two jobs at once
+   * and could not do either defensibly. Cutting CONDITIONS — tool life, rigidity,
+   * one-off programming, material, interrupted cuts — are now a named stack in
+   * `realisation.ts` that applies to cutting only. Keep them apart: setting both
+   * to absorb the same shortfall charges it twice.
    */
   efficiencyFactor: number;
+  /**
+   * What handbook cutting data actually delivers in this shop, as named factors.
+   *
+   * See `realisation.ts` — each factor is separately arguable and carries its own
+   * reasoning, and the product applies to CUTTING time only. Absent means the
+   * job-shop defaults.
+   */
+  realisation?: Partial<RealisationFactors>;
   /**
    * Client-facing feedrate override (%), mirroring a CAM estimator's "Feedrate
    * Ratio". 100 = run cutting at the programmed feed (default); below 100 runs

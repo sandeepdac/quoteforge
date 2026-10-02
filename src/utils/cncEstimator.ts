@@ -27,6 +27,7 @@ import { TOOL_CHANGE_SEC } from './machineSelection';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
 import type { SecondaryOperation } from './secondaryOps';
 import type { EstimatedTurningOp } from './turningTools';
+import { realisation, partNeedsInterruptedDerate } from './realisation';
 
 export interface MachiningInput {
   /** True for a rotationally-symmetric (turned) part. Only these are costed here. */
@@ -147,10 +148,24 @@ export function calculateMachiningCosts(
   // applies it that way — when the line items did not, Settings -> Feedrate
   // moved the price without moving any row that explained it, and the
   // breakdown stopped adding up to the subtotal it is supposed to account for.
-  const cutSec = (sec: number) => (sec * feedMult) / eff;
+  // WHAT THE BOOK SPEEDS ACTUALLY DELIVER HERE — see realisation.ts.
+  //
+  // Applied to CUTTING only. A derate on surface speed and feed slows the tool
+  // in metal; it does not slow a rapid, a turret index or a spindle settling,
+  // and those are already counted move by move in the idle column. The
+  // conditional interrupted-cut factor joins the product only when this part's
+  // geometry calls for it.
+  const real = realisation(cnc.realisation, partNeedsInterruptedDerate({
+    odMm: input.profile.odMm,
+    boreDiaMm: input.profile.boreDiaMm,
+    crossFeatureCount: input.profile.crossFeatureList?.length ?? 0,
+  }));
+  const cutSec = (sec: number) => (sec * feedMult * real.multiplier) / eff;
   const opCost = (sec: number) => cutSec(sec) * ratePerSec;
   const airCost = (sec: number) => (sec / eff) * ratePerSec;
-  const cycleTimeSec = (t.cuttingSec * feedMult) / eff + t.airSec / eff + cnc.barLoadSec;
+  const theoreticalCuttingSec = t.cuttingSec;
+  const cycleTimeSec =
+    (t.cuttingSec * feedMult * real.multiplier) / eff + t.airSec / eff + cnc.barLoadSec;
 
   // EVERY OPERATION'S TWO COLUMNS, the way a cycle sheet writes them.
   //
@@ -171,13 +186,13 @@ export function calculateMachiningCosts(
   /** Actual seconds for one operation: cutting scaled by the override, idle not. */
   const opSecs = (op: EstimatedTurningOp) => {
     const s = splitFor(op);
-    return (s.cuttingSec * feedMult + s.idleSec) / eff;
+    return (s.cuttingSec * feedMult * real.multiplier + s.idleSec) / eff;
   };
   const opTotalCost = (op: EstimatedTurningOp) => opSecs(op) * ratePerSec;
   /** "3.1s cutting + 12.4s idle" — the phrase the cycle sheets are read in. */
   const splitStr = (op: EstimatedTurningOp) => {
     const s = splitFor(op);
-    return `${r1((s.cuttingSec * feedMult) / eff)}s cutting + ${r1(s.idleSec / eff)}s idle`;
+    return `${r1((s.cuttingSec * feedMult * real.multiplier) / eff)}s cutting + ${r1(s.idleSec / eff)}s idle`;
   };
   const machineCost = (cycleTimeSec / 60) * machineRatePerMin;
 
@@ -269,12 +284,19 @@ export function calculateMachiningCosts(
     // stays because it belongs to no operation — it is the bar feed and the
     // door, which is exactly how Turncircuit's sheets open too.
     { key: 'loading', name: 'Load / unload / bar feed', driver: `${cnc.barLoadSec}s per part — ${t.toolChangeCount} turret ${t.toolChangeCount === 1 ? 'index' : 'indexes'} × ${r1(toolChangeSec)}s are charged on the operations that call for them, not here`, seconds: cnc.barLoadSec, value: cnc.barLoadSec * ratePerSec, color: COLORS.noncut },
+    // BOTH NUMBERS, the way a manufacturer's mileage and the real one are both
+    // published. This row carries no cost of its own: the derate is already
+    // inside every cutting row above. It is here so the quote states what was
+    // assumed, because an allowance nobody can see is one nobody can argue with.
+    { key: 'realisation', name: 'Cutting conditions (already in the rows above)', driver: `theoretical ${r1(theoreticalCuttingSec)}s at book speeds → ${r1(theoreticalCuttingSec * real.multiplier)}s realised. ${real.explanation}. ${real.applied.map((x) => `${x.name} ${x.value} (${x.why})`).join('; ')}`, seconds: 0, value: 0, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min preparation, excluding ${derivedProgrammingMin} min CAM billed separately. Full first-order breakdown: ${derivedSetup.explanation} — batch ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${t.operationCount} operations — provisional allowance, not a tool-life calculation`, value: toolingCost, color: COLORS.tooling },
     { key: 'nre', name: `CAM programming (one-time) ÷ ${qty}`, driver: `${r1(programmingMin)} min NRE over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty} — not billed again on reorder`, value: programmingPerUnit, color: COLORS.nre },
     ...secondaryOpsLineItems(input.secondaryOps, qty),
-  ].filter((li) => Math.abs(li.value) > 0);
+    // The realisation row is explanatory and carries no cost of its own, so it
+    // has to survive the zero filter that drops operations a part does not have.
+  ].filter((li) => Math.abs(li.value) > 0 || li.key === 'realisation');
 
   // --- Per-setup / per-operation plan (a turning job sheet) ----------------
   // Same seconds as the line items, grouped the way a turner reads a job. A
@@ -324,7 +346,7 @@ export function calculateMachiningCosts(
         // "Drilling 1.7 s" looked impossible: true for the metal, but a
         // machinist counts getting the drill there as part of drilling.
         seconds: opSecs(o.op),
-        cuttingSeconds: (s.cuttingSec * feedMult) / eff,
+        cuttingSeconds: (s.cuttingSec * feedMult * real.multiplier) / eff,
         idleSeconds: s.idleSec / eff,
         cost: opTotalCost(o.op),
         color: o.color,
