@@ -46,6 +46,11 @@ export interface DrillConfig {
   clearanceMm: number;
   /** In-position settle / spindle dwell, seconds per hole. */
   settleSec: number;
+  /**
+   * What the drill is made of — see DRILL_SUBSTRATE_VC. Defaults to carbide,
+   * which is what the model always silently assumed.
+   */
+  substrate?: DrillSubstrate;
 }
 
 export const DEFAULT_DRILL_CONFIG: DrillConfig = {
@@ -54,6 +59,7 @@ export const DEFAULT_DRILL_CONFIG: DrillConfig = {
   positioningTravelMm: 90,
   clearanceMm: 2,
   settleSec: 0.3,
+  substrate: 'carbide',
 };
 
 /**
@@ -86,6 +92,30 @@ export function peckDepthMm(diaMm: number, depthMm: number): number {
  * the turning speed, because the chip can only escape back up the flute."
  */
 export const DRILL_SPEED_FRACTION = 0.4;
+
+/**
+ * WHAT THE DRILL IS MADE OF, which decides how fast it can go.
+ *
+ * Every drill in the model ran at carbide speed. They are not interchangeable:
+ * HSS loses hardness above about 600 C and carbide holds past 1000, so the
+ * published speeds differ by well over a factor of two for the same hole in the
+ * same material — brass takes roughly 60-80 m/min on HSS and 150-250 on solid
+ * carbide. Running an HSS drill at carbide speed does not make the hole faster,
+ * it makes the drill blunt.
+ *
+ * A fraction rather than a second speed table, because the RATIO is what the
+ * published data agrees on across materials while the absolute figures vary by
+ * grade and coating.
+ *
+ * DEFAULT IS CARBIDE, so nothing moves unless the shop says otherwise: this is a
+ * property of the tool in the turret, and the tool library is where it is known.
+ */
+export type DrillSubstrate = 'hss' | 'cobalt' | 'carbide';
+export const DRILL_SUBSTRATE_VC: Record<DrillSubstrate, number> = {
+  hss: 0.4,
+  cobalt: 0.55, // HSS-Co: better hot hardness than plain HSS, short of carbide
+  carbide: 1,
+};
 
 /**
  * Drills a shop actually stocks, mm. Metric jobber sizes: 0.5 steps to 13, then
@@ -163,7 +193,11 @@ export function drillHoleSplit(
   // 40% of the turning speed" for exactly that chip-evacuation reason, and the
   // same ratio is the usual rule across materials. At 0.5 the model was running
   // every drill about 25% fast.
-  const vc = Math.max(10, m.cuttingSpeedRough * DRILL_SPEED_FRACTION);
+  // The material sets the surface speed, DRILL_SPEED_FRACTION backs it off for
+  // chip evacuation, and the drill's own SUBSTRATE caps it: an HSS drill cannot
+  // be pushed to a carbide speed whatever the material allows.
+  const substrate = DRILL_SUBSTRATE_VC[cfg.substrate ?? 'carbide'] ?? 1;
+  const vc = Math.max(10, m.cuttingSpeedRough * DRILL_SPEED_FRACTION * substrate);
   const rpm = Math.min(cfg.maxRpm, (vc * 1000) / (Math.PI * d));
   const feedMmPerMin = Math.max(1, drillFeedPerRev(d, m) * rpm);
 
