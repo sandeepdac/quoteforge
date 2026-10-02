@@ -1,6 +1,7 @@
 import type { ExtractedCadAnalysis } from './utils/cadAnalyzer';
 import type { MachineId } from './utils/machineSelection';
 import type { RealisationFactors } from './utils/realisation';
+import type { DrillSubstrate } from './utils/drilling';
 
 export type QuoteStatus = 'draft' | 'sent' | 'won' | 'lost' | 'expired';
 
@@ -294,6 +295,17 @@ export interface ShopTool {
   description: string;
   /** Insert nose radius (mm), optional. */
   noseRadiusMm?: number;
+  /**
+   * What the cutter is made of, for drills and spot drills.
+   *
+   * HSS softens above about 600 C and carbide holds past 1000, so published
+   * speeds for the same hole in the same material differ by more than two to
+   * one. It belongs on the TOOL because that is where it is known: the material
+   * table cannot tell you what is in the turret.
+   *
+   * Absent means carbide, which is what the model always silently assumed.
+   */
+  substrate?: DrillSubstrate;
 }
 
 /** Shop inventory record, separate from the operations that use it. */
@@ -302,6 +314,8 @@ export interface TurningToolAssembly {
   description: string;
   station: string;
   noseRadiusMm?: number;
+  /** HSS / cobalt / carbide — see ShopTool.substrate. */
+  substrate?: DrillSubstrate;
   diameterMm?: number;
   cuttingLengthMm?: number;
   usableReachMm?: number;

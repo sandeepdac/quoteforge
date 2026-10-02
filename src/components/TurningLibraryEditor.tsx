@@ -48,7 +48,14 @@ export default function TurningLibraryEditor({ tools, assemblies: existing, onSa
     const next = OPS.map(({ op }) => {
       const row = assignments.find(t => t.op === op);
       const assembly = clean.find(a => a.id === row?.assemblyId);
-      return { op, assemblyId: assembly?.id, station: assembly?.station ?? '', description: assembly?.description ?? '', noseRadiusMm: assembly?.noseRadiusMm };
+      return {
+        op, assemblyId: assembly?.id,
+        station: assembly?.station ?? '', description: assembly?.description ?? '',
+        noseRadiusMm: assembly?.noseRadiusMm,
+        // Carried onto the row as well as living on the assembly, so a drill's
+        // substrate survives even if the assembly reference is later broken.
+        substrate: assembly?.substrate,
+      };
     });
     onSave(next, clean);
     setMessage('Saved. Create or recalculate a quote to use these assignments; saved historical quotes are unchanged.');
@@ -67,6 +74,18 @@ export default function TurningLibraryEditor({ tools, assemblies: existing, onSa
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         {DIMENSIONS.map(([key, label]) => <label key={key} className="text-xs">{label} (mm)<input className={inputClass} type="number" min="0" step="any" value={a[key] ?? ''} placeholder="Unknown" onChange={e => update(a.id, { [key]: e.target.value === '' ? undefined : Number(e.target.value) })} /></label>)}
       </div>
+      {/* SUBSTRATE — only drills and spot drills read it, and it is worth more
+          than two to one on a cycle time. HSS softens above about 600 C where
+          carbide holds past 1000, so the published speeds for the same hole
+          differ by that much. The model cannot know what is in the turret. */}
+      <label className="block text-xs">What the cutter is made of (drills and spot drills only)
+        <select className={inputClass} value={a.substrate ?? ''} onChange={e => update(a.id, { substrate: (e.target.value || undefined) as TurningToolAssembly['substrate'] })}>
+          <option value="">Not stated — treated as carbide</option>
+          <option value="hss">HSS — about 40% of carbide speed</option>
+          <option value="cobalt">HSS-cobalt — about 55%</option>
+          <option value="carbide">Solid carbide — full speed</option>
+        </select>
+      </label>
       <label className="block text-xs">Manufacturer reference / shop source / notes<input className={inputClass} value={a.source ?? ''} onChange={e => update(a.id, { source: e.target.value })} placeholder="Part number, catalogue reference or shop inventory record" /></label>
       <div className="flex items-center justify-between gap-3">
         <label className="text-xs"><input type="checkbox" checked={a.inventoryConfirmed ?? false} onChange={e => update(a.id, { inventoryConfirmed: e.target.checked })} /> Shop confirms this assembly is in inventory (not suitability approval)</label>

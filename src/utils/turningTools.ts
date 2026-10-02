@@ -1,4 +1,5 @@
 import type { ShopTool, TurningOp, TurningToolAssembly } from '../types';
+import type { DrillSubstrate } from './drilling';
 
 export type EstimatedTurningOp = TurningOp | 'groove' | 'thread' | 'tap' | 'cross';
 export const TURNING_SEQUENCE: EstimatedTurningOp[] = [
@@ -21,6 +22,8 @@ export interface ToolAssignment {
    * not see it — so an S08K bar and a 40 mm bar bored at the same depth.
    */
   diameterMm?: number;
+  /** HSS / cobalt / carbide, for the operations where it decides the speed. */
+  substrate?: DrillSubstrate;
   warning?: string;
 }
 
@@ -48,6 +51,9 @@ export function resolveTurningTool(
     label: `${station} — ${description}`, station, description, noseRadiusMm: record.noseRadiusMm,
     // Only an assembly records geometry; a legacy row carries none.
     diameterMm: assembly?.diameterMm,
+    // Substrate can live on either: it is a property of the cutter, and a plain
+    // operation row names the cutter just as an assembly does.
+    substrate: record.substrate,
     warning: conflict ? `${station}: conflicting legacy tool descriptions; resolve the assembly assignments.`
       : !assembly?.inventoryConfirmed ? `${station}: inventory not confirmed; sample/legacy tooling is an assumption.` : undefined,
   };
@@ -70,7 +76,8 @@ export function seedTurningInventory(tools: ShopTool[], existing?: TurningToolAs
     let a = assemblies.find(a => a.station === stationKey(t.station) && a.description === t.description.trim());
     if (!a) {
       a = { id: `legacy-${assemblies.length + 1}`, station: stationKey(t.station), description: t.description.trim(),
-        noseRadiusMm: t.noseRadiusMm, inventoryConfirmed: false, source: 'Existing operation mapping — confirm against shop inventory' };
+        noseRadiusMm: t.noseRadiusMm, substrate: t.substrate,
+        inventoryConfirmed: false, source: 'Existing operation mapping — confirm against shop inventory' };
       assemblies.push(a);
     }
     return { ...t, assemblyId: a.id };
