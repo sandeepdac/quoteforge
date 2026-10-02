@@ -31,8 +31,20 @@ export interface TurningProfile {
   boreDepthMm: number;
   /** Number of grooves (parting-tool recesses). */
   grooveCount: number;
-  /** Number of threaded features (from the drawing callout). */
+  /** Number of SINGLE-POINT threaded features (screwcut, not tapped). */
   threadCount: number;
+  /**
+   * Pitch of those screwcut threads (mm), from the drawing callout.
+   *
+   * It sets both the feed (a thread's feed IS its pitch) and the number of
+   * infeeds, so it sets the whole operation — which is why it cannot stay the
+   * hardcoded 1.5 mm it was. Its own field rather than borrowed from `threads`
+   * below: those are TAPPED holes, a different feature, and an M2 x 0.4 tapped
+   * hole must not decide the pitch of an unrelated screwcut thread.
+   *
+   * Absent falls back to 1.5 mm, a common coarse pitch.
+   */
+  threadPitchMm?: number;
   /** End faces to face off (1 or 2). */
   faceCount: number;
   /** Off-axis holes / flats / keyways present → needs live tooling / 2nd op. */
@@ -703,10 +715,11 @@ export function estimateTurningTimes(
   // hardcoded 1.5 mm, so an M2 x 0.4 and a 3 mm-pitch trapezoidal thread cost
   // exactly the same — and the pitch is what sets both the feed and the number
   // of passes, which is to say it sets the whole operation.
-  const threadPitchMm = (() => {
-    const called = (profile.threads ?? []).find((t) => t.pitchMm > 0);
-    return called ? called.pitchMm : 1.5;
-  })();
+  //
+  // From the SCREWCUT thread's own field. It briefly read `profile.threads`,
+  // which is the TAPPED-hole list: a different feature, so a tapped M2 x 0.4
+  // would have set the pitch of an unrelated screwcut thread.
+  const threadPitchMm = num(profile.threadPitchMm, 1.5);
   const threadPasses = threadPassCount(threadPitchMm);
   // Screwcutting has its own speed — see THREAD_VC_FRACTION. The thread is cut
   // on the OD for an external thread and in the bore for an internal one; the
