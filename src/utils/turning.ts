@@ -219,6 +219,9 @@ export const ACHIEVABLE_RA_DERATE = 0.86;
  */
 export const DEBURR_CHAMFER_MM = 0.3;
 
+/** Grooving insert width (mm) — the floor a plunge leaves, and the finish path. */
+export const GROOVE_TOOL_WIDTH_MM = 3;
+
 /** At or below this Ra a single pass will not hold it: a spring pass follows. */
 export const SPRING_PASS_RA_UM = 0.8;
 
@@ -264,6 +267,86 @@ export function finishFeedForRaMmPerRev(noseRadiusMm: number, raUm: number): num
  * a multiplier on feed. The deep-bore parts in the calibration set are exactly
  * where the model reads fastest, and this is one reason why.
  */
+/**
+ * SCREWCUTTING RUNS SLOWER THAN TURNING, and the model ran it faster.
+ *
+ * A single-point threading insert cuts with its WHOLE FORM engaged — both flanks
+ * and the crown at once — not with a point. The chip is V-shaped, thick at the
+ * root, and leaves along two faces that fight each other. Published thread-
+ * turning data is consistently well below general turning data for the same
+ * material and grade: where brass turns at 300-400 m/min, thread turning in
+ * brass is quoted around 100-150.
+ *
+ * The model used the material's FINISH turning speed, so it screwcut a G1/4 in
+ * brass at 4,300 rpm. No shop threads at 4,300 rpm; the cycle has to infeed and
+ * retract inside a revolution at the end of every pass.
+ *
+ * A fraction of the finish speed rather than a second table: the ratio is what
+ * the published data agrees on, while the absolute numbers vary by grade.
+ */
+export const THREAD_VC_FRACTION = 0.35;
+
+/**
+ * HOW MANY PASSES A THREAD TAKES — the term that was a hardcoded 6.
+ *
+ * You cannot cut a thread in one pass: the full form is removed in successive
+ * infeeds, each taking a shallower bite than the last so the chip AREA stays
+ * roughly constant as the flank engagement grows. Tooling catalogues publish the
+ * count against pitch (Sandvik, Seco and Vardex all tabulate "number of
+ * infeeds") and they agree closely:
+ *
+ *     pitch mm   0.5   1.0   1.5   2.0   2.5   3.0
+ *     infeeds      5     7     9    11    13    15
+ *
+ * which is a straight line in pitch: 3 + 4p. That is the relation used here,
+ * plus ONE spring pass at final depth, because a thread that has to gauge gets
+ * a cleanup pass that removes nothing.
+ *
+ * So a G1/4 (1.337 mm pitch) takes 9 infeeds and a spring pass, not 6 — and the
+ * 6 was the same number whatever the pitch, which is the real error: a 0.35 mm
+ * pitch and a 3 mm pitch were the same amount of work.
+ */
+export function threadPassCount(pitchMm: number): number {
+  const p = Math.max(0.1, pitchMm);
+  const infeeds = Math.min(24, Math.max(4, Math.ceil(3 + 4 * p)));
+  return infeeds + 1; // the spring pass
+}
+
+/**
+ * Thread form height — how deep the tool has to get, radially (mm).
+ *
+ * 60-degree ISO metric: h = 0.6134 * P. Kept as a named relation because it is
+ * what makes a coarse thread more work than a fine one.
+ */
+export const threadFormHeightMm = (pitchMm: number) => 0.6134 * Math.max(0.05, pitchMm);
+
+/**
+ * HOW DEEP A CUT A BORING BAR CAN TAKE — a tool limit the model did not have.
+ *
+ * Internal depth of cut was taken from the MATERIAL (`depthOfCutRough * 0.6`),
+ * so a 3 mm-deep roughing cut in brass was attempted through an 8 mm bar. It
+ * cannot be: a boring bar is a cantilever, deflection goes as the cube of its
+ * overhang and inversely as the FOURTH POWER of its diameter, and the cut simply
+ * pushes the bar off line until it chatters.
+ *
+ * Standard shop practice for a steel bar at ordinary overhang is a depth of cut
+ * of roughly a TENTH of the bar diameter — so an S08K (8 mm) bar takes 0.8 mm,
+ * and that is the number that decides how many passes a bore needs. For the
+ * housing's ⌀10.5 → ⌀11.8 that is still one roughing pass; on a bore with real
+ * stock in it the pass count rises steeply, which is correct.
+ *
+ * The bar diameter comes from the shop's own tool assembly where it is recorded.
+ * Where it is not, it is inferred from the bore: a bar has to fit down the hole
+ * with room for the chip, which in practice means about 70% of the bore.
+ */
+export const BAR_DEPTH_OF_CUT_FRACTION = 0.1;
+export const barDiameterForBore = (boreDiaMm: number) => 0.7 * Math.max(0.5, boreDiaMm);
+
+export function boringDepthOfCutMm(barDiaMm: number, materialApMm: number): number {
+  const barLimit = BAR_DEPTH_OF_CUT_FRACTION * Math.max(0.5, barDiaMm);
+  return Math.max(0.05, Math.min(materialApMm, barLimit));
+}
+
 export function boringOverhangDerate(lengthOverDiameter: number): number {
   if (lengthOverDiameter <= 3) return 1;
   if (lengthOverDiameter <= 4) return 0.8;
@@ -550,10 +633,15 @@ export function estimateTurningTimes(
     // bore at full feed however deep it was, which is one reason the deep-bore
     // parts are the ones it reads fastest on.
     const overhang = boringOverhangDerate(depth / Math.max(0.1, profile.boreDiaMm));
+    // The BAR decides the depth of cut, not the material — see
+    // boringDepthOfCutMm. Its diameter comes from the shop's assembly where
+    // recorded, otherwise from what fits down the hole.
+    const barDiaMm = toolFor('bore').diameterMm ?? barDiameterForBore(profile.boreDiaMm);
+    const boreApMm = boringDepthOfCutMm(barDiaMm, m.depthOfCutRough * 0.6) * overhang;
     let boreRoughSec = 0;
+    let boringPasses = 0;
     if (radial > 0.1) {
-      const ap = Math.max(0.3, m.depthOfCutRough * 0.6 * overhang); // internal cuts run lighter
-      const boringPasses = Math.ceil(radial / ap);
+      boringPasses = Math.ceil(radial / Math.max(0.05, boreApMm));
       boreRoughSec = boringPasses * min(depth / Math.max(0.001, m.feedRough * overhang * boreRpm));
     }
     const boreFeed = feedForFinish('bore', m.feedFinish, 0.4) * overhang;
@@ -561,9 +649,8 @@ export function estimateTurningTimes(
     const boreFinishSec = finishPasses * min(depth / boreFeedMmPerMin);
     // The bar travels the full depth back out of the hole between passes, and
     // the whole operation still has to reach the bore face to begin with.
-    const borePassRetractSec = boreRoughSec > 0
-      ? Math.ceil(radial / Math.max(0.3, m.depthOfCutRough * 0.6 * overhang))
-        * (depth / Math.max(1, (cfg.opApproach ?? DEFAULT_OP_APPROACH).rapidMmPerMin)) * 60
+    const borePassRetractSec = boringPasses > 0
+      ? boringPasses * (depth / Math.max(1, (cfg.opApproach ?? DEFAULT_OP_APPROACH).rapidMmPerMin)) * 60
       : 0;
     boreCutSec = boreRoughSec + boreFinishSec;
     boreIdleSec = borePassRetractSec + approach(boreFeedMmPerMin);
@@ -575,19 +662,57 @@ export function estimateTurningTimes(
   // that the tool is at the diameter and the spindle is at speed, and what
   // happens between grooves is a short index along Z.
   const grooveFeedMmPerMin = Math.max(0.001, 0.05 * rpm(m.cuttingSpeedFinish, od, cfg.maxRpm));
+  // A GROOVE IS ROUGHED AND THEN FINISHED, like every other dimensioned feature.
+  //
+  // It was one continuous plunge to depth, which is not how a groove is cut and
+  // not how one holds a width or a floor radius:
+  //
+  //   THE PLUNGE IS PECKED. A grooving insert cutting a slot deeper than about
+  //   its own width traps the chip — there is nowhere for it to go but back up
+  //   the slot it came from — so the tool retracts to clear it, on the same
+  //   reasoning as a deep hole. Standard practice is a peck every depth-of-cut.
+  //
+  //   THEN THE FLOOR AND THE FLANKS ARE FINISHED. A plunged groove leaves the
+  //   insert's own form at the bottom and a torn wall on each side; a dimensioned
+  //   recess gets a pass along the floor and up both flanks.
+  //
+  // Which is why Lance's sheet says "rough AND finish recess" and the model had
+  // one number: it was pricing the roughing plunge alone.
+  const grooveDepthMm = od * 0.1;
+  const grooveFinishFeedMmPerMin = Math.max(
+    0.001, feedForFinish('groove', m.feedFinish, 0.2) * rpm(m.cuttingSpeedFinish, od, cfg.maxRpm));
+  const groovePecks = Math.max(1, Math.ceil(grooveDepthMm / Math.max(0.1, m.depthOfCutRough)));
+  // Floor across the insert width, then up each flank to the OD.
+  const grooveFinishPathMm = GROOVE_TOOL_WIDTH_MM + 2 * grooveDepthMm;
   const grooveCutSec = profile.grooveCount > 0
-    ? profile.grooveCount * min((od * 0.1) / grooveFeedMmPerMin)
+    ? profile.grooveCount * (
+        min(grooveDepthMm / grooveFeedMmPerMin)
+        + min(grooveFinishPathMm / grooveFinishFeedMmPerMin)
+      )
     : 0;
   const grooveIdleSec = profile.grooveCount > 0
     ? repeated(profile.grooveCount, grooveFeedMmPerMin)
+      // Each peck comes right out of the slot and goes back down it.
+      + profile.grooveCount * (groovePecks - 1) * 2 * (grooveDepthMm / Math.max(1, rapid)) * 60
     : 0;
   const grooveSec = grooveCutSec + grooveIdleSec;
 
   // Threading — multi-pass over the thread length, per threaded feature.
   const threadLenMm = Math.min(1.5 * od, profile.lengthMm * 0.3);
-  const threadPitchMm = 1.5; // mm — typical; refined from the drawing callout later
-  const threadPasses = 6;
-  const threadRpm = rpm(m.cuttingSpeedFinish, od, cfg.maxRpm);
+  // THE PITCH COMES FROM THE CALLOUT when the drawing gave one. It was a
+  // hardcoded 1.5 mm, so an M2 x 0.4 and a 3 mm-pitch trapezoidal thread cost
+  // exactly the same — and the pitch is what sets both the feed and the number
+  // of passes, which is to say it sets the whole operation.
+  const threadPitchMm = (() => {
+    const called = (profile.threads ?? []).find((t) => t.pitchMm > 0);
+    return called ? called.pitchMm : 1.5;
+  })();
+  const threadPasses = threadPassCount(threadPitchMm);
+  // Screwcutting has its own speed — see THREAD_VC_FRACTION. The thread is cut
+  // on the OD for an external thread and in the bore for an internal one; the
+  // bore is the smaller diameter and therefore the higher rpm, so the OD is the
+  // conservative choice and the one a flange thread actually runs at.
+  const threadRpm = rpm(m.cuttingSpeedFinish * THREAD_VC_FRACTION, od, cfg.maxRpm);
   const threadCutSec = profile.threadCount > 0
     ? profile.threadCount
       * min((threadPasses * threadLenMm) / (threadPitchMm * threadRpm))
@@ -600,7 +725,17 @@ export function estimateTurningTimes(
   const threadIdleSec = profile.threadCount > 0
     ? profile.threadCount * (
         approach(threadPitchMm * threadRpm)
-        + (threadPasses - 1) * (threadLenMm / Math.max(1, rapid)) * 60
+        + (threadPasses - 1) * (
+          // Retract clear and rapid the full thread length back to the start.
+          (threadLenMm / Math.max(1, rapid)) * 60
+          // THEN WAIT FOR THE SPINDLE. A thread pass cannot start anywhere: the
+          // control has to see the one-per-revolution marker so every pass
+          // enters the same helix. On average that is half a revolution of
+          // waiting and at worst a full one — taken as a full revolution, which
+          // is the figure that matters at the LOW rpm screwcutting actually runs
+          // at, and is why a thread is not simply a series of fast passes.
+          + 60 / Math.max(1, threadRpm)
+        )
       )
     : 0;
   const threadSec = threadCutSec + threadIdleSec;
@@ -643,9 +778,32 @@ export function estimateTurningTimes(
     // Through the part: the far side gets a burr too.
     if (h.depthMm >= profile.lengthMm * 0.95) deburrEdges.push(h.diameterMm);
   }
+  // A TAP leaves its burr at the mouth of the hole it went into — a chamfer
+  // reaches that, so a tapped thread is deburred like any other edge.
   for (const th of profile.threads ?? []) deburrEdges.push(th.tapDrillMm);
+
   let deburrCutSec = 0;
   let deburrIdleSec = 0;
+
+  // A SCREWCUT THREAD'S BURR LIES ALONG THE HELIX, NOT AT A POINT.
+  //
+  // Screwcut threads were being deburred as though they were hole mouths: one
+  // 0.3 mm chamfer, a fraction of a second. But single-point threading raises a
+  // burr on the flank of EVERY TURN of the thread, the whole way along it, and
+  // no chamfer cut at the mouth reaches that. What a shop does is run the thread
+  // path AGAIN — the threading tool is still in the turret and still at depth —
+  // so deburring a screwcut thread costs A PASS OVER THE THREAD. That is the
+  // same arithmetic as a threading pass, and about a hundred times the chamfer
+  // the model was charging.
+  //
+  // (A tap cannot be re-run this way, which is why tapped threads are handled
+  // as mouth chamfers above and screwcut ones here.)
+  for (let i = 0; i < profile.threadCount; i++) {
+    const passFeed = Math.max(0.001, threadPitchMm * threadRpm);
+    deburrCutSec += min(threadLenMm / passFeed);
+    deburrIdleSec += approach(passFeed) + 60 / Math.max(1, threadRpm);
+  }
+
   for (const dia of deburrEdges) {
     const edgeRpm = rpm(m.cuttingSpeedFinish, Math.max(0.5, dia), cfg.maxRpm);
     const feedMmPerMin = Math.max(0.001, m.feedFinish * edgeRpm);

@@ -12,6 +12,15 @@ export interface ToolAssignment {
   station: string;
   description: string;
   noseRadiusMm?: number;
+  /**
+   * Shank / cutter diameter (mm) from the shop assembly, where recorded.
+   *
+   * Carried for the same reason `noseRadiusMm` is: it is an INPUT to the cut,
+   * not a label on it. A boring bar's diameter sets how deep a cut it can take
+   * before it deflects, and the assembly recorded it while the time model could
+   * not see it — so an S08K bar and a 40 mm bar bored at the same depth.
+   */
+  diameterMm?: number;
   warning?: string;
 }
 
@@ -37,6 +46,8 @@ export function resolveTurningTool(
   return {
     op, identity: row?.assemblyId ? `assembly:${row.assemblyId}` : `station:${station}${conflict ? `:${op}` : ''}`,
     label: `${station} — ${description}`, station, description, noseRadiusMm: record.noseRadiusMm,
+    // Only an assembly records geometry; a legacy row carries none.
+    diameterMm: assembly?.diameterMm,
     warning: conflict ? `${station}: conflicting legacy tool descriptions; resolve the assembly assignments.`
       : !assembly?.inventoryConfirmed ? `${station}: inventory not confirmed; sample/legacy tooling is an assumption.` : undefined,
   };
