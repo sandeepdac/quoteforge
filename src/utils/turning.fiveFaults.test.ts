@@ -71,13 +71,14 @@ describe('fault 1 — a thread is not six passes at turning speed', () => {
     // over the SAME length a fine thread needs more revolutions per pass and
     // more time overall, even though it takes fewer passes. 0.4 mm pitch over
     // 21 mm is 52 revs a pass; 1.75 mm pitch is 12.
-    const threadSec = (callout: string, depthMm: number) => {
-      const t = estimateTurningTimes(
-        { ...housing, threads: [threadFromCallout(callout, depthMm)!] }, brass, 55, cfg);
+    // The SCREWCUT thread's own pitch field — not `threads`, which is the
+    // tapped-hole list and a different feature entirely.
+    const threadSec = (pitchMm: number) => {
+      const t = estimateTurningTimes({ ...housing, threadPitchMm: pitchMm }, brass, 55, cfg);
       return t.opTimes.find(o => o.op === 'thread')!.cuttingSec;
     };
-    const fine = threadSec('M2x0.4', 5);
-    const coarse = threadSec('M12', 12);
+    const fine = threadSec(threadFromCallout('M2x0.4', 5)!.pitchMm);    // 0.4
+    const coarse = threadSec(threadFromCallout('M12', 12)!.pitchMm);    // 1.75
     expect(fine).not.toBeCloseTo(coarse, 2);   // the pitch is read at all
     expect(fine).toBeGreaterThan(coarse);      // and fine is slower per unit length
   });
