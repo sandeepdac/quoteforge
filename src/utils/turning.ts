@@ -14,7 +14,7 @@
  * consistently they give a repeatable number the efficiency factor can calibrate.
  */
 import type { MaterialProps } from './materials';
-import { crossFeaturesSplit, drillHoleSplit, spotDrillSplit, tapThreadsSplit, standardDrillMm, boringStockMm, DEFAULT_CROSS_CONFIG, DEFAULT_DRILL_CONFIG } from './drilling';
+import { crossFeaturesSplit, drillHoleSplit, spotDrillSplit, tapThreadsSplit, standardDrillMm, boringStockMm, DEFAULT_CROSS_CONFIG, DEFAULT_DRILL_CONFIG, THREAD_CATALOG } from './drilling';
 import type { ThreadSpec } from './drilling';
 import type { ShopTool, TurningToolAssembly } from '../types';
 import { countToolSelections, resolveTurningTool, TURNING_SEQUENCE, type ToolAssignment, type EstimatedTurningOp } from './turningTools';
@@ -192,6 +192,8 @@ export interface TurningTimes {
   idleSec: number;
   /** Every operation that carries time, with its two columns. */
   opTimes: TurningOpTime[];
+  /** Called-out threads this part SCREWCUTS rather than taps — see isScrewcutOnLathe. */
+  screwcutCallouts: string[];
   /** Distinct assemblies (unassigned operation groups are provisional tools). */
   toolCount: number;
   operationCount: number;
@@ -322,6 +324,64 @@ export function threadPassCount(pitchMm: number): number {
   const p = Math.max(0.1, pitchMm);
   const infeeds = Math.min(24, Math.max(4, Math.ceil(3 + 4 * p)));
   return infeeds + 1; // the spring pass
+}
+
+/**
+ * Smallest major diameter a lathe single-points rather than taps (mm).
+ *
+ * A tap in a turret holder is routine for small coaxial threads. As the size
+ * goes up the tap's torque, its cost and the risk of breaking it in a blind hole
+ * all rise, and an internal threading bar — which cuts any pitch, holds a gauge
+ * size by offset and never strips a part — takes over. Twelve is a common
+ * changeover; it is stated here as a shop practice, not a physical limit.
+ */
+export const SCREWCUT_MIN_MAJOR_MM = 12;
+
+/** Pipe-thread families: sealing threads, single-pointed on a lathe as routine. */
+const PIPE_THREAD = /^(G|R|Rc|Rp|BSP|BSPT|BSPP|NPT|NPTF)\s?\d/i;
+
+/** The coaxial hole a called-out thread sits in, if any — matched on tap drill. */
+export function hostHoleFor(
+  t: Pick<ThreadSpec, 'tapDrillMm'>,
+  coaxialHoles: Array<{ diameterMm: number; depthMm: number }>,
+): { diameterMm: number; depthMm: number } | undefined {
+  const tol = (d: number) => Math.max(0.15, 0.02 * d);
+  return coaxialHoles.find((h) => Math.abs(h.diameterMm - t.tapDrillMm) <= tol(h.diameterMm));
+}
+
+/**
+ * IS THIS THREAD SCREWCUT ON A LATHE, OR TAPPED?
+ *
+ * Every confirmed thread used to be tapped. Turncircuit's own cycle sheet says
+ * otherwise for the VOC housing: "screw cut internal G1/4 — SNVRC10U-5LK 5LKIR
+ * 19 BSPT", an internal threading bar, followed by "deburr thread" with the
+ * same tool. Two conditions, both from the part rather than a judgement:
+ *
+ *   COAXIAL. The thread sits in a hole on the turning axis — its tap drill
+ *   matches the main bore or one of the other coaxial holes. Only then can the
+ *   lathe's own spindle drive a single-point tool through it. An off-axis
+ *   thread is a driven tool's job, and a driven tool taps.
+ *
+ *   A SIZE OR FAMILY A LATHE SINGLE-POINTS. Pipe threads (G, Rc, BSPT, NPT)
+ *   are sealing threads and are screwcut as routine — a taper one cannot be
+ *   held by a straight tap at all without a taper tap, and the threading bar
+ *   generates the taper by interpolation. Otherwise anything with a major
+ *   diameter of SCREWCUT_MIN_MAJOR_MM or more.
+ *
+ * What it changes is the OPERATION, not much of the time: modelled as an
+ * internal thread at its own diameter, a G1/4 in brass screwcuts in about the
+ * time it would tap. It does change the tool on the traveller and — because a
+ * screwcut thread is deburred by running the threading tool along the helix
+ * again, where a tapped hole gets a chamfer at its mouth — the deburr.
+ */
+export function isScrewcutOnLathe(
+  t: Pick<ThreadSpec, 'callout' | 'tapDrillMm' | 'pitchMm'>,
+  coaxialHoles: Array<{ diameterMm: number; depthMm: number }>,
+): boolean {
+  if (!hostHoleFor(t, coaxialHoles)) return false;
+  if (PIPE_THREAD.test(t.callout.trim())) return true;
+  const major = THREAD_CATALOG[t.callout]?.majorMm ?? t.tapDrillMm + t.pitchMm;
+  return major >= SCREWCUT_MIN_MAJOR_MM;
 }
 
 /**
@@ -752,6 +812,19 @@ export function estimateTurningTimes(
     : 0;
   const grooveSec = grooveCutSec + grooveIdleSec;
 
+  // WHICH CALLED-OUT THREADS ARE SCREWCUT, and which are tapped.
+  //
+  // Every confirmed thread used to be tapped. A coaxial pipe thread on a lathe
+  // is not: Turncircuit's sheet for the VOC housing reads "screw cut internal
+  // G1/4 — SNVRC10U-5LK 5LKIR 19 BSPT", an internal threading bar, and then
+  // "deburr thread" with the SAME tool. See isScrewcutOnLathe for the rule.
+  const coaxialHoles = [
+    ...(profile.boreDiaMm > 0 ? [{ diameterMm: profile.boreDiaMm, depthMm: profile.boreDepthMm }] : []),
+    ...(profile.additionalBores ?? []),
+  ];
+  const screwcutThreads = (profile.threads ?? []).filter((t) => isScrewcutOnLathe(t, coaxialHoles));
+  const tappedThreads = (profile.threads ?? []).filter((t) => !isScrewcutOnLathe(t, coaxialHoles));
+
   // Threading — multi-pass over the thread length, per threaded feature.
   const threadLenMm = Math.min(1.5 * od, profile.lengthMm * 0.3);
   // THE PITCH COMES FROM THE CALLOUT when the drawing gave one. It was a
@@ -769,31 +842,47 @@ export function estimateTurningTimes(
   // bore is the smaller diameter and therefore the higher rpm, so the OD is the
   // conservative choice and the one a flange thread actually runs at.
   const threadRpm = rpm(m.cuttingSpeedFinish * THREAD_VC_FRACTION, od, cfg.maxRpm);
-  const threadCutSec = profile.threadCount > 0
-    ? profile.threadCount
-      * min((threadPasses * threadLenMm) / (threadPitchMm * threadRpm))
-    : 0;
-  // A THREADING CYCLE IS NOT SIX CONTINUOUS PASSES. Between each one the tool
-  // retracts clear, rapids the full thread length back to the start and steps
-  // in for the next depth — six passes means five of those return trips plus
-  // the approach to the first. This was the one operation charged no
-  // non-cutting time at all, which is why it alone had an empty idle column.
-  const threadIdleSec = profile.threadCount > 0
-    ? profile.threadCount * (
-        approach(threadPitchMm * threadRpm)
-        + (threadPasses - 1) * (
-          // Retract clear and rapid the full thread length back to the start.
-          (threadLenMm / Math.max(1, rapid)) * 60
-          // THEN WAIT FOR THE SPINDLE. A thread pass cannot start anywhere: the
-          // control has to see the one-per-revolution marker so every pass
-          // enters the same helix. On average that is half a revolution of
-          // waiting and at worst a full one — taken as a full revolution, which
-          // is the figure that matters at the LOW rpm screwcutting actually runs
-          // at, and is why a thread is not simply a series of fast passes.
-          + 60 / Math.max(1, threadRpm)
-        )
-      )
-    : 0;
+
+  // ONE SINGLE-POINT THREAD, timed at its own pitch, diameter and length.
+  //
+  // An EXTERNAL thread is cut at the OD. An INTERNAL one is cut at its own
+  // major diameter, in the bore — and is no longer than the hole it sits in.
+  const singlePoint = (pitchMm: number, diaMm: number, lengthMm: number) => {
+    const passes = threadPassCount(pitchMm);
+    const n = rpm(m.cuttingSpeedFinish * THREAD_VC_FRACTION, Math.max(0.5, diaMm), cfg.maxRpm);
+    const feed = Math.max(0.001, pitchMm * n);
+    return {
+      n, feed, lengthMm,
+      cuttingSec: min((passes * lengthMm) / feed),
+      // A THREADING CYCLE IS NOT CONTINUOUS PASSES. Between each one the tool
+      // retracts clear, rapids the thread length back to the start and steps in
+      // for the next depth.
+      idleSec: approach(feed) + (passes - 1) * (
+        (lengthMm / Math.max(1, rapid)) * 60
+        // THEN WAIT FOR THE SPINDLE. A thread pass cannot start anywhere: the
+        // control has to see the one-per-revolution marker so every pass enters
+        // the same helix. Taken as a full revolution, which is the figure that
+        // matters at the low rpm screwcutting actually runs at.
+        + 60 / Math.max(1, n)
+      ),
+    };
+  };
+  const singlePointThreads = [
+    // Threads entered by count: external, at the OD, length from the part.
+    ...Array.from({ length: Math.max(0, profile.threadCount) }, () =>
+      singlePoint(threadPitchMm, od, threadLenMm)),
+    // Called-out threads that a lathe screwcuts rather than taps: internal, at
+    // their own major diameter, no longer than the hole they are in.
+    ...screwcutThreads.flatMap((t) => {
+      const host = hostHoleFor(t, coaxialHoles);
+      const major = THREAD_CATALOG[t.callout]?.majorMm ?? t.tapDrillMm + t.pitchMm;
+      const lengthMm = Math.max(0.5, Math.min(t.depthMm, host?.depthMm ?? t.depthMm));
+      return Array.from({ length: Math.max(1, Math.round(t.count ?? 1)) }, () =>
+        singlePoint(t.pitchMm, major, lengthMm));
+    }),
+  ];
+  const threadCutSec = singlePointThreads.reduce((a, x) => a + x.cuttingSec, 0);
+  const threadIdleSec = singlePointThreads.reduce((a, x) => a + x.idleSec, 0);
   const threadSec = threadCutSec + threadIdleSec;
 
   // Part-off — plunge to centre at a reduced speed.
@@ -834,7 +923,7 @@ export function estimateTurningTimes(
   }
   // A TAP leaves its burr at the mouth of the hole it went into — a chamfer
   // reaches that, so a tapped thread is deburred like any other edge.
-  for (const th of profile.threads ?? []) deburrEdges.push(th.tapDrillMm);
+  for (const th of tappedThreads) deburrEdges.push(th.tapDrillMm);
 
   let deburrCutSec = 0;
   let deburrIdleSec = 0;
@@ -852,10 +941,11 @@ export function estimateTurningTimes(
   //
   // (A tap cannot be re-run this way, which is why tapped threads are handled
   // as mouth chamfers above and screwcut ones here.)
-  for (let i = 0; i < profile.threadCount; i++) {
-    const passFeed = Math.max(0.001, threadPitchMm * threadRpm);
-    deburrCutSec += min(threadLenMm / passFeed);
-    deburrIdleSec += approach(passFeed) + 60 / Math.max(1, threadRpm);
+  // Every single-point thread — entered by count or screwcut from a callout —
+  // at its OWN feed, length and speed.
+  for (const th of singlePointThreads) {
+    deburrCutSec += min(th.lengthMm / th.feed);
+    deburrIdleSec += approach(th.feed) + 60 / Math.max(1, th.n);
   }
 
   for (const dia of deburrEdges) {
@@ -878,7 +968,8 @@ export function estimateTurningTimes(
   // Tapping. A thread is the one operation with no geometric signature — the
   // solid holds only the tap drill — so these arrive as callouts, measured or
   // proposed, never inferred from a face.
-  const tap = tapThreadsSplit(profile.threads, m);
+  // Only the threads that are actually TAPPED; screwcut ones are timed above.
+  const tap = tapThreadsSplit(tappedThreads, m);
   const tapSec = tap.cuttingSec + tap.idleSec;
 
   const times = { face: facingSec, rough: roughSec, finish: finishSec, spot: spotSec, drill: drillSec,
@@ -939,5 +1030,6 @@ export function estimateTurningTimes(
 
   return { spotSec, deburrSec, drillDiaMm, facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec,
     airSec: idleSec, idleSec, cuttingSec, opTimes, toolCount, toolChangeCount, rapidSec: 0,
+    screwcutCallouts: screwcutThreads.map((t) => t.callout),
     toolAssignments, operationCount: toolAssignments.length };
 }
