@@ -47,6 +47,17 @@ export interface TurningProfile {
    * round OD over the whole length.
    */
   odRegions?: Array<{ diameterMm: number; zStartMm: number; zEndMm: number; lengthMm: number; kind: 'boss' | 'recess' }>;
+  /**
+   * The NARROW hole a stepped bore is drilled through at, and its full depth.
+   *
+   * When a narrower hole runs on from the main bore, the shop drills the narrow
+   * one the whole way — through the mouth's position too — and bores the mouth
+   * up from it. On the VOC housing that is ⌀10 for 70 mm: the "10mm HSS drill
+   * (70mm deep)" on the shop's sheet. The narrow runs it covers are not in
+   * `additionalBores`, so they are not drilled twice. Only reported where a
+   * boring bar can open the step (a few mm on diameter).
+   */
+  pilotHole?: { diameterMm: number; depthMm: number };
   /** Number of SINGLE-POINT threaded features (screwcut, not tapped). */
   threadCount: number;
   /**
@@ -798,8 +809,17 @@ export function estimateTurningTimes(
     // A drill cannot hold a dimensioned bore anyway — it cuts oversize, out of
     // round and rough — so anything the drawing dimensions is drilled under and
     // bored. Now the drill is a size a shop owns and the bore has real stock.
+    // A STEPPED BORE is drilled through at its narrow diameter, the whole way,
+    // and the mouth is bored up from that — see TurningProfile.pilotHole. The
+    // drill is the narrow hole's own size and depth, not a separate pilot.
+    const pilot = profile.pilotHole && profile.pilotHole.diameterMm > 0
+      && profile.pilotHole.diameterMm < profile.boreDiaMm && profile.pilotHole.depthMm >= depth
+      ? profile.pilotHole : undefined;
     const boreStock = boringStockMm(profile.boreDiaMm);
-    const drillDia = standardDrillMm(Math.min(profile.boreDiaMm - boreStock, cfg.maxDrillDiaMm));
+    const drillDia = pilot
+      ? standardDrillMm(Math.min(pilot.diameterMm, cfg.maxDrillDiaMm))
+      : standardDrillMm(Math.min(profile.boreDiaMm - boreStock, cfg.maxDrillDiaMm));
+    const drillDepth = pilot ? pilot.depthMm : depth;
     drillDiaMm = drillDia;
     // Pilot / through drill to the drillable diameter, on the same arithmetic
     // the milling side uses (drilling.ts) so one hole does not cost two
@@ -810,7 +830,7 @@ export function estimateTurningTimes(
     // two ⌀11 holes are 125 mm deep — an L/D of eleven — and the real cost is
     // the twenty-odd full retracts needed to clear the chips, not 40% on top of
     // a single plunge.
-    const drillSplit = drillHoleSplit({ diameterMm: drillDia, depthMm: depth }, m, drillCfg('drill'));
+    const drillSplit = drillHoleSplit({ diameterMm: drillDia, depthMm: drillDepth }, m, drillCfg('drill'));
     drillCutSec = drillSplit.cuttingSec;
     drillIdleSec = drillSplit.idleSec;
     drillSec = drillCutSec + drillIdleSec;
