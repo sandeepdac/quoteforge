@@ -81,6 +81,13 @@ export interface MilledPlanInput {
    *  looked for, which was the situation until cones were inspected at all. */
   countersinkSec?: number;
   chamferSec?: number;
+  /** Deburring every edge a cutter leaves — see milledEstimator. Additive. */
+  deburrSec?: number;
+  deburrIdleSec?: number;
+  deburrEdges?: number;
+  /** Parting a bar-fed part off the bar, and the bar it comes off. */
+  partoffSec?: number;
+  partoffBarDiaMm?: number;
   countersinks?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
   chamfers?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
   setups: number;
@@ -352,20 +359,18 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
       driver: `${nCham} measured chamfer${nCham === 1 ? '' : 's'} — ${chamfs.map((x) => `⌀${r1(x.diameterMm)}@${Math.round(x.includedDeg)}°`).join(', ')}`,
       color: c.facing,
     };
-  } else if ((inp.holeCount > 0 || inp.bossCount > 0) && cham) {
-    const chamSec = Math.min(inp.finishBaseSec * 0.08, 30);
-    if (chamSec > 0) {
-      const wall = subs.find((o) => o.name === 'Wall finishing');
-      if (wall) wall.sec = Math.max(0, wall.sec - chamSec); // conserve total time
-      chamfer = {
-        name: 'Chamfer / edge break (estimated)',
-        tool: toolName(cham, 'Chamfer mill'),
-        sec: chamSec,
-        driver: `${inp.holeCount} holes + edges — no chamfer geometry found, allowance only`,
-        color: c.facing,
-      };
-    }
   }
+  // The time-conserving "Chamfer / edge break (estimated)" placeholder that
+  // used to sit here carved 8% out of wall finishing and so charged nothing for
+  // breaking edges. It is replaced by a real, additive deburr operation.
+  const deburr: SubOp | null = (inp.deburrSec ?? 0) > 0 ? {
+    name: 'Deburr / edge break',
+    tool: toolName(cham, 'Chamfer mill'),
+    sec: inp.deburrSec ?? 0,
+    idleSec: inp.deburrIdleSec ?? 0,
+    driver: `trace every edge a cutter left — ${inp.deburrEdges ?? 0} hole and feature edge${(inp.deburrEdges ?? 0) === 1 ? '' : 's'} plus the outline`,
+    color: c.facing,
+  } : null;
 
   // --- Size the setup count to the real work -------------------------------
   // A 3-axis part is re-clamped once per access direction, but the plan must
@@ -373,7 +378,9 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   // with only a facing skim is a phantom (part 12630 showed 6 setups, 4 of them
   // facing-only). Cap the requested count at the number of substantive ops.
   const requested = Math.max(1, Math.round(inp.setups));
-  const fillable = Math.max(1, subs.length + (chamfer ? 1 : 0));
+  // The deburr stands where the estimated edge break stood, so it counts the
+  // same way and setup counts do not move because of it.
+  const fillable = Math.max(1, subs.length + (chamfer || deburr ? 1 : 0));
   // ...but an ANGLED setup is not a phantom. It is forced by workholding — you
   // must re-fixture (or index a 4th/5th axis) to reach a compound-angle hole,
   // even if that setup carries a single short operation. Merging those away
@@ -397,6 +404,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
     slot += 1;
   }
   if (chamfer) ops.push({ ...chamfer, setup: setups }); // edge-break on the last setup
+  if (deburr) ops.push({ ...deburr, setup: setups });   // deburr after the last cut
   if (spotOp) {
     const firstDrill = ops.findIndex((o) => /^(Drilling|Bore \/ interpolate)/.test(o.name));
     if (firstDrill >= 0) ops.splice(firstDrill, 0, { ...spotOp, setup: ops[firstDrill].setup });
@@ -421,6 +429,20 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
         setup: s,
       });
     }
+  }
+
+  // --- Part-off: the last thing that happens on the bar ----------------------
+  // On a bar-fed route the part comes off the bar at the end of the first
+  // holding; anything after that is a second op on the cut-off part.
+  if ((inp.partoffSec ?? 0) > 0) {
+    ops.push({
+      name: 'Part-off',
+      tool: 'Parting blade',
+      sec: inp.partoffSec ?? 0,
+      driver: `cut the part off the ⌀${r1(inp.partoffBarDiaMm ?? 0)} bar`,
+      color: c.facing,
+      setup: 1,
+    });
   }
 
   // --- Group into setups ----------------------------------------------------
