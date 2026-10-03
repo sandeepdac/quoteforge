@@ -64,6 +64,25 @@ def _dist_point_to_line(p: np.ndarray, origin: np.ndarray, direction: np.ndarray
     return float(np.linalg.norm(w - np.dot(w, direction) * direction))
 
 
+def _merge_touching_runs(faces: List[dict], gap_tol: float) -> List[tuple]:
+    """Axial runs of same-⌀ bore faces, merged only where they actually touch.
+
+    A hole normally arrives as two half-cylinders, and either half may be split
+    again where a groove or step interrupts it, so faces have to be merged into
+    one run. But only TOUCHING faces: spanning min to max across every same-⌀
+    face would read a blind hole in each end as one hole the whole length of the
+    part. Sort by start, walk, and break wherever solid material separates them.
+    """
+    runs: List[tuple] = []
+    for c in sorted(faces, key=lambda c: c["zStartMm"]):
+        lo, hi = c["zStartMm"], c["zEndMm"]
+        if runs and lo <= runs[-1][1] + gap_tol:
+            runs[-1] = (runs[-1][0], max(runs[-1][1], hi))
+        else:
+            runs.append((lo, hi))
+    return runs
+
+
 def read_step(path: str):
     reader = STEPControl_Reader()
     if reader.ReadFile(path) != IFSelect_RetDone:
@@ -237,16 +256,48 @@ def extract(path: str) -> dict:
         # is the main bore. A small tolerance absorbs the seam between two halves
         # of the same cylinder.
         gap_tol = max(0.05, 0.01 * max(axis_length, 1.0))
-        runs: List[tuple] = []
-        for c in sorted(same, key=lambda c: c["zStartMm"]):
-            lo, hi = c["zStartMm"], c["zEndMm"]
-            if runs and lo <= runs[-1][1] + gap_tol:
-                runs[-1] = (runs[-1][0], max(runs[-1][1], hi))
-            else:
-                runs.append((lo, hi))
+        runs = _merge_touching_runs(same, gap_tol)
         bore_depth = round(max(hi - lo for lo, hi in runs), 3) if runs else 0.0
     else:
         bore_depth = 0.0
+
+    # EVERY OTHER HOLE ON THE AXIS — which used to be thrown away.
+    #
+    # The main bore above is chosen as the WIDEST, and until now it was the only
+    # one reported: every narrower coaxial hole was dropped on the floor. On
+    # Lance's VOC housing that is the ⌀10 hole running through the part behind
+    # the ⌀11.8 mouth — the hole his cycle sheet drills twice ("pilot drill 40
+    # deep", "HSS drill 70 deep") for 72 seconds of the part's 313. The faces
+    # were found, classified as bore and then never used, so the quote drilled
+    # 14 mm of a part whose drilling IS the job.
+    #
+    # Same rule as the main bore: group faces by diameter, merge only faces that
+    # actually touch, and report each separate run as its own hole — a blind
+    # hole in each end is two holes, not one long one. The cost model drills
+    # these and spots them; it does not bore them, because only a dimensioned
+    # bore gets a boring bar.
+    additional_bores: List[dict] = []
+    if main_bore:
+        gap_tol = max(0.05, 0.01 * max(axis_length, 1.0))
+        r_main = main_bore["radiusMm"]
+        others = [c for c in bore_cyls if abs(c["radiusMm"] - r_main) > max(0.05, 0.02 * r_main)]
+        groups: List[List[dict]] = []
+        for c in sorted(others, key=lambda c: -c["radiusMm"]):
+            for g in groups:
+                r = g[0]["radiusMm"]
+                if abs(c["radiusMm"] - r) <= max(0.05, 0.02 * r):
+                    g.append(c)
+                    break
+            else:
+                groups.append([c])
+        for g in groups:
+            dia = round(2 * g[0]["radiusMm"], 3)
+            for lo, hi in _merge_touching_runs(g, gap_tol):
+                depth = round(hi - lo, 3)
+                # A sliver this short is a relief, a seam or a modelling artefact,
+                # not a hole anybody drills.
+                if dia >= 0.3 and depth >= 0.5:
+                    additional_bores.append({"diameterMm": dia, "depthMm": depth})
 
     # Grooves: narrow outer reductions well below the OD.
     groove_count = 0
@@ -443,6 +494,8 @@ def extract(path: str) -> dict:
             "lengthMm": axis_length,
             "boreDiaMm": bore_dia,
             "boreDepthMm": bore_depth,
+            # Every other coaxial hole, each run separately. See above.
+            "additionalBores": additional_bores,
             "grooveCount": groove_count,
             "threadCount": 0,  # threads come from the drawing callout, not geometry
             "faceCount": 2,

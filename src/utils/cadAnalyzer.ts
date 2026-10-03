@@ -360,6 +360,18 @@ async function analyzeSolid(
         // invisible to the time model. Paired with its depth, and the main bore
         // excluded so it is not timed twice.
         additionalBores: (() => {
+          // PREFER THE SERVICE'S OWN COAXIAL LIST. The fallback below reads the
+          // MILLED hole list, which contains every hole in every direction — so
+          // a cross hole on a turned part was charged twice: once as the
+          // driven-tool operation in crossFeatureList, and again as an imaginary
+          // on-axis hole drilled down the spindle. The extractor now reports
+          // coaxial bores only, merged per run, and that is what is used.
+          // The fallback stays for a service that predates the field — `npm
+          // run dev` reuses a geometry service that is already running.
+          if (Array.isArray(p.additionalBores)) {
+            const own = p.additionalBores.filter((b) => b.diameterMm > 0 && b.depthMm > 0);
+            return own.length ? own : undefined;
+          }
           const milled = svc?.milled as { holeDiametersMm?: number[]; holeDepthsMm?: number[] } | undefined;
           const dias = milled?.holeDiametersMm ?? [];
           const depths = milled?.holeDepthsMm ?? [];

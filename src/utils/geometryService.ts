@@ -20,6 +20,12 @@ export interface GeometryProfile {
   crossFeatures: boolean;
   /** Off-axis features grouped into operations, each with the tool's travel. */
   crossFeatureList?: Array<{ diameterMm: number; lengthMm: number; isBore?: boolean }>;
+  /**
+   * Every COAXIAL hole other than the main bore, one entry per separate run.
+   * Coaxial only — off-axis holes are in crossFeatureList. Absent from a
+   * service that predates it.
+   */
+  additionalBores?: Array<{ diameterMm: number; depthMm: number }>;
 }
 
 /** Milled/prismatic analysis (the 3 AAG rules) — present alongside the turned verdict. */
