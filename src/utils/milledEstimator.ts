@@ -29,7 +29,7 @@ import { roughingMrrCm3PerMin, rpm as turningRpm } from './turning';
 import { buildMilledPlan } from './milledPlanner';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
 import { realisation } from './realisation';
-import { drillHoleSec, drillHolesSec, spotDrillsSec, pairHoles, crossFeaturesSec, tapThreadsSec, DEFAULT_DRILL_CONFIG, DEFAULT_CROSS_CONFIG } from './drilling';
+import { drillHoleSec, drillHoleSplit, spotDrillSplit, pairHoles, crossFeaturesSplit, tapThreadsSplit, DEFAULT_DRILL_CONFIG, DEFAULT_CROSS_CONFIG, type OpSplit } from './drilling';
 import { opApproachSec, DEFAULT_OP_APPROACH } from './turning';
 import { TOOL_CHANGE_SEC } from './machineSelection';
 
@@ -526,15 +526,25 @@ export function calculateMilledCosts(
   // Spot every hole before drilling it: a twist drill wanders off the mark until
   // its margins engage, and on a mill that is the difference between a hole on
   // position and one that is not. Turning got this in 22842fb.
-  const spotSec = spotDrillsSec(holeSpecs, m, {
-    ...DEFAULT_DRILL_CONFIG,
-    maxRpm: cnc.maxRpm,
-    rapidMmPerMin,
-  });
-  const drillSec = drillHolesSec(holeSpecs, m, {
-    ...DEFAULT_DRILL_CONFIG,
-    maxRpm: cnc.millMaxRpm ?? DEFAULT_DRILL_CONFIG.maxRpm,
-  }) * cutScale;
+  //
+  // CUTTING AND IDLE KEPT APART. A drill spends most of a small hole NOT
+  // cutting — positioning to it, settling, feeding through the clearance gap,
+  // pecking out — and all of that used to be summed into the cutting seconds,
+  // where the realisation stack multiplied it and efficiency divided it as if it
+  // were metal. Only the cutting half is scaled now; the idle half is machine
+  // time and rides on the operation's idle column. Same rule as turning.
+  //
+  // Both at the machine's OWN rapid: drilling used the 10 m/min default while
+  // spotting on the same machine used the real one.
+  const holeCfg = (maxRpm: number) => ({ ...DEFAULT_DRILL_CONFIG, maxRpm, rapidMmPerMin });
+  const sumSplits = (xs: OpSplit[]): OpSplit =>
+    xs.reduce((a, x) => ({ cuttingSec: a.cuttingSec + x.cuttingSec, idleSec: a.idleSec + x.idleSec }),
+      { cuttingSec: 0, idleSec: 0 });
+  const spot = sumSplits(holeSpecs.map((h) => spotDrillSplit(h.diameterMm, m, holeCfg(cnc.maxRpm))));
+  const drill = sumSplits(holeSpecs.map((h) =>
+    drillHoleSplit(h, m, holeCfg(cnc.millMaxRpm ?? DEFAULT_DRILL_CONFIG.maxRpm))));
+  const spotSec = spot.cuttingSec * cutScale;
+  const drillSec = drill.cuttingSec * cutScale;
 
   // --- Off-axis features the hole finder discarded -------------------------
   //
@@ -559,15 +569,22 @@ export function calculateMilledCosts(
     if (i >= 0) { alreadyCounted.splice(i, 1); return false; }
     return true;
   });
-  const crossSec = crossFeaturesSec(extraCross, m, {
+  // Cut and idle apart, as for drilling. On a part with many small cross
+  // features almost all of this is the spindle indexing round to each one —
+  // eight seconds a feature against a second or two of cutting.
+  const cross = crossFeaturesSplit(extraCross, m, {
     ...DEFAULT_CROSS_CONFIG,
     maxRpm: cnc.millMaxRpm ?? DEFAULT_CROSS_CONFIG.maxRpm,
-  }) * cutScale;
+    rapidMmPerMin,
+  });
+  const crossSec = cross.cuttingSec * cutScale;
 
   // --- Tapping -------------------------------------------------------------
   // The tap drill is already paid for above as a hole; this is the thread cut
   // into it. Feed is locked to the pitch, and the tap has to reverse back out.
-  const tapSec = tapThreadsSec(p.threads, m) * cutScale;
+  // Only the way in cuts; reversing out and the cycle overhead are idle.
+  const tap = tapThreadsSplit(p.threads, m);
+  const tapSec = tap.cuttingSec * cutScale;
 
   // --- Conical features: countersinks and chamfers -------------------------
   // These cost nothing at all until now, because the analyser read only planes
@@ -620,8 +637,13 @@ export function calculateMilledCosts(
   const plan = buildMilledPlan({
     holeDepthsMm: remainingHoles.map((h) => h.depthMm),
     crossSec,
+    crossIdleSec: cross.idleSec,
     crossFeatures: extraCross,
     tapSec,
+    tapIdleSec: tap.idleSec,
+    spotSec,
+    spotIdleSec: spot.idleSec,
+    drillIdleSec: drill.idleSec,
     threads: p.threads,
     m,
     minPlaneDimMm: sortedDims[1], // the smaller in-plane dimension (not the thickness)
@@ -692,6 +714,12 @@ export function calculateMilledCosts(
   const toolChanges = plan.setups.reduce((sum, setup) => sum + setup.toolChanges, 0);
   const plannedOpCount = plan.setups.reduce((sum, setup) => sum + setup.operations.length, 0);
   const airSec = toolChanges * toolChangeSec + plannedOpCount * approachSecPerOp;
+  // The idle each hole-making operation carries on its own row of the plan —
+  // charged only where the plan actually has that row, which is wherever the
+  // operation has cutting time.
+  const holeIdleCharged = (drillSec > 0 ? drill.idleSec : 0) + (spotSec > 0 ? spot.idleSec : 0);
+  const crossIdleCharged = crossSec > 0 ? cross.idleSec : 0;
+  const tapIdleCharged = tapSec > 0 ? tap.idleSec : 0;
   const cycleTimeSec = plan.totalSeconds;
   const machineCost = plan.totalCost;
   const primaryRuntimeCost = (cycleTimeSec / 60) * primaryRatePerMin;
@@ -784,9 +812,9 @@ export function calculateMilledCosts(
     { key: 'turning', name: 'Turning (on-axis)', driver: turnedVol > 0 ? `${r1(turnedVol)} cm³ on the spindle @ ${r1(turnMrr)} cm³/min — ${onAxis.map((f) => `${f.kind} ⌀${r1(f.diameterMm)}`).join(', ')} — ${secStr(turningSec)}` : '', value: opCost(turningSec), color: COLORS.turn },
     { key: 'rough', name: turnedVol > 0 ? 'Roughing (milled, off-axis)' : 'Roughing (hog-out)', driver: `${r1(milledVol)} cm³ removed @ ${r1(millMrr)} cm³/min — ${secStr(roughBaseSec)}`, value: opCost(roughBaseSec), color: COLORS.rough },
     { key: 'finish', name: 'Finishing (walls/floors)', driver: `${r1(finishAreaCm2)} cm²${finishSculpt > 1.05 ? ` contoured ×${r1(finishSculpt)} (small ball)` : ` @ ${r1(finishRate)} cm²/min`} — ${secStr(finishBaseSec)}`, value: opCost(finishBaseSec), color: COLORS.finish },
-    { key: 'drill', name: 'Drilling', driver: `${holes} hole${holes === 1 ? '' : 's'}${turnedBoreDias.length ? ` (${turnedBoreDias.length} on-axis bore${turnedBoreDias.length === 1 ? '' : 's'} turned, not drilled)` : ''} — ${secStr(drillSec)}`, value: opCost(drillSec), color: COLORS.drill },
-    { key: 'cross', name: 'Off-axis features (driven tool)', driver: crossSec > 0 ? `${extraCross.length} feature${extraCross.length === 1 ? '' : 's'} off the turning axis — ${extraCross.slice(0, 4).map((f) => `⌀${r1(f.diameterMm)}×${r1(f.lengthMm)}`).join(', ')}${extraCross.length > 4 ? ` +${extraCross.length - 4} more` : ''} — ${secStr(crossSec)}` : '', value: opCost(crossSec), color: COLORS.drill },
-    { key: 'tap', name: 'Tapping', driver: tapSec > 0 ? `${(p.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ')} — ${secStr(tapSec)}` : '', value: opCost(tapSec), color: COLORS.thread ?? COLORS.drill },
+    { key: 'drill', name: 'Drilling', driver: `${holes} hole${holes === 1 ? '' : 's'}${turnedBoreDias.length ? ` (${turnedBoreDias.length} on-axis bore${turnedBoreDias.length === 1 ? '' : 's'} turned, not drilled)` : ''} — ${secStr(drillSec + spotSec)} cutting + ${r1(holeIdleCharged)} s idle, spotting included`, value: opCost(drillSec + spotSec) + airCost(holeIdleCharged), color: COLORS.drill },
+    { key: 'cross', name: 'Off-axis features (driven tool)', driver: crossSec > 0 ? `${extraCross.length} feature${extraCross.length === 1 ? '' : 's'} off the turning axis — ${extraCross.slice(0, 4).map((f) => `⌀${r1(f.diameterMm)}×${r1(f.lengthMm)}`).join(', ')}${extraCross.length > 4 ? ` +${extraCross.length - 4} more` : ''} — ${secStr(crossSec)} cutting + ${r1(crossIdleCharged)} s idle (spindle index and positioning)` : '', value: opCost(crossSec) + airCost(crossIdleCharged), color: COLORS.drill },
+    { key: 'tap', name: 'Tapping', driver: tapSec > 0 ? `${(p.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ')} — ${secStr(tapSec)} cutting + ${r1(tapIdleCharged)} s idle` : '', value: opCost(tapSec) + airCost(tapIdleCharged), color: COLORS.thread ?? COLORS.drill },
     { key: 'edge', name: 'Countersink / chamfer', driver: edgeSec > 0 ? `${countersinkCount ? `${countersinkCount} countersink${countersinkCount === 1 ? '' : 's'}` : ''}${countersinkCount && chamferCount ? ' + ' : ''}${chamferCount ? `${chamferCount} chamfer${chamferCount === 1 ? '' : 's'}` : ''} measured from the solid — ${secStr(edgeSec)}` : '', value: opCost(edgeSec), color: COLORS.facing },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${toolChanges} tool changes × ${r1(toolChangeSec)}s, plus ${plannedOpCount} approaches × ${r1(approachSecPerOp)}s at ${Math.round(rapidMmPerMin / 1000)} m/min rapid — machine specifications, so no efficiency is applied`, value: airCost(airSec), color: COLORS.noncut },
