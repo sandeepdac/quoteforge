@@ -26,6 +26,10 @@ export interface GeometryProfile {
    * service that predates it.
    */
   additionalBores?: Array<{ diameterMm: number; depthMm: number }>;
+  /** The bar: round, or a polygon (hex, square) whose corners are the OD. */
+  stock?: { shape: 'round' } | { shape: 'polygon'; flats: number; acrossFlatsMm: number };
+  /** Turned diameters along the axis, each a boss (open to an end) or a recess. */
+  odRegions?: Array<{ diameterMm: number; zStartMm: number; zEndMm: number; lengthMm: number; kind: 'boss' | 'recess' }>;
 }
 
 /** Milled/prismatic analysis (the 3 AAG rules) — present alongside the turned verdict. */

@@ -31,6 +31,22 @@ export interface TurningProfile {
   boreDepthMm: number;
   /** Number of grooves (parting-tool recesses). */
   grooveCount: number;
+  /**
+   * The BAR the part is cut from. Absent means round bar, sized from the OD.
+   *
+   * A polygon bar (hex, square, octagon) keeps its flats: they are never turned,
+   * and its "OD" is the corners. The geometry service recognises one when the
+   * flats it counts put their corners exactly at the measured OD.
+   */
+  stock?: { shape: 'round' } | { shape: 'polygon'; flats: number; acrossFlatsMm: number };
+  /**
+   * The diameters actually TURNED, each over its own axial run, in order along
+   * the axis. A `boss` is open to an end, so an OD tool reaches it; a `recess`
+   * has something larger on both sides and is cut with a grooving insert.
+   * Absent (an older geometry service, a drawing-only quote) falls back to one
+   * round OD over the whole length.
+   */
+  odRegions?: Array<{ diameterMm: number; zStartMm: number; zEndMm: number; lengthMm: number; kind: 'boss' | 'recess' }>;
   /** Number of SINGLE-POINT threaded features (screwcut, not tapped). */
   threadCount: number;
   /**
@@ -547,6 +563,29 @@ export const DEFAULT_TURNING_CONFIG: TurningConfig = {
   maxDrillDiaMm: 20,
 };
 
+/**
+ * THE BAR'S CROSS-SECTION (mm²) and the diameter the tool first meets.
+ *
+ * A regular n-gon with across-flats AF has area n·AF²/4·tan(π/n) — 0.866·AF²
+ * for a hex — and its corners lie on a circle of AF/cos(π/n). Round bar is the
+ * bar diameter already chosen for this part, or the OD with a turning allowance.
+ */
+export function polygonSectionMm2(flats: number, acrossFlatsMm: number): number {
+  return (flats * acrossFlatsMm * acrossFlatsMm / 4) * Math.tan(Math.PI / flats);
+}
+export function acrossCornersMm(flats: number, acrossFlatsMm: number): number {
+  return acrossFlatsMm / Math.cos(Math.PI / flats);
+}
+export function barStockDiameterMm(p: Pick<TurningProfile, 'stock' | 'barDiameterMm' | 'odMm'>): number {
+  if (p.stock?.shape === 'polygon') return acrossCornersMm(p.stock.flats, p.stock.acrossFlatsMm);
+  return p.barDiameterMm && p.barDiameterMm > 0 ? p.barDiameterMm : p.odMm;
+}
+export function barStockSectionMm2(p: Pick<TurningProfile, 'stock' | 'barDiameterMm' | 'odMm'>): number {
+  if (p.stock?.shape === 'polygon') return polygonSectionMm2(p.stock.flats, p.stock.acrossFlatsMm);
+  const d = barStockDiameterMm(p);
+  return (Math.PI / 4) * d * d;
+}
+
 /** Spindle speed for a cutting speed Vc (m/min) at diameter D (mm), rpm — clamped. */
 export function rpm(vcMPerMin: number, diaMm: number, maxRpm: number): number {
   if (diaMm <= 0) return maxRpm;
@@ -675,18 +714,60 @@ export function estimateTurningTimes(
   const roughReturnSec = roughPasses
     * ((cfg.opApproach ?? DEFAULT_OP_APPROACH).rapidTravelMm
        / Math.max(1, (cfg.opApproach ?? DEFAULT_OP_APPROACH).rapidMmPerMin)) * 60;
-  const cuttingRough = removalVolCm3 > 0 && mrr > 0;
-  const roughCutSec = cuttingRough ? min((removalVolCm3 * cfg.roughFraction) / mrr) : 0;
-  const roughIdleSec = cuttingRough ? roughReturnSec + approach(roughFeedMmPerMin) : 0;
-  const roughSec = roughCutSec + roughIdleSec;
+  // ---- WHAT IS ACTUALLY TURNED, when the geometry says (odRegions) ----------
+  //
+  // Without regions the model assumed the part was one round OD, turned along
+  // its whole length from round bar, with its metal removed = bar - part. That
+  // is wrong three ways on a part like the VOC housing: the bar is HEX, so the
+  // "OD" is its corners and is never turned; bar - part includes the HOLES,
+  // which a drill removes, not an OD tool; and the turned diameters sit at
+  // their own sizes over their own lengths, not at the corners over 70 mm.
+  //
+  // So each turned region is timed by itself: the metal it removes is the BAR
+  // SECTION minus its own circle, over its own length; it is roughed down from
+  // the bar's outside in passes; and finished at its own diameter. Regions that
+  // are RECESSES are cut by the grooving insert below, not here.
+  const regions = profile.odRegions ?? [];
+  const regionBased = regions.length > 0;
+  const stockDia = barStockDiameterMm(profile);
+  const stockSection = barStockSectionMm2(profile);
+  const bosses = regions.filter((r) => r.kind === 'boss');
+  const recesses = regions.filter((r) => r.kind === 'recess');
+  const regionRemovalCm3 = (r: { diameterMm: number; lengthMm: number }) =>
+    Math.max(0, stockSection - (Math.PI / 4) * r.diameterMm * r.diameterMm) * Math.max(0, r.lengthMm) / 1000;
 
-  // Finish turning — one pass along the OD, at the feed the FINISHING INSERT can
-  // take for the finish the drawing asks for.
-  const finishRpm = rpm(m.cuttingSpeedFinish, od, cfg.maxRpm);
+  let roughCutSec = 0;
+  let roughIdleSec = 0;
+  let finishCutSec = 0;
+  let finishIdleSec = 0;
   const finishFeed = feedForFinish('finish', m.feedFinish, 0.4);
-  const finishFeedMmPerMin = Math.max(0.001, finishFeed * finishRpm);
-  const finishCutSec = finishPasses * min(profile.lengthMm / finishFeedMmPerMin);
-  const finishIdleSec = approach(finishFeedMmPerMin);
+  if (regionBased) {
+    for (const b of bosses) {
+      const vol = regionRemovalCm3(b);
+      if (vol > 0 && mrr > 0) {
+        const passes = Math.max(1, Math.ceil(((stockDia - b.diameterMm) / 2) / Math.max(0.1, m.depthOfCutRough)));
+        roughCutSec += min((vol * cfg.roughFraction) / mrr);
+        // Each pass returns along ITS region, not a fixed 120 mm.
+        roughIdleSec += passes * ((b.lengthMm + 5) / Math.max(1, rapid)) * 60;
+      }
+      const fRpm = rpm(m.cuttingSpeedFinish, b.diameterMm, cfg.maxRpm);
+      finishCutSec += finishPasses * min(b.lengthMm / Math.max(0.001, finishFeed * fRpm));
+    }
+    if (roughCutSec > 0) roughIdleSec += approach(roughFeedMmPerMin);
+    if (finishCutSec > 0) {
+      finishIdleSec = approach(Math.max(0.001, finishFeed * rpm(m.cuttingSpeedFinish, od, cfg.maxRpm)));
+    }
+  } else {
+    const cuttingRough = removalVolCm3 > 0 && mrr > 0;
+    roughCutSec = cuttingRough ? min((removalVolCm3 * cfg.roughFraction) / mrr) : 0;
+    roughIdleSec = cuttingRough ? roughReturnSec + approach(roughFeedMmPerMin) : 0;
+    // Finish turning — one pass along the OD, at the feed the FINISHING INSERT
+    // can take for the finish the drawing asks for.
+    const finishFeedMmPerMin = Math.max(0.001, finishFeed * rpm(m.cuttingSpeedFinish, od, cfg.maxRpm));
+    finishCutSec = finishPasses * min(profile.lengthMm / finishFeedMmPerMin);
+    finishIdleSec = approach(finishFeedMmPerMin);
+  }
+  const roughSec = roughCutSec + roughIdleSec;
   const finishSec = finishCutSec + finishIdleSec;
 
   // Drilling + boring. A hole is drilled from solid only up to the max drill
@@ -799,17 +880,49 @@ export function estimateTurningTimes(
   const groovePecks = Math.max(1, Math.ceil(grooveDepthMm / Math.max(0.1, m.depthOfCutRough)));
   // Floor across the insert width, then up each flank to the OD.
   const grooveFinishPathMm = GROOVE_TOOL_WIDTH_MM + 2 * grooveDepthMm;
-  const grooveCutSec = profile.grooveCount > 0
+  let grooveCutSec = !regionBased && profile.grooveCount > 0
     ? profile.grooveCount * (
         min(grooveDepthMm / grooveFeedMmPerMin)
         + min(grooveFinishPathMm / grooveFinishFeedMmPerMin)
       )
     : 0;
-  const grooveIdleSec = profile.grooveCount > 0
+  let grooveIdleSec = !regionBased && profile.grooveCount > 0
     ? repeated(profile.grooveCount, grooveFeedMmPerMin)
       // Each peck comes right out of the slot and goes back down it.
       + profile.grooveCount * (groovePecks - 1) * 2 * (grooveDepthMm / Math.max(1, rapid)) * 60
     : 0;
+
+  // RECESSES, from the real geometry — and when regions are known these replace
+  // the groove COUNT entirely. The count was a tally of cylindrical faces below
+  // 85% of the OD, so on the housing it read "4 grooves" for two end lands each
+  // made of two half-faces, and timed four 3 mm plunges to 10% of the OD. The
+  // real feature is one ⌀21 recess 44 mm long between two hex collars.
+  //
+  // A recess wider than the insert is MULTI-PLUNGED: plunge to depth, step
+  // along by 80% of the insert width (the overlap that keeps the floor free of
+  // ridges), plunge again. Each plunge is pecked like any slot deeper than the
+  // insert is wide. Then one finishing pass along the floor and up both flanks.
+  // The depth is from the BAR's outside — on a polygon bar, its corners, which
+  // the insert meets first and then repeatedly: an interrupted cut, priced as one
+  // in the realisation stack.
+  if (regionBased && recesses.length) {
+    const w = GROOVE_TOOL_WIDTH_MM;
+    const plungeRpm = rpm(m.cuttingSpeedRough, stockDia, cfg.maxRpm);
+    const plungeFeed = Math.max(0.001, 0.05 * plungeRpm);
+    const recessFinishFeed = Math.max(0.001,
+      feedForFinish('groove', m.feedFinish, 0.2) * rpm(m.cuttingSpeedFinish, stockDia, cfg.maxRpm));
+    let plungesTotal = 0;
+    for (const r of recesses) {
+      const depth = Math.max(0, (stockDia - r.diameterMm) / 2);
+      const plunges = r.lengthMm <= w ? 1 : Math.ceil((r.lengthMm - w) / (0.8 * w)) + 1;
+      const pecks = Math.max(1, Math.ceil(depth / Math.max(0.1, m.depthOfCutRough)));
+      plungesTotal += plunges;
+      grooveCutSec += plunges * min(depth / plungeFeed)
+        + min((r.lengthMm + 2 * depth) / recessFinishFeed);
+      grooveIdleSec += plunges * (pecks - 1) * 2 * (depth / Math.max(1, rapid)) * 60;
+    }
+    grooveIdleSec += repeated(plungesTotal, plungeFeed);
+  }
   const grooveSec = grooveCutSec + grooveIdleSec;
 
   // WHICH CALLED-OUT THREADS ARE SCREWCUT, and which are tapped.
