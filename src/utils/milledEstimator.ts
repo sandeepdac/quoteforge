@@ -30,7 +30,7 @@ import { buildMilledPlan } from './milledPlanner';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
 import { realisation } from './realisation';
 import { drillHoleSec, drillHoleSplit, spotDrillSplit, pairHoles, crossFeaturesSplit, tapThreadsSplit, DEFAULT_DRILL_CONFIG, DEFAULT_CROSS_CONFIG, type OpSplit } from './drilling';
-import { opApproachSec, DEFAULT_OP_APPROACH } from './turning';
+import { opApproachSec, repositionSec, DEFAULT_OP_APPROACH } from './turning';
 import { TOOL_CHANGE_SEC } from './machineSelection';
 
 /** A mill's approach crosses the table and plunges; a lathe's slides along Z. */
@@ -616,6 +616,71 @@ export function calculateMilledCosts(
   }, 0) * cutScale;
   const edgeSec = countersinkSec + chamferSec;
 
+  // --- Deburring: every edge a cutter leaves -------------------------------
+  //
+  // Milling had no deburr. It had a placeholder — "Chamfer / edge break
+  // (estimated)" — that carved 8% out of wall finishing and so added nothing,
+  // which is the state turning was in before its deburr became an operation.
+  // Every drawing in the calibration set says CLEAN AND BURR FREE, and the
+  // shop's sheet for OLY014_01921-A spends 150 s on it.
+  //
+  // THE RULE IS THE SHOP'S OWN, from both cycle sheets: an edge is deburred by
+  // a tool tracing it — "deburr 3.3mm dia slots thro" with the end mill that
+  // cut them, "deburr thread" with the threading tool. Here that is one lap of
+  // a chamfer mill round each edge the geometry gives us:
+  //
+  //   the MOUTH of every hole and off-axis feature, and its far side too when
+  //   it runs through the part, because a drill or cutter breaking out raises a
+  //   burr on the exit;
+  //   the machined OUTLINE once per setup — taken as the stock footprint's
+  //   perimeter, which is a floor on the real outline, not an estimate of it.
+  //
+  // Edges already broken by a MEASURED chamfer are not deburred twice.
+  // Each lap is timed like the measured chamfers above (πd at the chamfer-mill
+  // feed). Between edges the tool makes a short hop, not a full approach: it is
+  // one operation working round the part.
+  const minStockMm = Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z) || 10;
+  const deburrEdgeDias: number[] = [];
+  for (const h of holeSpecs) {
+    deburrEdgeDias.push(h.diameterMm);
+    if (h.depthMm >= 0.95 * throughDepthMm) deburrEdgeDias.push(h.diameterMm);
+  }
+  for (const f of extraCross) {
+    deburrEdgeDias.push(f.diameterMm);
+    if (f.isBore && f.lengthMm >= 0.95 * minStockMm) deburrEdgeDias.push(f.diameterMm);
+  }
+  for (const f of onAxis) if (f.kind === 'bore') deburrEdgeDias.push(f.diameterMm);
+  // Measured chamfers have already broken that many edges.
+  deburrEdgeDias.sort((a, b) => b - a).splice(0, Math.min(deburrEdgeDias.length, chamferCount));
+  const outlinePerimeterMm = p.fromBarStock
+    ? Math.PI * (p.barDiameterMm ?? minStockMm)
+    : 2 * (p.stockMm.x + p.stockMm.y);
+  const deburrSetups = Math.max(1, Math.round(p.setupCount || 1));
+  const lapSec = (pathMm: number) => ((pathMm / CHAMFER_FEED_MM_PER_MIN) * 60) * machDerate;
+  const deburrCutBase = deburrEdgeDias.reduce((a, d) => a + lapSec(Math.PI * Math.max(0.5, d)), 0)
+    + deburrSetups * lapSec(outlinePerimeterMm);
+  const deburrSec = deburrCutBase * cutScale;
+  const hopApproach = { ...DEFAULT_OP_APPROACH, rapidMmPerMin };
+  const deburrIdleSec = deburrEdgeDias.length * repositionSec(CHAMFER_FEED_MM_PER_MIN, hopApproach);
+
+  // --- Part-off: a bar-fed part has to come off the bar ---------------------
+  //
+  // toBarStockProfile already adds the parting width to the bar length, so the
+  // MATERIAL for the cut has always been charged; the CUT has not. On a
+  // turn-mill a bar part is parted off at the end of the cycle — the shop's
+  // sheet for OLY014 ends "50mm slitting saw — cut off", 55 s. Timed with the
+  // same parting arithmetic turning uses (plunge to centre at reduced speed and
+  // 0.08 mm/rev), so a bar part costs the same to part off whichever estimator
+  // sees it. A slitting saw is a different tool and is not modelled here.
+  const partoffBarDiaMm = p.fromBarStock ? (p.barDiameterMm ?? minStockMm) : 0;
+  const partoffSec = partoffBarDiaMm > 0
+    ? (() => {
+        const n = turningRpm(m.cuttingSpeedFinish * 0.6, partoffBarDiaMm, cnc.maxRpm);
+        const feed = Math.max(0.001, 0.08 * n);
+        return ((partoffBarDiaMm / 2) / feed) * 60 * cutScale;
+      })()
+    : 0;
+
   // --- Cycle time (theoretical → actual via efficiency) --------------------
   const cuttingSec = roughSec + turningSec + facingSec + finishSec + spotSec + drillSec + edgeSec + crossSec + tapSec;
 
@@ -654,6 +719,11 @@ export function calculateMilledCosts(
     turningRoute: !!p.turningRoute,
     countersinkSec,
     chamferSec,
+    deburrSec,
+    deburrIdleSec,
+    deburrEdges: deburrEdgeDias.length,
+    partoffSec,
+    partoffBarDiaMm,
     countersinks: csinks,
     chamfers: chamfs,
     finishBaseSec,
@@ -818,6 +888,8 @@ export function calculateMilledCosts(
     { key: 'edge', name: 'Countersink / chamfer', driver: edgeSec > 0 ? `${countersinkCount ? `${countersinkCount} countersink${countersinkCount === 1 ? '' : 's'}` : ''}${countersinkCount && chamferCount ? ' + ' : ''}${chamferCount ? `${chamferCount} chamfer${chamferCount === 1 ? '' : 's'}` : ''} measured from the solid — ${secStr(edgeSec)}` : '', value: opCost(edgeSec), color: COLORS.facing },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${toolChanges} tool changes × ${r1(toolChangeSec)}s, plus ${plannedOpCount} approaches × ${r1(approachSecPerOp)}s at ${Math.round(rapidMmPerMin / 1000)} m/min rapid — machine specifications, so no efficiency is applied`, value: airCost(airSec), color: COLORS.noncut },
+    { key: 'deburr', name: 'Deburring', driver: deburrSec > 0 ? `trace every edge a cutter left — ${deburrEdgeDias.length} hole and feature edge${deburrEdgeDias.length === 1 ? '' : 's'} plus the outline — ${secStr(deburrSec)} cutting + ${r1(deburrIdleSec)} s idle` : '', value: deburrSec > 0 ? opCost(deburrSec) + airCost(deburrIdleSec) : 0, color: COLORS.facing },
+    { key: 'partoff', name: 'Part-off', driver: partoffSec > 0 ? `cut the part off the ⌀${r1(partoffBarDiaMm)} bar — ${secStr(partoffSec)}` : '', value: opCost(partoffSec), color: COLORS.facing },
     // Both numbers stated, the derate already inside the cutting rows above.
     { key: 'realisation', name: 'Cutting conditions (already in the rows above)', driver: `book speeds → ×${real.multiplier.toFixed(2)} on cutting time. ${real.explanation}. ${real.applied.map((x) => `${x.name} ${x.value} (${x.why})`).join('; ')}`, seconds: 0, value: 0, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min preparation, excluding ${derivedProgrammingMin} min CAM billed separately. Full first-order breakdown: ${derivedSetup.explanation} — batch ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
