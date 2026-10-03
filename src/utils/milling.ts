@@ -35,6 +35,38 @@ export interface MillingToolConfig {
   axialFactor: number;
   /** Spindle rpm ceiling. */
   maxRpm: number;
+  /**
+   * Chip load THIS cutter takes in THIS material (mm/tooth), when the tool is
+   * known — see millingTools.toolChipLoadMm. Absent, the material's table value
+   * is scaled by diameter (chipLoadDiameterFactor).
+   */
+  feedPerToothMm?: number;
+}
+
+/**
+ * A SMALL CUTTER TAKES A SMALL CHIP.
+ *
+ * The material table holds ONE chip load per material — 0.035 mm/tooth for
+ * 316, 0.09 for 6082 — which is a catalogue figure for a cutter of about 10 mm.
+ * It was applied to every cutter, so a 1.5 mm end mill fed at the chip load of a
+ * 10 mm one. It would snap: the tooth load a cutter can carry falls with its
+ * cross-section, and every tooling chart tabulates chip load falling with
+ * diameter.
+ *
+ * Used only when no specific tool is known. A linear fall below 10 mm is the
+ * conservative reading of those charts (the shop's own library falls slightly
+ * faster); above 10 mm the table value stands rather than growing.
+ */
+export const CHIP_LOAD_REF_DIA_MM = 10;
+export const chipLoadDiameterFactor = (toolDiaMm: number) =>
+  Math.min(1, Math.max(0.05, toolDiaMm) / CHIP_LOAD_REF_DIA_MM);
+
+/** Chip load for a cutter config: the tool's own if known, else scaled table. */
+export function chipLoadMm(m: MaterialProps, cfg: MillingToolConfig): number {
+  if (typeof cfg.feedPerToothMm === 'number' && Number.isFinite(cfg.feedPerToothMm) && cfg.feedPerToothMm > 0) {
+    return cfg.feedPerToothMm;
+  }
+  return m.feedPerToothMm * chipLoadDiameterFactor(cfg.toolDiaMm);
 }
 
 export const DEFAULT_MILLING_TOOL: MillingToolConfig = {
@@ -80,7 +112,9 @@ export function millingMrrCm3PerMin(
 ): number {
   const d = Math.max(0.5, cfg.toolDiaMm);
   const n = millingRpm(m.cuttingSpeedRough, d, cfg.maxRpm);
-  const vf = n * Math.max(1, cfg.flutes) * Math.max(0.005, m.feedPerToothMm);
+  // Floor of 0.001 mm/tooth: below that a cutter rubs rather than cuts. The old
+  // 0.005 floor was set for a 10 mm tool and is larger than a 1 mm tool's chip.
+  const vf = n * Math.max(1, cfg.flutes) * Math.max(0.001, chipLoadMm(m, cfg));
   const ae = Math.max(0.05, cfg.radialFactor) * d;
   const ap = Math.max(0.05, cfg.axialFactor) * d;
   return (ae * ap * vf) / 1000; // mm³/min → cm³/min
@@ -107,7 +141,7 @@ export function finishingRateCm2PerMin(
   const d = Math.max(0.5, cfg.toolDiaMm);
   const n = millingRpm(m.cuttingSpeedFinish, d, cfg.maxRpm);
   // Finishing runs a lighter chip than roughing.
-  const vf = n * Math.max(1, cfg.flutes) * Math.max(0.005, m.feedPerToothMm * 0.6);
+  const vf = n * Math.max(1, cfg.flutes) * Math.max(0.001, chipLoadMm(m, cfg) * 0.6);
   const swath = 0.4 * d; // mm — blended wall (full-depth) + floor (stepover) finish
   return (swath * vf) / 100; // mm²/min → cm²/min
 }

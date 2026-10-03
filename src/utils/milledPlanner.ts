@@ -35,6 +35,14 @@ export interface MilledPlanInput {
   /** Extra small-tool detail seconds split out of rough/finish (deepMult − 1). */
   roughComplexSec: number;
   finishComplexSec: number;
+  /**
+   * Walls and floors timed SEPARATELY, each with the cutter that finishes it.
+   * Absent, finishBaseSec is split 60/40 by area as before.
+   */
+  finishWallSec?: number;
+  finishFloorSec?: number;
+  wallRate?: number;
+  floorRate?: number;
   drillSec: number;
   /**
    * THE IDLE THAT BELONGS TO AN OPERATION, separate from its cutting.
@@ -160,7 +168,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   const face = faceMill(tools);
   const rough = roughingTool(tools, inp.minPlaneDimMm);
   const wallFin = wallFinisher(tools, rough);
-  const floorFin = floorFinisher(tools);
+  const floorFin = floorFinisher(tools, rough);
   const detail = detailTool(tools);
   const restRough = restRoughTool(tools, rough);
   const cham = chamferTool(tools);
@@ -220,15 +228,15 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   addSub({
     name: 'Wall finishing',
     tool: toolName(wallFin, 'Finisher'),
-    sec: inp.finishBaseSec * 0.6,
-    driver: `${r1(inp.finishAreaCm2 * 0.6)} cm² walls @ ${r1(inp.finishRate)} cm²/min`,
+    sec: inp.finishWallSec ?? inp.finishBaseSec * 0.6,
+    driver: `${r1(inp.finishAreaCm2 * 0.6)} cm² walls @ ${r1(inp.wallRate ?? inp.finishRate)} cm²/min`,
     color: c.finish,
   });
   addSub({
     name: 'Floor finishing',
     tool: toolName(floorFin, 'Ball finisher'),
-    sec: inp.finishBaseSec * 0.4,
-    driver: `${r1(inp.finishAreaCm2 * 0.4)} cm² floors @ ${r1(inp.finishRate)} cm²/min`,
+    sec: inp.finishFloorSec ?? inp.finishBaseSec * 0.4,
+    driver: `${r1(inp.finishAreaCm2 * 0.4)} cm² floors @ ${r1(inp.floorRate ?? inp.finishRate)} cm²/min`,
     color: c.finish,
   });
   addSub({
