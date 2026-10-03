@@ -42,7 +42,7 @@ from OCP.BRepGProp import BRepGProp
 from OCP.Bnd import Bnd_Box
 from OCP.BRepBndLib import BRepBndLib
 
-from .milling import analyze_milling
+from .milling import analyze_milling, _planar_normal, _face_centroid
 from .threads import (find_thread_callouts, match_threads_to_holes,
                       find_thread_candidates, thread_open_questions)
 
@@ -62,6 +62,41 @@ def _unit(v: np.ndarray) -> np.ndarray:
 def _dist_point_to_line(p: np.ndarray, origin: np.ndarray, direction: np.ndarray) -> float:
     w = p - origin
     return float(np.linalg.norm(w - np.dot(w, direction) * direction))
+
+
+def _polygon_bar(shape, origin: np.ndarray, axis_dir: np.ndarray) -> tuple:
+    """(flat count, across-flats) of a polygon bar about THIS turning axis.
+
+    The signature is the one the milling analysis uses — planar faces whose
+    normals are perpendicular to the axis, all the same distance from it — but
+    measured against the extractor's own turning axis. The milling analysis can
+    only test it once it has found an axis from circular faces, and a plain hex
+    part with nothing round inside may give it none.
+    """
+    dirs: List[tuple] = []
+    exp = TopExp_Explorer(shape, TopAbs_FACE)
+    while exp.More():
+        face = TopoDS.Face_s(exp.Current())
+        exp.Next()
+        n = _planar_normal(face)
+        if n is None or abs(float(np.dot(n, axis_dir))) > 0.10:
+            continue
+        d = abs(float(np.dot(n, _face_centroid(face) - origin)))
+        if d < 0.5:
+            continue
+        for n0, d0 in dirs:
+            if float(np.dot(n0, n)) > 0.98 and abs(d0 - d) < 0.15:
+                break
+        else:
+            dirs.append((n, d))
+    best: List[tuple] = []
+    for _, d in dirs:
+        grp = [x for x in dirs if abs(x[1] - d) < 0.15]
+        if len(grp) > len(best):
+            best = grp
+    if len(best) >= 3:
+        return len(best), round(2.0 * best[0][1], 3)
+    return 0, 0.0
 
 
 def _merge_touching_runs(faces: List[dict], gap_tol: float) -> List[tuple]:
@@ -456,6 +491,85 @@ def extract(path: str) -> dict:
     # has a full picture and can choose the cheaper machining route / machine.
     milled = analyze_milling(shape)
 
+    # --- THE BAR IT IS CUT FROM, AND WHAT IS TURNED OUT OF IT -----------------
+    #
+    # The turned profile reported only the largest radius as "the OD", and the
+    # cost model took that as a diameter it turned from round bar. On Lance's
+    # VOC housing that radius is the CORNER of 25.4 A/F hex bar — the drawing
+    # says "hex bar" and the milling analysis below already counts six flats —
+    # so the quote roughed about fifty cubic centimetres of round bar that is not
+    # there and finish-turned 70 mm of a diameter nobody turns.
+    #
+    # A POLYGON BAR is recognised when the flats the milling analysis found, at
+    # their across-flats size, put their corners exactly at the measured OD.
+    stock = {"shape": "round"}
+    flats, af = _polygon_bar(shape, origin, axis_dir)
+    if not flats:
+        flats = int(milled.get("polygonFlatCount") or 0)
+        af = float(milled.get("acrossFlatsMm") or 0.0)
+    if flats in (4, 6, 8) and af > 0:
+        across_corners = af / math.cos(math.pi / flats)
+        if abs(across_corners - od) <= max(0.3, 0.02 * od):
+            stock = {"shape": "polygon", "flats": flats, "acrossFlatsMm": round(af, 3)}
+
+    # The TURNED REGIONS: every coaxial outside cylinder, merged per diameter
+    # into the runs that actually touch, in axial order. Each is classified by
+    # what stands either side of it on the way to the ends of the part:
+    #
+    #   a BOSS has nothing larger between it and an end, so an OD turning tool
+    #   coming in from that end reaches it;
+    #   a RECESS has something larger on BOTH sides — a bigger diameter, or
+    #   uncut bar — so no OD tool can get to it without cutting back behind a
+    #   shoulder. It is cut with a grooving insert, and that is a different
+    #   operation at a different rate. The housing's ⌀21 body between its two
+    #   hex collars is one; the shop's sheet calls it "rough and finish recess".
+    gap_tol = max(0.05, 0.01 * max(axis_length, 1.0))
+    z_lo, z_hi = min(axial), max(axial)
+    od_groups: List[List[dict]] = []
+    for c in sorted(outer_cyls, key=lambda c: -c["radiusMm"]):
+        for g in od_groups:
+            r = g[0]["radiusMm"]
+            if abs(c["radiusMm"] - r) <= max(0.05, 0.01 * r):
+                g.append(c)
+                break
+        else:
+            od_groups.append([c])
+    regions: List[dict] = []
+    for g in od_groups:
+        for lo, hi in _merge_touching_runs(g, gap_tol):
+            if hi - lo > gap_tol:
+                regions.append({"diameterMm": round(2 * g[0]["radiusMm"], 3),
+                                "zStartMm": round(lo, 3), "zEndMm": round(hi, 3)})
+    regions.sort(key=lambda r: r["zStartMm"])
+    stock_dia = od  # a polygon's corners, or the largest turned diameter
+
+    def _larger_toward(i: int, step: int) -> bool:
+        """Is there anything bigger than region i between it and that end?"""
+        me = regions[i]
+        edge = me["zStartMm"] if step < 0 else me["zEndMm"]
+        end = z_lo if step < 0 else z_hi
+        j = i + step
+        while 0 <= j < len(regions):
+            other = regions[j]
+            near = other["zEndMm"] if step < 0 else other["zStartMm"]
+            # Uncut POLYGON bar fills any real gap between turned regions.
+            if stock["shape"] == "polygon" and abs(near - edge) > gap_tol:
+                return True
+            if other["diameterMm"] > me["diameterMm"] + 0.05:
+                return True
+            edge = other["zStartMm"] if step < 0 else other["zEndMm"]
+            j += step
+        # Reached the last region: is there still bar between it and the end?
+        return stock["shape"] == "polygon" and abs(end - edge) > gap_tol
+
+    od_regions = []
+    for i, r in enumerate(regions):
+        if stock["shape"] == "round" and r["diameterMm"] >= stock_dia - 0.05:
+            kind = "boss"  # the bar's own outside, turned from the bar
+        else:
+            kind = "recess" if (_larger_toward(i, -1) and _larger_toward(i, +1)) else "boss"
+        od_regions.append({**r, "lengthMm": round(r["zEndMm"] - r["zStartMm"], 3), "kind": kind})
+
     # THREADS. Not measurable from faces — a tapped hole is modelled as a plain
     # cylinder at the tap-drill ⌀ — so the only signal in the file is the name the
     # CAD system wrote. Both real parts needing taps carried it: 'M3 Tapped
@@ -496,6 +610,9 @@ def extract(path: str) -> dict:
             "boreDepthMm": bore_depth,
             # Every other coaxial hole, each run separately. See above.
             "additionalBores": additional_bores,
+            # The bar it is cut from, and the turned regions — see above.
+            "stock": stock,
+            "odRegions": od_regions,
             "grooveCount": groove_count,
             "threadCount": 0,  # threads come from the drawing callout, not geometry
             "faceCount": 2,

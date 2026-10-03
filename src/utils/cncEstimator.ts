@@ -21,13 +21,13 @@ import {
 } from '../types';
 import { DEFAULT_CNC_SETTINGS, DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor, nextStandardBar } from './materials';
-import { estimateTurningTimes, DEFAULT_OP_APPROACH, TurningProfile } from './turning';
+import { estimateTurningTimes, DEFAULT_OP_APPROACH, TurningProfile, polygonSectionMm2, acrossCornersMm } from './turning';
 import { deriveRouteSetup, routeRateMultiplier, type RouteSetupOp } from './setupModel';
 import { TOOL_CHANGE_SEC } from './machineSelection';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
 import type { SecondaryOperation } from './secondaryOps';
 import type { EstimatedTurningOp } from './turningTools';
-import { realisation, partNeedsInterruptedDerate } from './realisation';
+import { realisation, partNeedsInterruptedDerate, normaliseRealisation } from './realisation';
 
 export interface MachiningInput {
   /** True for a rotationally-symmetric (turned) part. Only these are costed here. */
@@ -68,12 +68,26 @@ const r1 = (v: number) => Math.round(v * 10) / 10;
 export function computeStock(
   profile: TurningProfile,
   cnc = DEFAULT_CNC_SETTINGS
-): { barDiameterMm: number; barLengthMm: number; stockVolumeCm3: number } {
-  const barDiameterMm = nextStandardBar(profile.odMm + 2 * cnc.radialStockAllowanceMm);
+): { barDiameterMm: number; barLengthMm: number; stockVolumeCm3: number; stockDescription: string } {
   // Chargeable length per part: the part + facing + the width lost to parting.
   const barLengthMm = profile.lengthMm + cnc.facingAllowanceMm + cnc.partingWidthMm;
+  // A POLYGON BAR is bought at its across-flats size and keeps its flats, so
+  // there is no turning allowance on it and its weight is the polygon's, not a
+  // round bar's. The VOC housing was being charged for ⌀36 round bar — 71 cm³
+  // of brass a part — when it is cut from 25.4 A/F hex at 39.
+  if (profile.stock?.shape === 'polygon') {
+    const { flats, acrossFlatsMm } = profile.stock;
+    const stockVolumeCm3 = (polygonSectionMm2(flats, acrossFlatsMm) * barLengthMm) / 1000;
+    const name = flats === 6 ? 'hex' : flats === 4 ? 'square' : flats === 8 ? 'octagon' : `${flats}-sided`;
+    return {
+      barDiameterMm: Math.round(acrossCornersMm(flats, acrossFlatsMm) * 100) / 100,
+      barLengthMm, stockVolumeCm3,
+      stockDescription: `${acrossFlatsMm} A/F ${name} bar`,
+    };
+  }
+  const barDiameterMm = nextStandardBar(profile.odMm + 2 * cnc.radialStockAllowanceMm);
   const stockVolumeCm3 = ((Math.PI / 4) * barDiameterMm * barDiameterMm * barLengthMm) / 1000;
-  return { barDiameterMm, barLengthMm, stockVolumeCm3 };
+  return { barDiameterMm, barLengthMm, stockVolumeCm3, stockDescription: `⌀${barDiameterMm} bar` };
 }
 
 export function calculateMachiningCosts(
@@ -109,7 +123,7 @@ export function calculateMachiningCosts(
   const qty = Math.max(1, Math.round(quantity || 1));
 
   // --- Stock & material ----------------------------------------------------
-  const { barDiameterMm, barLengthMm, stockVolumeCm3 } = computeStock(input.profile, cnc);
+  const { barDiameterMm, barLengthMm, stockVolumeCm3, stockDescription } = computeStock(input.profile, cnc);
   const partVol = Math.max(0, input.volumeCm3);
   const removedVol = Math.max(0, stockVolumeCm3 - partVol);
   const stockWeightKg = (stockVolumeCm3 * m.densityGCm3) / 1000;
@@ -160,6 +174,17 @@ export function calculateMachiningCosts(
     boreDiaMm: input.profile.boreDiaMm,
     crossFeatureCount: input.profile.crossFeatureList?.length ?? 0,
   }));
+  // A POLYGON BAR INTERRUPTS ONLY THE CUTS ON ITS OUTSIDE. Turning a round out
+  // of hex, the corners strike the insert six times a revolution until the
+  // flats are gone — but the drill, the boring bar and the threading tool inside
+  // the part never see a corner. Applied per part, the factor inflated all of
+  // those too; it applies to the operations that cut the bar's outside only.
+  const polygonOd = input.profile.stock?.shape === 'polygon' && (input.profile.odRegions?.length ?? 0) > 0;
+  const OD_OPS = new Set<EstimatedTurningOp>(['face', 'rough', 'finish', 'groove', 'partoff']);
+  const interruptedOnly = 1 / normaliseRealisation(cnc.realisation).interruptedCut;
+  /** The realisation multiplier for ONE operation. */
+  const opMult = (op: EstimatedTurningOp) =>
+    real.multiplier * (polygonOd && !real.interruptedApplied && OD_OPS.has(op) ? interruptedOnly : 1);
   // EFFICIENCY APPLIES TO CUTTING, NOT TO IDLE — and that is a correction.
   //
   // It used to divide the whole cycle. That made sense when idle was a guess: a
@@ -181,7 +206,7 @@ export function calculateMachiningCosts(
   const airCost = (sec: number) => sec * ratePerSec;
   const theoreticalCuttingSec = t.cuttingSec;
   const cycleTimeSec =
-    (t.cuttingSec * feedMult * real.multiplier) / eff + t.airSec + cnc.barLoadSec;
+    t.opTimes.reduce((a, o) => a + (o.cuttingSec * feedMult * opMult(o.op)) / eff, 0) + t.airSec + cnc.barLoadSec;
 
   // EVERY OPERATION'S TWO COLUMNS, the way a cycle sheet writes them.
   //
@@ -202,13 +227,13 @@ export function calculateMachiningCosts(
   /** Actual seconds for one operation: cutting scaled by the override, idle not. */
   const opSecs = (op: EstimatedTurningOp) => {
     const s = splitFor(op);
-    return (s.cuttingSec * feedMult * real.multiplier) / eff + s.idleSec;
+    return (s.cuttingSec * feedMult * opMult(op)) / eff + s.idleSec;
   };
   const opTotalCost = (op: EstimatedTurningOp) => opSecs(op) * ratePerSec;
   /** "3.1s cutting + 12.4s idle" — the phrase the cycle sheets are read in. */
   const splitStr = (op: EstimatedTurningOp) => {
     const s = splitFor(op);
-    return `${r1((s.cuttingSec * feedMult * real.multiplier) / eff)}s cutting + ${r1(s.idleSec)}s idle`;
+    return `${r1((s.cuttingSec * feedMult * opMult(op)) / eff)}s cutting + ${r1(s.idleSec)}s idle`;
   };
   const machineCost = (cycleTimeSec / 60) * machineRatePerMin;
 
@@ -279,6 +304,19 @@ export function calculateMachiningCosts(
 
   // --- Traceable line items (each shows its driver, incl. actual time) -----
   const secStr = (sec: number) => `${r1(cutSec(sec))} s`;
+  // WHAT IS TURNED, in the words of the regions when the geometry gave them —
+  // "⌀21 × 44 recess from 25.4 A/F hex bar", not "70 mm OD" and "4 grooves".
+  const regions = input.profile.odRegions ?? [];
+  const regionList = (kind: 'boss' | 'recess') => regions.filter((r) => r.kind === kind)
+    .map((r) => `⌀${r1(r.diameterMm)} × ${r1(r.lengthMm)}`).join(', ');
+  const roughWhat = regions.length
+    ? `${regionList('boss') || 'no open bosses'} turned from ${stockDescription}`
+    : `${r1(removedVol)} cm³ removed`;
+  const finishWhat = regions.length ? (regionList('boss') || 'no open bosses') : `${r1(input.profile.lengthMm)} mm OD`;
+  const grooveName = regions.length ? 'Recess (grooving insert)' : 'Grooving';
+  const grooveWhat = regions.length
+    ? `${regionList('recess') || 'no recesses'} — multi-plunge, then floor and flanks`
+    : `${input.profile.grooveCount} groove${input.profile.grooveCount === 1 ? '' : 's'}`;
   // EVERY HOLE THE DRILLING ROW DRILLS. It named only the main bore's pilot, so
   // on the VOC housing it read "⌀10.5 × 14 mm deep" against 29 s that also
   // included the ⌀10 hole running 41 mm behind it — a traveller line that
@@ -296,15 +334,15 @@ export function calculateMachiningCosts(
     ...t.screwcutCallouts.map((c) => `${c} screwcut, not tapped`),
   ].join(', ') || 'no threads';
   const lineItems: CostLineItem[] = [
-    { key: 'material', name: 'Bar stock', driver: `⌀${barDiameterMm} × ${r1(barLengthMm)} mm ${m.label} — ${stockWeightKg.toFixed(3)} kg @ $${input.materialPricePerKg.toFixed(2)}/kg`, value: materialCost, color: COLORS.material },
+    { key: 'material', name: 'Bar stock', driver: `${stockDescription} × ${r1(barLengthMm)} mm ${m.label} — ${stockWeightKg.toFixed(3)} kg @ $${input.materialPricePerKg.toFixed(2)}/kg`, value: materialCost, color: COLORS.material },
     { key: 'facing', name: 'Facing', driver: `${input.profile.faceCount} face${input.profile.faceCount === 1 ? '' : 's'} — ${splitStr('face')}`, seconds: opSecs('face'), value: opTotalCost('face'), color: COLORS.facing },
-    { key: 'rough', name: 'Rough turning', driver: `${r1(removedVol)} cm³ removed @ ${Math.round(m.cuttingSpeedRough * m.feedRough * m.depthOfCutRough)} cm³/min — ${splitStr('rough')}`, seconds: opSecs('rough'), value: opTotalCost('rough'), color: COLORS.rough },
-    { key: 'finish', name: 'Finish turning', driver: `${r1(input.profile.lengthMm)} mm @ ${m.cuttingSpeedFinish} m/min — ${splitStr('finish')}`, seconds: opSecs('finish'), value: opTotalCost('finish'), color: COLORS.finish },
+    { key: 'rough', name: 'Rough turning', driver: `${roughWhat} @ ${Math.round(m.cuttingSpeedRough * m.feedRough * m.depthOfCutRough)} cm³/min — ${splitStr('rough')}`, seconds: opSecs('rough'), value: opTotalCost('rough'), color: COLORS.rough },
+    { key: 'finish', name: 'Finish turning', driver: `${finishWhat} @ ${m.cuttingSpeedFinish} m/min — ${splitStr('finish')}`, seconds: opSecs('finish'), value: opTotalCost('finish'), color: COLORS.finish },
     { key: 'deburr', name: 'Deburring', driver: `breaking the edges the cutters leave — ${splitStr('deburr')}`, seconds: opSecs('deburr'), value: opTotalCost('deburr'), color: COLORS.finish },
     { key: 'spot', name: 'Spot drilling', driver: `centre the ⌀${r1(t.drillDiaMm)} drill before it wanders — ${splitStr('spot')}`, seconds: opSecs('spot'), value: opTotalCost('spot'), color: COLORS.drill },
     { key: 'drill', name: 'Drilling', driver: `${drillWhat} — ${splitStr('drill')}`, seconds: opSecs('drill'), value: opTotalCost('drill'), color: COLORS.drill },
     { key: 'bore', name: 'Boring', driver: `finish bore ⌀${input.profile.boreDiaMm} — ${splitStr('bore')}`, seconds: opSecs('bore'), value: opTotalCost('bore'), color: COLORS.bore },
-    { key: 'groove', name: 'Grooving', driver: `${input.profile.grooveCount} groove${input.profile.grooveCount === 1 ? '' : 's'} — ${splitStr('groove')}`, seconds: opSecs('groove'), value: opTotalCost('groove'), color: COLORS.groove },
+    { key: 'groove', name: grooveName, driver: `${grooveWhat} — ${splitStr('groove')}`, seconds: opSecs('groove'), value: opTotalCost('groove'), color: COLORS.groove },
     { key: 'thread', name: 'Threading (single-point)', driver: `${threadWhat} — ${splitStr('thread')}`, seconds: opSecs('thread'), value: opTotalCost('thread'), color: COLORS.thread },
     { key: 'parting', name: 'Part-off', driver: `${splitStr('partoff')}`, seconds: opSecs('partoff'), value: opTotalCost('partoff'), color: COLORS.parting },
     // Off-axis work is inside `machineCost`, so without this row the breakdown
@@ -320,7 +358,7 @@ export function calculateMachiningCosts(
     // published. This row carries no cost of its own: the derate is already
     // inside every cutting row above. It is here so the quote states what was
     // assumed, because an allowance nobody can see is one nobody can argue with.
-    { key: 'realisation', name: 'Cutting conditions (already in the rows above)', driver: `theoretical ${r1(theoreticalCuttingSec)}s at book speeds → ${r1(theoreticalCuttingSec * real.multiplier)}s realised. ${real.explanation}. ${real.applied.map((x) => `${x.name} ${x.value} (${x.why})`).join('; ')}`, seconds: 0, value: 0, color: COLORS.noncut },
+    { key: 'realisation', name: 'Cutting conditions (already in the rows above)', driver: `theoretical ${r1(theoreticalCuttingSec)}s at book speeds → ${r1(t.opTimes.reduce((a, o) => a + o.cuttingSec * opMult(o.op), 0))}s realised. ${real.explanation}.${polygonOd && !real.interruptedApplied ? ` Interrupted cut ${normaliseRealisation(cnc.realisation).interruptedCut} applied to the operations on the ${stockDescription}'s outside only.` : ''} ${real.applied.map((x) => `${x.name} ${x.value} (${x.why})`).join('; ')}`, seconds: 0, value: 0, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min preparation, excluding ${derivedProgrammingMin} min CAM billed separately. Full first-order breakdown: ${derivedSetup.explanation} — batch ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
     { key: 'tooling', name: 'Tooling / consumables', driver: `${t.operationCount} operations — provisional allowance, not a tool-life calculation`, value: toolingCost, color: COLORS.tooling },
@@ -344,13 +382,13 @@ export function calculateMachiningCosts(
   // every row after it and read a tool off the end of the array.
   const opSrc: Array<{ op: EstimatedTurningOp; name: string; sec: number; tool: string; driver: string; color: string }> = [
     { op: 'face', name: 'Facing', sec: t.facingSec, tool: toolFor('face', 'OD turning tool'), driver: `${p.faceCount} face${p.faceCount === 1 ? '' : 's'}`, color: COLORS.facing },
-    { op: 'rough', name: 'Rough turning', sec: t.roughSec, tool: toolFor('rough', 'OD turning tool'), driver: `${r1(removedVol)} cm³ removed`, color: COLORS.rough },
+    { op: 'rough', name: 'Rough turning', sec: t.roughSec, tool: toolFor('rough', 'OD turning tool'), driver: roughWhat, color: COLORS.rough },
     { op: 'deburr', name: 'Deburring', sec: t.deburrSec, tool: toolFor('deburr', 'Chamfer / deburr tool'), driver: 'break the edges — drawing says burr free', color: COLORS.finish },
     { op: 'spot', name: 'Spot drilling', sec: t.spotSec, tool: toolFor('spot', 'Spot / centre drill'), driver: `centre the ⌀${r1(t.drillDiaMm)} drill`, color: COLORS.drill },
     { op: 'drill', name: 'Drilling', sec: t.drillSec, tool: toolFor('drill', 'Carbide drill'), driver: drillWhat, color: COLORS.drill },
     { op: 'bore', name: 'Boring', sec: t.boreSec, tool: toolFor('bore', 'Boring bar'), driver: `⌀${r1(t.drillDiaMm)} → ⌀${r1(p.boreDiaMm)}, ${r1((p.boreDiaMm - t.drillDiaMm) / 2)} mm off the wall`, color: COLORS.bore },
-    { op: 'finish', name: 'Finish turning', sec: t.finishSec, tool: toolFor('finish', 'OD finishing tool'), driver: `${r1(p.lengthMm)} mm OD`, color: COLORS.finish },
-    { op: 'groove', name: 'Grooving', sec: t.grooveSec, tool: toolFor('groove', 'Unassigned groove tool'), driver: `${p.grooveCount} groove${p.grooveCount === 1 ? '' : 's'}`, color: COLORS.groove },
+    { op: 'finish', name: 'Finish turning', sec: t.finishSec, tool: toolFor('finish', 'OD finishing tool'), driver: finishWhat, color: COLORS.finish },
+    { op: 'groove', name: grooveName, sec: t.grooveSec, tool: toolFor('groove', 'Unassigned groove tool'), driver: grooveWhat, color: COLORS.groove },
     { op: 'thread', name: 'Threading', sec: t.threadSec, tool: toolFor('thread', 'Unassigned thread tool'), driver: threadWhat, color: COLORS.thread },
     { op: 'partoff', name: 'Part-off', sec: t.partingSec, tool: toolFor('partoff', 'Parting blade'), driver: 'cut to length', color: COLORS.parting },
     { op: 'tap', name: 'Tapping', sec: t.tapSec, tool: toolFor('tap', 'Unassigned tap tool'), driver: (p.threads ?? []).map((th) => `${Math.max(1, th.count ?? 1)}x ${th.callout}`).join(', ') || 'threads', color: COLORS.thread },
@@ -378,7 +416,7 @@ export function calculateMachiningCosts(
         // "Drilling 1.7 s" looked impossible: true for the metal, but a
         // machinist counts getting the drill there as part of drilling.
         seconds: opSecs(o.op),
-        cuttingSeconds: (s.cuttingSec * feedMult * real.multiplier) / eff,
+        cuttingSeconds: (s.cuttingSec * feedMult * opMult(o.op)) / eff,
         idleSeconds: s.idleSec,
         cost: opTotalCost(o.op),
         color: o.color,
@@ -485,6 +523,7 @@ export function calculateMachiningCosts(
     removedVolumeCm3: removedVol,
     buyToFlyRatio: Math.round(buyToFlyRatio * 100) / 100,
     barDiameterMm,
+    stockDescription,
     cycleTimeSec: Math.round(cycleTimeSec),
     setupTimeMin: r1(setupTimeMin),
     // The per-machine split, so the traveller can name the right work centre on

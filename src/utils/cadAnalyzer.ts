@@ -354,6 +354,10 @@ async function analyzeSolid(
         // appears in it two or three times; these are the operations, and they
         // are what the cycle-time model costs.
         crossFeatureList: p.crossFeatureList,
+        // THE BAR AND WHAT IS TURNED OUT OF IT. A hex bar's corners are the
+        // "OD" and are never turned; the turned diameters are these regions.
+        stock: p.stock,
+        odRegions: p.odRegions?.length ? p.odRegions : undefined,
         // EVERY OTHER ON-AXIS HOLE. The service reports them all; the profile
         // used to carry only `boreDiaMm`, so the VOC housing's ⌀10 through-hole
         // — a whole drilling operation on the shop's own cycle sheet — was

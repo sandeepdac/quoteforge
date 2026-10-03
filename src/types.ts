@@ -231,6 +231,8 @@ export interface MachiningCosts {
   nearNetStock?: boolean;
   /** Standard bar diameter selected (mm). */
   barDiameterMm: number;
+  /** What the bar is, in words — "25.4 A/F hex bar" or "⌀36 bar". */
+  stockDescription?: string;
   /** Per-part cycle time (spindle + air), after the efficiency factor (s). */
   cycleTimeSec: number;
   /** Total setup time for the job (min), amortised over the batch. */
