@@ -279,6 +279,22 @@ export function calculateMachiningCosts(
 
   // --- Traceable line items (each shows its driver, incl. actual time) -----
   const secStr = (sec: number) => `${r1(cutSec(sec))} s`;
+  // EVERY HOLE THE DRILLING ROW DRILLS. It named only the main bore's pilot, so
+  // on the VOC housing it read "⌀10.5 × 14 mm deep" against 29 s that also
+  // included the ⌀10 hole running 41 mm behind it — a traveller line that
+  // undersold its own number by three quarters.
+  const drillWhat = [
+    ...(input.profile.boreDiaMm > 0 && input.profile.boreDepthMm > 0
+      ? [`⌀${r1(t.drillDiaMm)} × ${r1(input.profile.boreDepthMm)} mm`] : []),
+    ...(input.profile.additionalBores ?? []).map((h) => `⌀${r1(h.diameterMm)} × ${r1(h.depthMm)} mm`),
+  ].join(' + ') || 'no holes';
+  // What the single-point threading row is cutting: threads entered by count,
+  // plus called-out ones a lathe screwcuts (a coaxial G1/4 is not tapped).
+  const threadWhat = [
+    ...(input.profile.threadCount > 0
+      ? [`${input.profile.threadCount} thread${input.profile.threadCount === 1 ? '' : 's'}`] : []),
+    ...t.screwcutCallouts.map((c) => `${c} screwcut, not tapped`),
+  ].join(', ') || 'no threads';
   const lineItems: CostLineItem[] = [
     { key: 'material', name: 'Bar stock', driver: `⌀${barDiameterMm} × ${r1(barLengthMm)} mm ${m.label} — ${stockWeightKg.toFixed(3)} kg @ $${input.materialPricePerKg.toFixed(2)}/kg`, value: materialCost, color: COLORS.material },
     { key: 'facing', name: 'Facing', driver: `${input.profile.faceCount} face${input.profile.faceCount === 1 ? '' : 's'} — ${splitStr('face')}`, seconds: opSecs('face'), value: opTotalCost('face'), color: COLORS.facing },
@@ -286,10 +302,10 @@ export function calculateMachiningCosts(
     { key: 'finish', name: 'Finish turning', driver: `${r1(input.profile.lengthMm)} mm @ ${m.cuttingSpeedFinish} m/min — ${splitStr('finish')}`, seconds: opSecs('finish'), value: opTotalCost('finish'), color: COLORS.finish },
     { key: 'deburr', name: 'Deburring', driver: `breaking the edges the cutters leave — ${splitStr('deburr')}`, seconds: opSecs('deburr'), value: opTotalCost('deburr'), color: COLORS.finish },
     { key: 'spot', name: 'Spot drilling', driver: `centre the ⌀${r1(t.drillDiaMm)} drill before it wanders — ${splitStr('spot')}`, seconds: opSecs('spot'), value: opTotalCost('spot'), color: COLORS.drill },
-    { key: 'drill', name: 'Drilling', driver: `⌀${r1(t.drillDiaMm)} drill × ${r1(input.profile.boreDepthMm)} mm deep — ${splitStr('drill')}`, seconds: opSecs('drill'), value: opTotalCost('drill'), color: COLORS.drill },
+    { key: 'drill', name: 'Drilling', driver: `${drillWhat} — ${splitStr('drill')}`, seconds: opSecs('drill'), value: opTotalCost('drill'), color: COLORS.drill },
     { key: 'bore', name: 'Boring', driver: `finish bore ⌀${input.profile.boreDiaMm} — ${splitStr('bore')}`, seconds: opSecs('bore'), value: opTotalCost('bore'), color: COLORS.bore },
     { key: 'groove', name: 'Grooving', driver: `${input.profile.grooveCount} groove${input.profile.grooveCount === 1 ? '' : 's'} — ${splitStr('groove')}`, seconds: opSecs('groove'), value: opTotalCost('groove'), color: COLORS.groove },
-    { key: 'thread', name: 'Threading', driver: `${input.profile.threadCount} thread${input.profile.threadCount === 1 ? '' : 's'} — ${splitStr('thread')}`, seconds: opSecs('thread'), value: opTotalCost('thread'), color: COLORS.thread },
+    { key: 'thread', name: 'Threading (single-point)', driver: `${threadWhat} — ${splitStr('thread')}`, seconds: opSecs('thread'), value: opTotalCost('thread'), color: COLORS.thread },
     { key: 'parting', name: 'Part-off', driver: `${splitStr('partoff')}`, seconds: opSecs('partoff'), value: opTotalCost('partoff'), color: COLORS.parting },
     // Off-axis work is inside `machineCost`, so without this row the breakdown
     // stops adding up to the subtotal it is supposed to explain.
@@ -331,11 +347,11 @@ export function calculateMachiningCosts(
     { op: 'rough', name: 'Rough turning', sec: t.roughSec, tool: toolFor('rough', 'OD turning tool'), driver: `${r1(removedVol)} cm³ removed`, color: COLORS.rough },
     { op: 'deburr', name: 'Deburring', sec: t.deburrSec, tool: toolFor('deburr', 'Chamfer / deburr tool'), driver: 'break the edges — drawing says burr free', color: COLORS.finish },
     { op: 'spot', name: 'Spot drilling', sec: t.spotSec, tool: toolFor('spot', 'Spot / centre drill'), driver: `centre the ⌀${r1(t.drillDiaMm)} drill`, color: COLORS.drill },
-    { op: 'drill', name: 'Drilling', sec: t.drillSec, tool: toolFor('drill', 'Carbide drill'), driver: `⌀${r1(t.drillDiaMm)} × ${r1(p.boreDepthMm)} mm deep`, color: COLORS.drill },
+    { op: 'drill', name: 'Drilling', sec: t.drillSec, tool: toolFor('drill', 'Carbide drill'), driver: drillWhat, color: COLORS.drill },
     { op: 'bore', name: 'Boring', sec: t.boreSec, tool: toolFor('bore', 'Boring bar'), driver: `⌀${r1(t.drillDiaMm)} → ⌀${r1(p.boreDiaMm)}, ${r1((p.boreDiaMm - t.drillDiaMm) / 2)} mm off the wall`, color: COLORS.bore },
     { op: 'finish', name: 'Finish turning', sec: t.finishSec, tool: toolFor('finish', 'OD finishing tool'), driver: `${r1(p.lengthMm)} mm OD`, color: COLORS.finish },
     { op: 'groove', name: 'Grooving', sec: t.grooveSec, tool: toolFor('groove', 'Unassigned groove tool'), driver: `${p.grooveCount} groove${p.grooveCount === 1 ? '' : 's'}`, color: COLORS.groove },
-    { op: 'thread', name: 'Threading', sec: t.threadSec, tool: toolFor('thread', 'Unassigned thread tool'), driver: `${p.threadCount} thread${p.threadCount === 1 ? '' : 's'}`, color: COLORS.thread },
+    { op: 'thread', name: 'Threading', sec: t.threadSec, tool: toolFor('thread', 'Unassigned thread tool'), driver: threadWhat, color: COLORS.thread },
     { op: 'partoff', name: 'Part-off', sec: t.partingSec, tool: toolFor('partoff', 'Parting blade'), driver: 'cut to length', color: COLORS.parting },
     { op: 'tap', name: 'Tapping', sec: t.tapSec, tool: toolFor('tap', 'Unassigned tap tool'), driver: (p.threads ?? []).map((th) => `${Math.max(1, th.count ?? 1)}x ${th.callout}`).join(', ') || 'threads', color: COLORS.thread },
     { op: 'cross', name: 'Off-axis features', sec: t.crossSec, tool: toolFor('cross', 'Unassigned cross tool'), driver: `${p.crossFeatureList?.length ?? 0} cross feature${(p.crossFeatureList?.length ?? 0) === 1 ? '' : 's'}`, color: COLORS.drill },
