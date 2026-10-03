@@ -412,6 +412,62 @@ export function isScrewcutOnLathe(
 }
 
 /**
+ * WHERE A SCREWCUT THREAD STOPS, and how far the tool can coast past it.
+ *
+ * A lathe's Z axis cannot start or stop on the helix instantly: the servo lags
+ * the spindle, so the lead is wrong for a short distance at each end of every
+ * pass. Fanuc's threading-cycle manual gives the distances in terms of spindle
+ * speed n (rpm) and lead L (mm) for the standard servo time constant:
+ *
+ *     end   δ2 ≈ n·L / 1800          start δ1 ≈ 3.605 · n·L / 1800
+ *
+ * The start is taken in air before the face; it costs δ1 at feed per pass,
+ * which works out at a fixed ~0.12 s whatever the speed. The END is the
+ * constraint: an internal thread that runs into a shoulder (a blind hole, or a
+ * step down to a smaller bore) has only its run-out to stop in, so
+ *
+ *     n ≤ 1800 · run-out / L
+ *
+ * which is why a fine thread into a shoulder runs slower than an open one.
+ */
+export function threadServoLagMm(leadMm: number, n: number): { startMm: number; endMm: number } {
+  const end = (Math.max(0, n) * Math.max(0, leadMm)) / 1800;
+  return { startMm: 3.605 * end, endMm: end };
+}
+
+export function threadRunoutRpmCap(leadMm: number, runoutMm: number): number {
+  if (!Number.isFinite(runoutMm)) return Infinity;
+  return (1800 * Math.max(0, runoutMm)) / Math.max(0.05, leadMm);
+}
+
+/**
+ * The run-out a thread ending at a shoulder needs — 1.5 pitches, the short end
+ * of the incomplete-thread allowance in ISO 4755 / DIN 76 for an internal
+ * thread with no undercut.
+ */
+export const THREAD_RUNOUT_PITCHES = 1.5;
+
+/**
+ * Usable length and available run-out of an internal thread in a host hole.
+ *
+ * A host that goes through the part leaves the tool free to run out into air:
+ * the called-out depth is cut and nothing caps the speed. A host that ENDS
+ * inside the part ends at a shoulder; if the callout runs the thread to that
+ * shoulder it cannot be cut full-form all the way, so the full thread stops a
+ * run-out short of it and that run-out is all the room the axis has to stop.
+ */
+export function threadInShoulder(
+  pitchMm: number, threadDepthMm: number, hostDepthMm: number | undefined, partLengthMm: number,
+): { lengthMm: number; runoutMm: number } {
+  const host = hostDepthMm ?? threadDepthMm;
+  const through = host >= partLengthMm * 0.95;
+  if (through) return { lengthMm: Math.max(0.5, threadDepthMm), runoutMm: Infinity };
+  const minRunout = THREAD_RUNOUT_PITCHES * Math.max(0.05, pitchMm);
+  const lengthMm = Math.max(0.5, Math.min(threadDepthMm, host - minRunout));
+  return { lengthMm, runoutMm: Math.max(0, host - lengthMm) };
+}
+
+/**
  * Thread form height — how deep the tool has to get, radially (mm).
  *
  * 60-degree ISO metric: h = 0.6134 * P. Kept as a named relation because it is
@@ -980,18 +1036,25 @@ export function estimateTurningTimes(
   //
   // An EXTERNAL thread is cut at the OD. An INTERNAL one is cut at its own
   // major diameter, in the bore — and is no longer than the hole it sits in.
-  const singlePoint = (pitchMm: number, diaMm: number, lengthMm: number) => {
+  const singlePoint = (pitchMm: number, diaMm: number, lengthMm: number, runoutMm = Infinity) => {
     const passes = threadPassCount(pitchMm);
-    const n = rpm(m.cuttingSpeedFinish * THREAD_VC_FRACTION, Math.max(0.5, diaMm), cfg.maxRpm);
+    // A thread that ends at a shoulder must stop inside its run-out, and the
+    // axis needs n·L/1800 mm to stop — so the run-out caps the speed.
+    const n = Math.min(
+      rpm(m.cuttingSpeedFinish * THREAD_VC_FRACTION, Math.max(0.5, diaMm), cfg.maxRpm),
+      Math.max(50, threadRunoutRpmCap(pitchMm, runoutMm)),
+    );
     const feed = Math.max(0.001, pitchMm * n);
+    const lag = threadServoLagMm(pitchMm, n);
     return {
       n, feed, lengthMm,
+      lagSec: min((lag.startMm + lag.endMm) / feed),
       cuttingSec: min((passes * lengthMm) / feed),
       // A THREADING CYCLE IS NOT CONTINUOUS PASSES. Between each one the tool
       // retracts clear, rapids the thread length back to the start and steps in
       // for the next depth.
-      idleSec: approach(feed) + (passes - 1) * (
-        (lengthMm / Math.max(1, rapid)) * 60
+      idleSec: approach(feed) + passes * min((lag.startMm + lag.endMm) / feed) + (passes - 1) * (
+        ((lengthMm + lag.startMm) / Math.max(1, rapid)) * 60
         // THEN WAIT FOR THE SPINDLE. A thread pass cannot start anywhere: the
         // control has to see the one-per-revolution marker so every pass enters
         // the same helix. Taken as a full revolution, which is the figure that
@@ -1009,9 +1072,9 @@ export function estimateTurningTimes(
     ...screwcutThreads.flatMap((t) => {
       const host = hostHoleFor(t, coaxialHoles);
       const major = THREAD_CATALOG[t.callout]?.majorMm ?? t.tapDrillMm + t.pitchMm;
-      const lengthMm = Math.max(0.5, Math.min(t.depthMm, host?.depthMm ?? t.depthMm));
+      const r = threadInShoulder(t.pitchMm, t.depthMm, host?.depthMm, profile.lengthMm);
       return Array.from({ length: Math.max(1, Math.round(t.count ?? 1)) }, () =>
-        singlePoint(t.pitchMm, major, lengthMm));
+        singlePoint(t.pitchMm, major, r.lengthMm, r.runoutMm));
     }),
   ];
   const threadCutSec = singlePointThreads.reduce((a, x) => a + x.cuttingSec, 0);
@@ -1078,7 +1141,7 @@ export function estimateTurningTimes(
   // at its OWN feed, length and speed.
   for (const th of singlePointThreads) {
     deburrCutSec += min(th.lengthMm / th.feed);
-    deburrIdleSec += approach(th.feed) + 60 / Math.max(1, th.n);
+    deburrIdleSec += approach(th.feed) + 60 / Math.max(1, th.n) + th.lagSec;
   }
 
   for (const dia of deburrEdges) {
