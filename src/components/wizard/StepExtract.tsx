@@ -40,6 +40,12 @@ interface StepExtractProps {
    * ever reach a price.
    */
   onThreadsChange?: (threads: ThreadSpec[]) => void;
+  /**
+   * Surface finish from the drawing, Ra in micrometres: the title block's
+   * general callout, and a finer one for sealing faces when given. Undefined
+   * means the drawing does not say. It sets the finishing feed on the lathe.
+   */
+  onFinishChange?: (finish: { generalRaUm?: number; sealingFaceRaUm?: number }) => void;
   onBack: () => void;
   /** Receives a rendered still of the 3D model, to persist as the part thumbnail. */
   onSnapshot?: (dataUrl: string) => void;
@@ -56,7 +62,7 @@ const loadingMessages = [
   "Calculating volume, surface area, and mass..."
 ];
 
-export default function StepExtract({ cadAnalysis, materialId, onContinue, onBack, onSnapshot, savedThumbnail, onThreadsChange }: StepExtractProps) {
+export default function StepExtract({ cadAnalysis, materialId, onContinue, onBack, onSnapshot, savedThumbnail, onThreadsChange, onFinishChange }: StepExtractProps) {
   // Seeded from whatever the geometry service proposed, then owned by the
   // quoter. Re-seeding on a new part, not on every render, so an edit sticks.
   const detectedThreads = (cadAnalysis?.turningProfile?.threads
@@ -64,6 +70,13 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
   const [threads, setThreads] = useState<ThreadSpec[]>(detectedThreads);
   useEffect(() => { setThreads(detectedThreads); }, [cadAnalysis?.fileName]);
   useEffect(() => { onThreadsChange?.(threads); }, [threads]);
+  const [generalRaUm, setGeneralRaUm] = useState<number | undefined>(cadAnalysis?.turningProfile?.surfaceFinishRaUm);
+  const [sealingFaceRaUm, setSealingFaceRaUm] = useState<number | undefined>(cadAnalysis?.turningProfile?.sealingFaceRaUm);
+  useEffect(() => {
+    setGeneralRaUm(cadAnalysis?.turningProfile?.surfaceFinishRaUm);
+    setSealingFaceRaUm(cadAnalysis?.turningProfile?.sealingFaceRaUm);
+  }, [cadAnalysis?.fileName]);
+  useEffect(() => { onFinishChange?.({ generalRaUm, sealingFaceRaUm }); }, [generalRaUm, sealingFaceRaUm]);
   const { materials } = useQuotes();
   const { symbol } = useMoney();
   // Face coverage: the part painted by what the engine understood, including the
@@ -588,6 +601,40 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                 }}
                 className="w-full px-3 py-2 rounded-md border border-dashed border-border text-xs font-medium hover:bg-accent"
               >+ Add a thread from the drawing</button>
+            </div>
+          )}
+
+          {/* SURFACE FINISH — read off the drawing, never off the solid. The
+              finish a turned surface has to hold fixes the feed the finishing
+              insert can take, so it is a cycle-time input, not a note. */}
+          {isTurned && cadAnalysis && (
+            <div className="bg-card border border-border p-5 rounded-xl space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5">
+                Surface finish (from the drawing)
+              </h3>
+              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                A CAD solid carries no surface finish. Enter the title block&rsquo;s general Ra and,
+                if the drawing calls out finer sealing faces, their Ra. Finer finishes slow the
+                finishing feed; below Ra 0.8 a spring pass is added. Leave a finish produced by a
+                later process (grinding, polishing) out — that is not the lathe&rsquo;s work.
+              </p>
+              {([
+                ['General Ra (title block)', generalRaUm, setGeneralRaUm],
+                ['Sealing faces Ra', sealingFaceRaUm, setSealingFaceRaUm],
+              ] as const).map(([label, value, set]) => (
+                <div key={label} className="flex items-center justify-between gap-3">
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase">{label}</label>
+                  <select
+                    aria-label={label}
+                    className="w-40 bg-background border border-border rounded-md px-2 py-1.5 text-xs font-semibold"
+                    value={value ?? ''}
+                    onChange={(e) => set(e.target.value ? Number(e.target.value) : undefined)}
+                  >
+                    <option value="">Not specified</option>
+                    {[6.3, 3.2, 1.6, 0.8, 0.4, 0.2].map((ra) => <option key={ra} value={ra}>Ra {ra} µm</option>)}
+                  </select>
+                </div>
+              ))}
             </div>
           )}
 

@@ -303,6 +303,13 @@ export default function NewQuotePage() {
                   ? { ...prev.milledProfile, threads } : prev.milledProfile,
               };
             })}
+            onFinishChange={({ generalRaUm, sealingFaceRaUm }) => setCadAnalysis((prev) => {
+              // Finish is a lathe input: it changes the finishing feed.
+              if (!prev?.turningProfile) return prev;
+              const tp = prev.turningProfile;
+              if (tp.surfaceFinishRaUm === generalRaUm && tp.sealingFaceRaUm === sealingFaceRaUm) return prev;
+              return { ...prev, turningProfile: { ...tp, surfaceFinishRaUm: generalRaUm, sealingFaceRaUm } };
+            })}
             onBack={handleBack}
             onSnapshot={setPartImage}
             savedThumbnail={partImage ?? seedThumbnail}
