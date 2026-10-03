@@ -117,6 +117,13 @@ export interface TurningProfile {
    */
   surfaceFinishRaUm?: number;
   /**
+   * Ra (um) called out for SEALING FACES only, when the drawing gives them a
+   * finer finish than the rest of the part ("Ra 0.4 sealing faces" over a title
+   * block's general Ra 0.8). It reaches the facing passes and nothing else:
+   * charging every diameter for the sealing face's finish over-quotes.
+   */
+  sealingFaceRaUm?: number;
+  /**
    * Round bar the part is cut from (mm). Sets how much there is to rough off,
    * and so how many passes roughing takes — which is what decides its return
    * strokes. Absent on older payloads; the facing allowance then stands in.
@@ -710,11 +717,16 @@ export function estimateTurningTimes(
   // The honest split is the textbook one: the MATERIAL sets surface speed (Vc,
   // and so rpm, where the table really does vary 100-250 m/min); the TOOL and
   // the required finish set feed per rev. Both still price the cut.
-  const feedForFinish = (op: EstimatedTurningOp, _materialFeed: number, fallbackRadius: number) =>
-    finishFeedForRaMmPerRev(noseRadiusFor(op, fallbackRadius), raUm);
+  const feedForFinish = (op: EstimatedTurningOp, _materialFeed: number, fallbackRadius: number, ra = raUm) =>
+    finishFeedForRaMmPerRev(noseRadiusFor(op, fallbackRadius), ra);
   // Below ~Ra 0.8 a single pass does not hold the finish — it is followed by a
   // spring pass at the same feed with no depth of cut.
   const finishPasses = raUm <= SPRING_PASS_RA_UM ? 2 : 1;
+  // The faces may be called out finer than the rest — never coarser.
+  const faceRaUm = Number.isFinite(profile.sealingFaceRaUm) && (profile.sealingFaceRaUm ?? 0) > 0
+    ? Math.min(raUm, profile.sealingFaceRaUm as number)
+    : raUm;
+  const facePasses = faceRaUm <= SPRING_PASS_RA_UM ? 2 : 1;
 
   // Non-cutting seconds owed by one operation occurrence. NOT the turret index —
   // that is charged separately, once per actual tool change.
@@ -747,7 +759,7 @@ export function estimateTurningTimes(
   const faceRpm = rpm(m.cuttingSpeedFinish, od * 0.5, cfg.maxRpm);
   // A SEALING FACE is the surface most often carrying the fine Ra callout, and
   // the facing tool's own nose radius decides what feed that allows.
-  const faceFeed = feedForFinish('face', m.feedFinish, 0.8);
+  const faceFeed = feedForFinish('face', m.feedFinish, 0.8, faceRaUm);
   // A face is not one pass. There is facing allowance on the bar to take off,
   // which comes away at roughing depth of cut, and then the finish pass(es) that
   // leave the surface the drawing asks for. Each face is its own approach.
@@ -757,7 +769,7 @@ export function estimateTurningTimes(
   const facingCutSec = profile.faceCount > 0
     ? profile.faceCount * (
         faceRoughPasses * min((od / 2) / faceRoughFeedMmPerMin)
-        + finishPasses * min((od / 2) / faceFinishFeedMmPerMin)
+        + facePasses * min((od / 2) / faceFinishFeedMmPerMin)
       )
     : 0;
   // A full approach per face, deliberately: the two faces are at opposite ends
