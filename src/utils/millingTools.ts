@@ -86,6 +86,30 @@ export function millingToolsFor(m: MaterialProps): MillingTool[] {
 
 const byType = (tools: MillingTool[], t: MillType) => tools.filter((x) => x.type === t);
 
+/**
+ * THE CHIP LOAD A SPECIFIC CUTTER TAKES IN A SPECIFIC MATERIAL (mm/tooth).
+ *
+ * Each library entry carries the book chip load recorded for that cutter, and
+ * those fall steeply with diameter — in the steel set, 0.067 at ⌀10, 0.024 at
+ * ⌀6, 0.012 at ⌀3. The time model never read them: it fed every cutter at the
+ * material table's single figure, so the 1.5 mm finisher on the traveller was
+ * timed as though it took a 10 mm cutter's chip.
+ *
+ * The library supplies the SHAPE against diameter; the material table keeps the
+ * LEVEL. The cutter's own figure is divided by the library's ~10 mm flat — the
+ * size the table's value describes — and multiplied by the table value. So a
+ * 10 mm cutter is timed exactly as before, and a 3 mm one at the fraction of it
+ * its own catalogue entry says. One library serves a material family (steel
+ * AND stainless), and the table is what says 316 takes a lighter chip than
+ * mild steel.
+ */
+export function toolChipLoadMm(tool: MillingTool, m: MaterialProps, tools: MillingTool[]): number {
+  const flats = tools.filter((t) => t.type === 'flat' && t.fz > 0);
+  const ref = flats.slice().sort((a, b) => Math.abs(a.diaMm - 10) - Math.abs(b.diaMm - 10))[0];
+  if (!ref || !(tool.fz > 0)) return m.feedPerToothMm;
+  return m.feedPerToothMm * (tool.fz / ref.fz);
+}
+
 /** The face mill (largest face-type cutter). */
 export function faceMill(tools: MillingTool[]): MillingTool | undefined {
   return byType(tools, 'face').sort((a, b) => b.diaMm - a.diaMm)[0];
@@ -117,10 +141,22 @@ export function wallFinisher(tools: MillingTool[], rougher?: MillingTool): Milli
   return smaller[0] ?? cutters.sort((a, b) => a.diaMm - b.diaMm)[0];
 }
 
-/** Floor finisher: prefer a ball/bull for a clean floor. */
-export function floorFinisher(tools: MillingTool[]): MillingTool | undefined {
-  return byType(tools, 'ball').sort((a, b) => b.diaMm - a.diaMm)[0]
-    ?? byType(tools, 'bull').sort((a, b) => b.diaMm - a.diaMm)[0];
+/**
+ * Floor finisher: prefer a ball/bull for a clean floor — no bigger than the
+ * cutter that roughed it.
+ *
+ * It used to take the LARGEST ball in the library whatever the part, so a 6 mm
+ * part was floor-finished with a 10 mm ball on the traveller. That mattered
+ * little while the library only named tools; now the cycle time is computed
+ * with the tool named, so a cutter that cannot fit the part would be timed as
+ * if it did. Capped at the rougher's ⌀, as the wall finisher already is.
+ */
+export function floorFinisher(tools: MillingTool[], rougher?: MillingTool): MillingTool | undefined {
+  const cap = rougher ? rougher.diaMm : Infinity;
+  const pick = (t: MillType) => byType(tools, t).filter((x) => x.diaMm <= cap).sort((a, b) => b.diaMm - a.diaMm)[0];
+  return pick('ball') ?? pick('bull')
+    // Nothing small enough: the smallest ball the shop owns, not the largest.
+    ?? byType(tools, 'ball').sort((a, b) => a.diaMm - b.diaMm)[0];
 }
 
 /** Smallest detail cutter, for finishing tight walls/corners. */

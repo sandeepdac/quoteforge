@@ -24,7 +24,8 @@ import {
 } from '../types';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
 import { materialPropsFor } from './materials';
-import { millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, MillingToolConfig } from './milling';
+import { millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, DEFAULT_MILLING_TOOL, MillingToolConfig } from './milling';
+import { millingToolsFor, roughingTool, wallFinisher, floorFinisher, toolChipLoadMm, type MillingTool } from './millingTools';
 import { roughingMrrCm3PerMin, rpm as turningRpm } from './turning';
 import { buildMilledPlan } from './milledPlanner';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
@@ -389,13 +390,33 @@ export function calculateMilledCosts(
   // The roughing cutter is sized to the part, not fixed: it dominates MRR, and a
   // big open plate takes a far heavier cut than a small contoured one.
   const minDimMm = Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z) || 20;
-  const millCfg: MillingToolConfig = {
-    toolDiaMm: cnc.millToolDiaMm ?? roughingToolDiaMm(minDimMm),
-    flutes: 3,
+  // TIME THE CUT WITH THE CUTTER THE TRAVELLER NAMES.
+  //
+  // The plan picks its rougher and finishers from the shop's tool library; the
+  // clock used to time roughing with a formula cutter of at least 6 mm, and all
+  // finishing with that same rougher. On a 6 mm part the traveller said "3 mm
+  // rougher, 1.5 mm finisher" while the cycle time was computed for a 6 mm
+  // cutter taking a 10 mm cutter's chip. Now both read the same tools, with the
+  // flute count and catalogue chip load each one carries.
+  //
+  // A shop that sets a roughing ⌀ in Settings still gets it, at the table chip
+  // load scaled by diameter, since no library entry describes that cutter.
+  const sortedStockDims = [p.stockMm.x, p.stockMm.y, p.stockMm.z].sort((a, b) => a - b);
+  const libTools = millingToolsFor(m);
+  const libRough = roughingTool(libTools, sortedStockDims[1]);
+  const libWall = wallFinisher(libTools, libRough);
+  const libFloor = floorFinisher(libTools, libRough);
+  const toolCfg = (t: MillingTool | undefined, fallbackDia: number): MillingToolConfig => ({
+    toolDiaMm: t?.diaMm ?? fallbackDia,
+    flutes: t?.flutes ?? 3,
     radialFactor: 0.35,
     axialFactor: 0.8,
     maxRpm: cnc.millMaxRpm ?? 12000,
-  };
+    feedPerToothMm: t ? toolChipLoadMm(t, m, libTools) : undefined,
+  });
+  const millCfg: MillingToolConfig = cnc.millToolDiaMm
+    ? { ...toolCfg(undefined, cnc.millToolDiaMm), toolDiaMm: cnc.millToolDiaMm }
+    : toolCfg(libRough, roughingToolDiaMm(minDimMm));
   const millMrr = millingMrrCm3PerMin(m, millCfg);
 
   // --- TURNED vs MILLED work ----------------------------------------------
@@ -468,7 +489,13 @@ export function calculateMilledCosts(
   // On a lathe a face is spiralled from OD to centre in one pass — far quicker
   // than a face mill stepping over the whole footprint.
   const footprintCm2 = (p.stockMm.x * p.stockMm.y) / 100;
-  const finishRate = finishingRateCm2PerMin(m, millCfg);
+  // Facing is a face-mill operation and is deliberately unchanged here: it is
+  // timed at the rate the old single-cutter model gave, so this change moves
+  // only the end-mill work it is about.
+  const finishRate = finishingRateCm2PerMin(m, {
+    ...DEFAULT_MILLING_TOOL, toolDiaMm: roughingToolDiaMm(minDimMm), flutes: 3,
+    maxRpm: cnc.millMaxRpm ?? 12000, feedPerToothMm: m.feedPerToothMm,
+  });
   const facesToTurn = p.turningRoute ? Math.min(2, p.facingCandidates ?? 0) : 0;
   const facingSec = facesToTurn > 0
     ? (() => {
@@ -485,7 +512,13 @@ export function calculateMilledCosts(
   // is 1 for prismatic parts and plates, so simple-part calibration is unchanged.
   const finishSculpt = sculptFinishMult(p);
   const finishAreaCm2 = FINISH_MACHINED_FRACTION * Math.max(0, p.surfaceAreaCm2);
-  const finishBaseSec = (finishRate > 0 ? (finishAreaCm2 / finishRate) * 60 * finishSculpt : 0) * cutScale;
+  // Walls with the wall finisher, floors with the floor finisher — the 60/40
+  // split the plan has always shown, each now at its own cutter's rate.
+  const wallRate = finishingRateCm2PerMin(m, toolCfg(libWall, millCfg.toolDiaMm));
+  const floorRate = finishingRateCm2PerMin(m, toolCfg(libFloor, millCfg.toolDiaMm));
+  const finishWallSec = (wallRate > 0 ? ((finishAreaCm2 * 0.6) / wallRate) * 60 * finishSculpt : 0) * cutScale;
+  const finishFloorSec = (floorRate > 0 ? ((finishAreaCm2 * 0.4) / floorRate) * 60 * finishSculpt : 0) * cutScale;
+  const finishBaseSec = finishWallSec + finishFloorSec;
   const finishSec = finishBaseSec * deepMult;
   // Extra seconds attributable to small-tool feature detail (rough + finish).
   const complexitySec = (roughBaseSec + finishBaseSec) * (deepMult - 1);
@@ -727,6 +760,10 @@ export function calculateMilledCosts(
     countersinks: csinks,
     chamfers: chamfs,
     finishBaseSec,
+    finishWallSec,
+    finishFloorSec,
+    wallRate,
+    floorRate,
     roughComplexSec: roughBaseSec * (deepMult - 1),
     finishComplexSec: finishBaseSec * (deepMult - 1),
     drillSec,
