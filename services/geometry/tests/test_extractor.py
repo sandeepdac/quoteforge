@@ -211,3 +211,30 @@ def test_a_plain_round_shaft_is_round_bar_with_no_recess():
     p = extract(SAMPLES["shaft"])["profile"]
     assert p["stock"] == {"shape": "round"}
     assert all(r["kind"] == "boss" for r in p["odRegions"])
+
+
+# --- A stepped bore is drilled through at its narrow diameter -----------------
+
+def test_a_mouth_over_a_narrower_through_hole_reports_the_through_hole_as_pilot():
+    # ⌀12 x 10 mouth over a ⌀10 hole the rest of the way: the shop drills ⌀10
+    # the full 60 mm and bores the mouth up from it.
+    p = extract(_solid(
+        ((0, 0, 50), (0, 0, 1), 6, 10),     # ⌀12 x 10 at the top
+        ((0, 0, -1), (0, 0, 1), 5, 52),     # ⌀10 the rest of the way through
+    ))["profile"]
+    assert p["boreDiaMm"] == pytest.approx(12, abs=0.1)
+    assert p["pilotHole"]["diameterMm"] == pytest.approx(10, abs=0.1)
+    assert p["pilotHole"]["depthMm"] == pytest.approx(60, abs=1)
+    # ...and the ⌀10 is not ALSO reported as a separate hole to drill.
+    assert p["additionalBores"] == []
+
+
+def test_no_pilot_when_a_boring_bar_could_not_open_the_step():
+    # ⌀12 over ⌀4: nobody bores 8 mm on diameter up from a ⌀4 hole; it is drilled
+    # ⌀12-ish and then ⌀4, as two holes.
+    p = extract(_solid(
+        ((0, 0, 50), (0, 0, 1), 6, 10),
+        ((0, 0, 30), (0, 0, 1), 2, 21),
+    ))["profile"]
+    assert p["pilotHole"] is None
+    assert any(abs(b["diameterMm"] - 4) < 0.1 for b in p["additionalBores"])

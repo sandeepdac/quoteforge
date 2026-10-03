@@ -126,3 +126,26 @@ describe('the hex interrupts only the cuts on its outside', () => {
     expect(rows(onHex).some((o) => o.name === 'Recess (grooving insert)')).toBe(true);
   });
 });
+
+describe('a stepped bore is drilled through at its narrow diameter', () => {
+  const stepped: TurningProfile = { ...housing, pilotHole: { diameterMm: 10, depthMm: 70 } };
+  const t = estimateTurningTimes(stepped, brass, 55, cfg);
+  const plain = estimateTurningTimes(housing, brass, 55, cfg);
+
+  it('the drill is the narrow hole, at its full depth', () => {
+    expect(t.drillDiaMm).toBe(10);
+    // 70 mm of ⌀10 against 14 mm of a separate ⌀10.5 pilot.
+    expect(t.opTimes.find((o) => o.op === 'drill')!.cuttingSec)
+      .toBeGreaterThan(plain.opTimes.find((o) => o.op === 'drill')!.cuttingSec * 3);
+  });
+
+  it('the mouth is bored up from it, so the boring bar has more wall to take', () => {
+    expect(t.opTimes.find((o) => o.op === 'bore')!.cuttingSec)
+      .toBeGreaterThan(plain.opTimes.find((o) => o.op === 'bore')!.cuttingSec);
+  });
+
+  it('a pilot shallower than the bore it serves is ignored', () => {
+    const odd = estimateTurningTimes({ ...housing, pilotHole: { diameterMm: 10, depthMm: 5 } }, brass, 55, cfg);
+    expect(odd.drillDiaMm).toBe(plain.drillDiaMm);
+  });
+});

@@ -293,8 +293,10 @@ def extract(path: str) -> dict:
         gap_tol = max(0.05, 0.01 * max(axis_length, 1.0))
         runs = _merge_touching_runs(same, gap_tol)
         bore_depth = round(max(hi - lo for lo, hi in runs), 3) if runs else 0.0
+        main_run = max(runs, key=lambda r: r[1] - r[0]) if runs else None
     else:
         bore_depth = 0.0
+        main_run = None
 
     # EVERY OTHER HOLE ON THE AXIS — which used to be thrown away.
     #
@@ -312,6 +314,7 @@ def extract(path: str) -> dict:
     # these and spots them; it does not bore them, because only a dimensioned
     # bore gets a boring bar.
     additional_bores: List[dict] = []
+    pilot_hole = None
     if main_bore:
         gap_tol = max(0.05, 0.01 * max(axis_length, 1.0))
         r_main = main_bore["radiusMm"]
@@ -325,14 +328,59 @@ def extract(path: str) -> dict:
                     break
             else:
                 groups.append([c])
+        other_runs: List[dict] = []
         for g in groups:
             dia = round(2 * g[0]["radiusMm"], 3)
             for lo, hi in _merge_touching_runs(g, gap_tol):
-                depth = round(hi - lo, 3)
                 # A sliver this short is a relief, a seam or a modelling artefact,
                 # not a hole anybody drills.
-                if dia >= 0.3 and depth >= 0.5:
-                    additional_bores.append({"diameterMm": dia, "depthMm": depth})
+                if dia >= 0.3 and hi - lo >= 0.5:
+                    other_runs.append({"diameterMm": dia, "lo": lo, "hi": hi})
+
+        # A STEPPED BORE IS DRILLED THROUGH AT ITS SMALLEST AND BORED UP.
+        #
+        # When a narrower hole runs on from the main bore — the VOC housing's
+        # ⌀10 continuing behind its ⌀11.8 mouth — the shop does not drill a
+        # separate pilot for the mouth and then a second hole behind it. It
+        # drills the NARROW hole the whole way, through the mouth's position as
+        # well, and opens the mouth out from it with a boring bar. On the
+        # housing that drill is ⌀10 for the full 70 mm (14 + 41 + 14), which is
+        # the "10mm HSS drill (70mm deep)" on the shop's sheet and the reason
+        # its drilling row was twice ours.
+        #
+        # So: walk the chain of holes that TOUCH the main bore, end to end. Its
+        # narrowest diameter is the drill, its full extent is the drill depth,
+        # and the narrow runs it covers are not drilled again separately.
+        if main_run is not None:
+            chain_lo, chain_hi = main_run
+            chain = []
+            grew = True
+            while grew:
+                grew = False
+                for r in other_runs:
+                    if r in chain:
+                        continue
+                    if r["lo"] <= chain_hi + gap_tol and r["hi"] >= chain_lo - gap_tol:
+                        chain.append(r)
+                        # Main-⌀ runs beyond a narrow one extend the chain too:
+                        # the drill goes on through them.
+                        chain_lo, chain_hi = min(chain_lo, r["lo"]), max(chain_hi, r["hi"])
+                        for lo2, hi2 in runs:
+                            if lo2 <= chain_hi + gap_tol and hi2 >= chain_lo - gap_tol:
+                                chain_lo, chain_hi = min(chain_lo, lo2), max(chain_hi, hi2)
+                        grew = True
+            narrow = min((r["diameterMm"] for r in chain), default=None)
+            main_dia = 2 * r_main
+            # ONLY WHEN A BORING BAR CAN OPEN IT. Boring takes a few millimetres
+            # on diameter in a few passes; a ⌀5 mouth over a ⌀1.7 hole (029068)
+            # is drilled ⌀5 and then ⌀1.7, never bored up from ⌀1.7.
+            if (narrow is not None and narrow < main_dia - 0.05
+                    and main_dia - narrow <= max(3.0, 0.25 * main_dia)):
+                pilot_hole = {"diameterMm": narrow, "depthMm": round(chain_hi - chain_lo, 3)}
+                other_runs = [r for r in other_runs
+                              if not (r in chain and abs(r["diameterMm"] - narrow) < 0.05)]
+        additional_bores = [{"diameterMm": r["diameterMm"], "depthMm": round(r["hi"] - r["lo"], 3)}
+                            for r in other_runs]
 
     # Grooves: narrow outer reductions well below the OD.
     groove_count = 0
@@ -610,6 +658,8 @@ def extract(path: str) -> dict:
             "boreDepthMm": bore_depth,
             # Every other coaxial hole, each run separately. See above.
             "additionalBores": additional_bores,
+            # The narrow hole a stepped bore is drilled through at, and how far.
+            "pilotHole": pilot_hole,
             # The bar it is cut from, and the turned regions — see above.
             "stock": stock,
             "odRegions": od_regions,

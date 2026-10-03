@@ -321,9 +321,12 @@ export function calculateMachiningCosts(
   // on the VOC housing it read "⌀10.5 × 14 mm deep" against 29 s that also
   // included the ⌀10 hole running 41 mm behind it — a traveller line that
   // undersold its own number by three quarters.
+  const pilot = input.profile.pilotHole;
   const drillWhat = [
     ...(input.profile.boreDiaMm > 0 && input.profile.boreDepthMm > 0
-      ? [`⌀${r1(t.drillDiaMm)} × ${r1(input.profile.boreDepthMm)} mm`] : []),
+      ? [pilot
+        ? `⌀${r1(t.drillDiaMm)} × ${r1(pilot.depthMm)} mm through — the ⌀${r1(input.profile.boreDiaMm)} mouth is bored up from it`
+        : `⌀${r1(t.drillDiaMm)} × ${r1(input.profile.boreDepthMm)} mm`] : []),
     ...(input.profile.additionalBores ?? []).map((h) => `⌀${r1(h.diameterMm)} × ${r1(h.depthMm)} mm`),
   ].join(' + ') || 'no holes';
   // What the single-point threading row is cutting: threads entered by count,
