@@ -410,7 +410,7 @@ export function calculateMilledCosts(
     toolDiaMm: t?.diaMm ?? fallbackDia,
     flutes: t?.flutes ?? 3,
     radialFactor: 0.35,
-    axialFactor: 0.8,
+    axialFactor: cnc.millAxialFactor ?? 0.8,
     maxRpm: cnc.millMaxRpm ?? 12000,
     feedPerToothMm: t ? toolChipLoadMm(t, m, libTools) : undefined,
   });

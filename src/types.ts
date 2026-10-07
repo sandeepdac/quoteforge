@@ -408,6 +408,12 @@ export interface CncSettings {
   millMaxRpm?: number;
   /** Roughing end-mill ⌀ (mm) assumed for milling MRR. */
   millToolDiaMm?: number;
+  /**
+   * Axial depth of cut per pass for milling roughing, as a fraction of the
+   * cutter diameter. Default 0.8 (full flute depth). Lance's programs run
+   * 0.17-0.25 (a 3 mm end mill at 0.5 mm in 316; an 8 mm at 2 mm in aluminium).
+   */
+  millAxialFactor?: number;
   /** ATC tool-change time (s) — slower than a lathe turret index. */
   millToolChangeSec?: number;
   /**
