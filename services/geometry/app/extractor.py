@@ -634,7 +634,8 @@ def extract(path: str) -> dict:
     # of the seven — so without this a threaded part quotes as though it has no
     # threads, silently, which is the failure this whole module exists to stop.
     milled["threadCandidates"] = find_thread_candidates(
-        milled.get("holeDiametersMm") or [], milled.get("holeDepthsMm") or []
+        milled.get("holeDiametersMm") or [], milled.get("holeDepthsMm") or [],
+        milled.get("holeClosed") or [],
     )
     # A question the FACES cannot answer, kept separate from face coverage so a
     # green ledger can never stand in for "every operation is costed". Built by

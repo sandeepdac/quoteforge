@@ -381,6 +381,11 @@ export interface MachineRecommendation {
   stockForm: StockForm;
   /** Round bar ⌀ (mm) when the route runs from bar — else undefined. */
   barDiameterMm?: number;
+  /**
+   * The bar is the part's own square/rectangular section (bought as such), not a
+   * round bar enclosing it — so the stock is not hogged down from a circle.
+   */
+  prismaticBar?: boolean;
   /** Setups the chosen route actually needs. */
   effectiveSetups?: number;
   /**
@@ -436,6 +441,24 @@ function crossSection(dims: { x: number; y: number; z: number }) {
     lengthMm: best.axis,
   };
 }
+
+/**
+ * A SMALL PRISMATIC PART IS BAR WORK TOO — a HYPOTHESIS, from one part.
+ *
+ * Lance's Hollow Arm is a milled bulkhead, 9.5 mm square, and his sheet opens
+ * with "bar stop process — pull bar to stop" and ends with a slitting-saw cut
+ * off: it is made from bar on the NTX, not from a sawn billet held in soft jaws.
+ * Nobody saws and re-fixtures 10 mm cubes when bar of that section is the
+ * standard stock and the machine feeds it. The router's "round enough" test is
+ * about turning, and rejects it (it fills 19% of its cylinder), so it was
+ * priced as billet work with no cut-off.
+ *
+ * The mechanism is ordinary; the 16 mm LIMIT is not derived. It is the size
+ * below which a billet is not a sensible stock form, chosen with one part in
+ * hand, and the next small prismatic quote that was made from a sawn block
+ * disproves it.
+ */
+export const SMALL_PART_BAR_MAX_SECTION_MM = 16;
 
 /** How turnable is this solid, and what stock would it need? */
 function turnFit(input: MachineSelectionInput) {
@@ -878,6 +901,8 @@ interface Offer {
   route: MachiningRoute;
   stockForm: StockForm;
   barDiameterMm?: number;
+  /** Bar is the part's own (square/rectangular) section, not a round that encloses it. */
+  prismaticBar?: boolean;
   setups: number;
   setupReason: string;
   /** Why this machine, in the estimator's language. */
@@ -965,6 +990,10 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
     const chuckOk = !!fit && fit.chuckSuitable && hasTurnedFeatures && m.liveTooling
       && m.kind !== 'sliding-head'
       && fit.containDiaMm <= (m.maxChuckDiaMm ?? 0);
+    // A small prismatic section is bought as bar and fed — see the constant.
+    const smallBarOk = !!fit && m.kind === 'turn-mill' && m.liveTooling
+      && fit.containDiaMm <= SMALL_PART_BAR_MAX_SECTION_MM
+      && fit.barDiameterMm <= (m.maxBarDiaMm ?? 0);
     // Soft-jaw milling: the workholding limit is the chuck, not roundness.
     const gripOk = !!fit && fit.containDiaMm <= (m.maxChuckDiaMm ?? 0) && lenOk;
     // It only earns its rate as a milling machine if it can actually collapse
@@ -983,6 +1012,17 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
         ],
       });
       reason = `Round ⌀${r0(fit!.widthMm)} × ${r0(fit!.lengthMm)} mm → ⌀${fit!.barDiameterMm} bar within its ${m.maxBarDiaMm} mm capacity; turned and milled in one clamp.`;
+    } else if (smallBarOk && lenOk) {
+      const plan = turnMillSetups(m, true, angled);
+      offers.push({
+        machine: m, route: 'mill-turn', stockForm: 'bar', barDiameterMm: fit!.barDiameterMm, prismaticBar: true,
+        setups: plan.setups, setupReason: plan.reason, cost: price(m, plan),
+        reasons: [
+          `Small section (${r0(fit!.containDiaMm)} mm across) is bought as ⌀${fit!.barDiameterMm} bar and fed through the ${m.name} — bar stop, mill, cut off — not sawn into billets and re-fixtured.`,
+          `Milled with driven tools in the bar, then cut off: ${plan.reason}`,
+        ],
+      });
+      reason = `Small prismatic section (${r0(fit!.containDiaMm)} mm) → ⌀${fit!.barDiameterMm} bar within its ${m.maxBarDiaMm} mm capacity; milled and cut off.`;
     } else if (chuckOk && lenOk) {
       const plan = turnMillSetups(m, false, angled, faces);
       offers.push({
@@ -1102,7 +1142,7 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
   const FINE_FEATURE_MM = 1.5;
   const fine = (input.smallestFeatureMm ?? Infinity) < FINE_FEATURE_MM;
   const fiveAxisOffer = ranked.find((o) => o.machine.axes >= 5 && o.machine.kind === 'turn-mill');
-  if (fine && fiveAxisOffer && fiveAxisOffer !== winner && winner.stockForm !== 'bar') {
+  if (fine && fiveAxisOffer && fiveAxisOffer !== winner && (winner.stockForm !== 'bar' || winner.machine.kind === 'turn-mill')) {
     reasons.push(
       `Smallest feature is ⌀${(input.smallestFeatureMm ?? 0).toFixed(2)} mm. The ${winner.machine.name} is cheaper per part, but a cutter that size needs the spindle speed and rigidity of the ${fiveAxisOffer.machine.name} — CONFIRM this: the size threshold behind it is calibrated on only two jobs.`
     );
@@ -1141,6 +1181,7 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
     route: winner.route,
     stockForm: winner.stockForm,
     barDiameterMm: winner.barDiameterMm,
+    prismaticBar: winner.prismaticBar,
     effectiveSetups: winner.setups,
     bakeOff: ranked.map((o) => o.cost),
     bakeOffNote,

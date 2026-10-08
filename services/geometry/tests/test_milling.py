@@ -427,3 +427,53 @@ def test_polygonal_bar_is_detected_with_its_across_flats():
         r = measure(match)
         if r:
             assert r[0] == 0, f"{match} is not polygonal but reported {r[0]} flats"
+
+
+# --- A small step that is only half-wrapped is still a step -------------------
+
+def _counterbore_over_half_open_hole(tmp_path):
+    """⌀1.3 x 0.8 counterbore over a ⌀0.7 hole whose wall a side slot has opened
+    to a half cylinder — the shape of the Hollow Arm's six small holes."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
+    from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+    from app.extractor import read_step
+    from tests.generate_samples import write
+
+    def cyl(r, h, x, y, z):
+        return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x, y, z), gp_Dir(0, 0, 1)), r, h).Shape()
+
+    solid = BRepPrimAPI_MakeBox(20, 20, 4).Shape()
+    solid = BRepAlgoAPI_Cut(solid, cyl(0.35, 5, 10, 10, -0.5)).Shape()     # ⌀0.7 hole, through
+    solid = BRepAlgoAPI_Cut(solid, cyl(0.65, 1.0, 10, 10, 3.2)).Shape()    # ⌀1.3 x 0.8 counterbore
+    slot = BRepPrimAPI_MakeBox(gp_Pnt(10, 0, -1), 5, 20, 4.2).Shape()      # opens the hole's +x half
+    solid = BRepAlgoAPI_Cut(solid, slot).Shape()
+    path = write(solid, str(tmp_path / "half_open.step"))
+    return analyze_milling(read_step(path))
+
+
+def test_a_half_wrapped_small_hole_under_a_counterbore_is_still_reported(tmp_path):
+    m = _counterbore_over_half_open_hole(tmp_path)
+    dias = m["holeDiametersMm"]
+    assert any(abs(d - 1.3) < 0.1 for d in dias), dias
+    assert any(abs(d - 0.7) < 0.1 for d in dias), dias
+    assert m["steppedHoleCount"] >= 1
+
+
+def test_the_counterbore_is_charged_its_own_short_depth_not_the_whole_hole(tmp_path):
+    m = _counterbore_over_half_open_hole(tmp_path)
+    by_dia = dict(zip(m["holeDiametersMm"], m["holeDepthsMm"]))
+    cb = next(v for d, v in by_dia.items() if abs(d - 1.3) < 0.1)
+    hole = next(v for d, v in by_dia.items() if abs(d - 0.7) < 0.1)
+    assert cb < hole, by_dia
+
+
+def test_a_half_open_hole_is_not_a_thread_candidate(tmp_path):
+    from app.threads import find_thread_candidates
+    m = _counterbore_over_half_open_hole(tmp_path)
+    assert m["holeClosed"] and len(m["holeClosed"]) == len(m["holeDiametersMm"])
+    # ⌀0.7 sits 0.025 above the M0.9 tap drill (0.675), well inside the tolerance.
+    assert find_thread_candidates([0.7], [1.35]) != []
+    open_idx = [i for i, d in enumerate(m["holeDiametersMm"]) if abs(d - 0.7) < 0.1]
+    assert open_idx and not m["holeClosed"][open_idx[0]]
+    assert find_thread_candidates(m["holeDiametersMm"], m["holeDepthsMm"], m["holeClosed"]) == []

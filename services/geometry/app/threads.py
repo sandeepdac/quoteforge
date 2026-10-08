@@ -160,7 +160,7 @@ def match_threads_to_holes(callouts: List[dict], hole_diameters: List[float]) ->
     return out
 
 
-def find_thread_candidates(hole_diameters, hole_depths=None) -> List[dict]:
+def find_thread_candidates(hole_diameters, hole_depths=None, hole_closed=None) -> List[dict]:
     """
     Threads PROPOSED from the holes themselves, when nothing named one.
 
@@ -175,12 +175,19 @@ def find_thread_candidates(hole_diameters, hole_depths=None) -> List[dict]:
     callouts share a tap drill — M2 and M2x0.4 both want 1.6 — the coarse one is
     proposed, because coarse is what a shop reaches for unless told otherwise.
 
+    A hole that does not close the full turn cannot hold a thread, so it is never
+    proposed: the Hollow Arm's six ⌀0.7 holes sit 0.025 above the M0.9 tap drill
+    (as its real ⌀0.65 hole sits 0.025 below) and only the closed one is a thread.
+
     These are CANDIDATES. The drawing decides, and a quoter has the drawing.
     """
     dias = list(hole_diameters or [])
     depths = list(hole_depths or [])
+    closed = list(hole_closed or [])
     out: List[dict] = []
     for i, d in enumerate(dias):
+        if i < len(closed) and not closed[i]:
+            continue
         best = None
         for callout, (drill, pitch) in TAP_TABLE_MM.items():
             gap = abs(d - drill)

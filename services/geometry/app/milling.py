@@ -606,10 +606,22 @@ def analyze_milling(shape) -> dict:
     # PLUS a counterbore, each with its own tool and its own cycle time. A step
     # only counts if it is a real surface in its own right (same wrap test), so a
     # chamfer ring or a blend does not become a phantom operation.
+    #
+    # A SMALL STEP THAT IS ONLY HALF-WRAPPED STILL COUNTS, when it sits in a hole
+    # that is real as a whole. The Hollow Arm's six ⌀0.7 holes under their ⌀1.3
+    # counterbores are cut open to the side by the scallops, so each ⌀0.7 face
+    # wraps 180 degrees and ⌀1.3 only 205: neither passed the test above, both
+    # were dropped, and the hole fell back to the whole group's 1.35 mm depth as a
+    # single ⌀1.3 drill. A corner blend wraps about 90 degrees; a half cylinder
+    # on the axis of a hole that closes the full turn between its steps is a hole.
+    HALF_WRAP = 0.9 * math.pi
+
     def _real_steps(g: dict) -> List[dict]:
+        group_closes = g["span"] >= 0.85 * FULL_TURN
         return [st for st in g.get("steps", [])
                 if st["span"] >= 0.85 * FULL_TURN
-                or (st["span"] >= PARTIAL_MIN_WRAP and 2.0 * st["radius"] > corner_dia_max)]
+                or (st["span"] >= PARTIAL_MIN_WRAP and 2.0 * st["radius"] > corner_dia_max)
+                or (group_closes and st["span"] >= HALF_WRAP)]
 
     def _largest_run(extents: List[tuple], gap_tol: float) -> float:
         """Longest CONTIGUOUS axial run across a set of face extents.
@@ -650,6 +662,10 @@ def analyze_milling(shape) -> dict:
     # Each STEP is measured on its own faces, so a counterbore is charged for its
     # own short plunge rather than for the length of the hole it sits on.
     hole_depths: List[float] = []
+    # Whether each step closes the full turn. A half-open hole cannot hold a
+    # thread, so this is what keeps a pattern of scallop-opened holes from being
+    # proposed as tapped holes.
+    hole_closed: List[bool] = []
     stepped_holes = 0
     gap_tol = max(0.05, 0.01 * max(diag, 1.0))
     for g in hole_groups:
@@ -662,11 +678,13 @@ def analyze_milling(shape) -> dict:
             hole_diameters.append(round(2.0 * st["radius"], 3))
             depth = round(_largest_run(st.get("extents", []), gap_tol) or group_depth, 3)
             hole_depths.append(depth)
-    # Sort the two together so index i of one matches index i of the other.
+            hole_closed.append(bool(st.get("span", g["span"]) >= 0.85 * FULL_TURN))
+    # Sort the three together so index i of each matches index i of the others.
     if hole_diameters:
-        _paired = sorted(zip(hole_diameters, hole_depths), key=lambda t: -t[0])
-        hole_diameters = [d for d, _ in _paired]
-        hole_depths = [z for _, z in _paired]
+        _paired = sorted(zip(hole_diameters, hole_depths, hole_closed), key=lambda t: -t[0])
+        hole_diameters = [d for d, _, _ in _paired]
+        hole_depths = [z for _, z, _ in _paired]
+        hole_closed = [c for _, _, c in _paired]
     # Distinct circular operations, counterbores included.
     n_holes = len(hole_diameters)
     # Open / partial circular features: milled by interpolation, never drilled.
@@ -1180,6 +1198,8 @@ def analyze_milling(shape) -> dict:
         "holeDiametersMm": hole_diameters,
         # Measured depth per hole, index-matched to holeDiametersMm.
         "holeDepthsMm": hole_depths,
+        # Index-matched: does the hole close the full turn (can it hold a thread)?
+        "holeClosed": hole_closed,
         # Open/partial circular features (milled by interpolation, not drilled).
         "partialBoreDiametersMm": partial_bore_diameters,
         # Holes that carry a counterbore/step (drill + counterbore = 2 tools).
