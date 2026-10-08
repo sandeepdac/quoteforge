@@ -238,3 +238,33 @@ def test_no_pilot_when_a_boring_bar_could_not_open_the_step():
     ))["profile"]
     assert p["pilotHole"] is None
     assert any(abs(b["diameterMm"] - 4) < 0.1 for b in p["additionalBores"])
+
+
+# --- A bore at each end is two bores ------------------------------------------
+
+def test_a_blind_bore_in_each_end_counts_both_ends():
+    # ⌀12 x 10 blind at each end of a ⌀30 x 60 shaft, a ⌀6 hole through between.
+    p = extract(_solid(
+        ((0, 0, 50), (0, 0, 1), 6, 11),
+        ((0, 0, -1), (0, 0, 1), 6, 11),
+        ((0, 0, -1), (0, 0, 1), 3, 62),
+    ))["profile"]
+    assert p["boreDiaMm"] == pytest.approx(12, abs=0.1)
+    assert p["boreEndCount"] == 2
+
+
+def test_one_bore_is_one_end():
+    p = extract(_solid(((0, 0, 50), (0, 0, 1), 6, 11)))["profile"]
+    assert p["boreEndCount"] == 1
+
+
+def test_a_bore_interrupted_by_a_cross_hole_is_still_one_bore():
+    # A single ⌀12 bore down the middle of the part, no cross hole needed: it
+    # touches neither end, so it can never be read as a bore at each end.
+    p = extract(_solid(((0, 0, 20), (0, 0, 1), 6, 20)))["profile"]
+    assert p["boreEndCount"] == 1
+
+
+def test_a_through_bore_is_one_bore_at_both_ends():
+    p = extract(_solid(((0, 0, -1), (0, 0, 1), 6, 62)))["profile"]
+    assert p["boreEndCount"] == 1

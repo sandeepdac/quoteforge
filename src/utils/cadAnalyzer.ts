@@ -341,6 +341,7 @@ async function analyzeSolid(
       turningProfile = {
         odMm: p.odMm, lengthMm: p.lengthMm,
         boreDiaMm: p.boreDiaMm, boreDepthMm: p.boreDepthMm,
+        boreEndCount: p.boreEndCount,
         grooveCount: p.grooveCount, threadCount: p.threadCount,
         faceCount: p.faceCount || 2, crossFeatures: p.crossFeatures,
         // The service reports each off-axis feature as a 'cross' segment with a
@@ -430,7 +431,16 @@ async function analyzeSolid(
       && (svcMilled.threadCandidates ?? []).length > 0;
     // A TURNED part's threads live on its own profile. The milling analysis is
     // where the tap-drill holes were found, so the two have to be joined here.
-    if (turningProfile && dfmThreads.length) turningProfile.threads = dfmThreads;
+    // A thread in the main bore is cut at EVERY end the bore is at; the hole
+    // list reports a bore at each end as one entry, so the count is set here.
+    if (turningProfile && dfmThreads.length) {
+      const ends = Math.min(2, Math.max(1, Math.round(turningProfile.boreEndCount ?? 1)));
+      const boreDia = turningProfile.boreDiaMm;
+      turningProfile.threads = dfmThreads.map((t) =>
+        ends > 1 && Math.abs(t.tapDrillMm - boreDia) <= Math.max(0.15, 0.02 * boreDia)
+          ? { ...t, count: Math.max(t.count ?? 1, ends) }
+          : t);
+    }
 
     // Milled/prismatic profile (the 3 AAG rules: setups from access-direction
     // clustering, pockets/bosses from edge concavity, deep-pocket reach). Built
