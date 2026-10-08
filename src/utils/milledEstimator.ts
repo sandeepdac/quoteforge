@@ -24,7 +24,7 @@ import {
 } from '../types';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
 import { materialPropsFor } from './materials';
-import { millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, DEFAULT_MILLING_TOOL, MillingToolConfig } from './milling';
+import { SHOP_MILL_AXIAL_FACTOR, millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, DEFAULT_MILLING_TOOL, MillingToolConfig } from './milling';
 import { millingToolsFor, roughingTool, wallFinisher, floorFinisher, toolChipLoadMm, type MillingTool } from './millingTools';
 import { roughingMrrCm3PerMin, rpm as turningRpm } from './turning';
 import { buildMilledPlan } from './milledPlanner';
@@ -346,7 +346,16 @@ export function calculateMilledCosts(
   // metal and re-enter it on every revolution — that is what milling IS, and it
   // is the textbook case the catalogues say to slow down for. So the conditional
   // factor always applies here, where on a turned part it depends on geometry.
-  const real = realisation(cnc.realisation, true);
+  //
+  // NOT APPLIED BY DEFAULT. The stack exists because book speeds assume favourable
+  // conditions the shop does not have. A milled part is now timed at the shop's
+  // OWN programmed depth of cut (SHOP_MILL_AXIAL_FACTOR), which already carries
+  // those conditions: stacking the derate on top counts them twice (measured:
+  // x2.65 and x4.37 of Lance's CAM totals on the two milled parts he sent, against
+  // x0.84 and x1.10 with it off). A shop that runs the book depth can turn it on.
+  const real = cnc.realisationOnMilling
+    ? realisation(cnc.realisation, true)
+    : realisation({ toolLife: 1, rigidity: 1, oneOffProgram: 1, materialCondition: 1, interruptedCut: 1 }, true);
   /** Everything that scales CUTTING time: the override and the derate together. */
   const cutScale = feedMult * real.multiplier;
   const machineRatePerMin = cnc.machineRatePerMin * (machineRateMultiplier > 0 ? machineRateMultiplier : 1);
@@ -410,7 +419,7 @@ export function calculateMilledCosts(
     toolDiaMm: t?.diaMm ?? fallbackDia,
     flutes: t?.flutes ?? 3,
     radialFactor: 0.35,
-    axialFactor: cnc.millAxialFactor ?? 0.8,
+    axialFactor: cnc.millAxialFactor ?? SHOP_MILL_AXIAL_FACTOR,
     maxRpm: cnc.millMaxRpm ?? 12000,
     feedPerToothMm: t ? toolChipLoadMm(t, m, libTools) : undefined,
   });
@@ -514,10 +523,21 @@ export function calculateMilledCosts(
   const finishAreaCm2 = FINISH_MACHINED_FRACTION * Math.max(0, p.surfaceAreaCm2);
   // Walls with the wall finisher, floors with the floor finisher — the 60/40
   // split the plan has always shown, each now at its own cutter's rate.
-  const wallRate = finishingRateCm2PerMin(m, toolCfg(libWall, millCfg.toolDiaMm));
-  const floorRate = finishingRateCm2PerMin(m, toolCfg(libFloor, millCfg.toolDiaMm));
+  // A WALL is swept at its height in one pass; a FLAT floor at a light stepover;
+  // only a CONTOURED floor needs the ball at a fine stepover. How much of the
+  // floor is contoured follows the part's own contour measure: 0 for a prismatic
+  // part, 1 once the sculpt multiplier has doubled the finishing time.
+  const wallHeightCapMm = Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z);
+  const wallRate = finishingRateCm2PerMin(m, toolCfg(libWall, millCfg.toolDiaMm), 'wall', wallHeightCapMm);
+  const ballRate = finishingRateCm2PerMin(m, toolCfg(libFloor, millCfg.toolDiaMm));
+  const flatFloorRate = finishingRateCm2PerMin(m, toolCfg(libWall, millCfg.toolDiaMm), 'floor');
+  const contouredShare = Math.min(1, Math.max(0, finishSculpt - 1));
+  const floorAreaCm2 = finishAreaCm2 * 0.4;
+  // The floor's effective rate, for the plan: area-weighted across flat and ball.
+  const floorRate = 1 / (((1 - contouredShare) / Math.max(1e-9, flatFloorRate)) + (contouredShare / Math.max(1e-9, ballRate)));
   const finishWallSec = (wallRate > 0 ? ((finishAreaCm2 * 0.6) / wallRate) * 60 * finishSculpt : 0) * cutScale;
-  const finishFloorSec = (floorRate > 0 ? ((finishAreaCm2 * 0.4) / floorRate) * 60 * finishSculpt : 0) * cutScale;
+  const finishFloorSec = ((flatFloorRate > 0 ? (floorAreaCm2 * (1 - contouredShare)) / flatFloorRate : 0)
+    + (ballRate > 0 ? (floorAreaCm2 * contouredShare) / ballRate : 0)) * 60 * finishSculpt * cutScale;
   const finishBaseSec = finishWallSec + finishFloorSec;
   const finishSec = finishBaseSec * deepMult;
   // Extra seconds attributable to small-tool feature detail (rough + finish).
