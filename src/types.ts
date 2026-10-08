@@ -410,10 +410,16 @@ export interface CncSettings {
   millToolDiaMm?: number;
   /**
    * Axial depth of cut per pass for milling roughing, as a fraction of the
-   * cutter diameter. Default 0.8 (full flute depth). Lance's programs run
-   * 0.17-0.25 (a 3 mm end mill at 0.5 mm in 316; an 8 mm at 2 mm in aluminium).
+   * cutter diameter. Default 0.2, the shop's own practice (a 3 mm
+   * end mill at 0.5 mm in 316; an 8 mm at 2 mm in aluminium). 0.8 is full flute depth.
    */
   millAxialFactor?: number;
+  /**
+   * Apply the realisation stack to MILLED work too. Off by default: milled parts
+   * are timed at the shop's programmed depth of cut, which already carries those
+   * conditions.
+   */
+  realisationOnMilling?: boolean;
   /** ATC tool-change time (s) — slower than a lathe turret index. */
   millToolChangeSec?: number;
   /**

@@ -69,6 +69,16 @@ export function chipLoadMm(m: MaterialProps, cfg: MillingToolConfig): number {
   return m.feedPerToothMm * chipLoadDiameterFactor(cfg.toolDiaMm);
 }
 
+/**
+ * AXIAL DEPTH OF A ROUGHING PASS, in cutter diameters, as this shop programs it.
+ *
+ * The model assumed 0.8 (full flute length). Lance's CAM programs take 0.17 for a
+ * 3 mm end mill in 316 (0.5 mm), 0.25 for an 8 mm in aluminium (2 mm), and 1 mm
+ * with a 40 mm face mill. 0.2 is the figure they share. It is the shop's own
+ * practice, so it is a shop setting (`millAxialFactor`), not a fit.
+ */
+export const SHOP_MILL_AXIAL_FACTOR = 0.2;
+
 export const DEFAULT_MILLING_TOOL: MillingToolConfig = {
   toolDiaMm: 10,
   flutes: 3,
@@ -134,14 +144,41 @@ export function millingMrrCm3PerMin(
  * Rate rises with FEED, not with cutting speed directly — the old linear-in-Vc
  * scaling handed fast-cutting materials an unrealistic finishing bonus.
  */
+export type FinishSurface = 'wall' | 'floor' | 'blend';
+
+/**
+ * How much WALL one finishing pass sweeps, in cutter diameters.
+ *
+ * A wall is finished at the full engaged flute length in a single pass, so the
+ * swath is the wall's HEIGHT, limited by how much flute can cut. Lance's
+ * aluminium base block: an 8 mm cutter finishes 15 mm and 10.5 mm of wall in one
+ * pass each (1.9 and 1.3 diameters). Two diameters is the ordinary flute
+ * engagement for a solid-carbide end mill, and the wall can never be taller than
+ * the part, which `wallHeightCapMm` carries.
+ */
+export const WALL_FINISH_ENGAGEMENT_DIAMETERS = 2;
+
+/**
+ * Stepover of a flat floor finished with a flat or bull cutter, in diameters.
+ * A floor is a light radial stepover, not a full-depth cut; 0.7 D is the usual
+ * flat-bottom finishing stepover and leaves no ridge a face mill would not.
+ */
+export const FLAT_FLOOR_STEPOVER_DIAMETERS = 0.7;
+
 export function finishingRateCm2PerMin(
   m: MaterialProps,
-  cfg: MillingToolConfig = DEFAULT_MILLING_TOOL
+  cfg: MillingToolConfig = DEFAULT_MILLING_TOOL,
+  surface: FinishSurface = 'blend',
+  wallHeightCapMm = Infinity,
 ): number {
   const d = Math.max(0.5, cfg.toolDiaMm);
   const n = millingRpm(m.cuttingSpeedFinish, d, cfg.maxRpm);
   // Finishing runs a lighter chip than roughing.
   const vf = n * Math.max(1, cfg.flutes) * Math.max(0.001, chipLoadMm(m, cfg) * 0.6);
-  const swath = 0.4 * d; // mm — blended wall (full-depth) + floor (stepover) finish
+  const swath = surface === 'wall'
+    ? Math.min(WALL_FINISH_ENGAGEMENT_DIAMETERS * d, Math.max(0.1, wallHeightCapMm))
+    : surface === 'floor'
+      ? FLAT_FLOOR_STEPOVER_DIAMETERS * d
+      : 0.4 * d; // mm — blended wall (full-depth) + floor (stepover) finish
   return (swath * vf) / 100; // mm²/min → cm²/min
 }

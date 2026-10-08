@@ -83,3 +83,23 @@ describe('roughingToolDiaMm', () => {
     expect(big / small).toBeGreaterThan(4);
   });
 });
+
+describe('finishing sweep by surface', () => {
+  const m = materialPropsFor('Aluminium 6082');
+  const cfg = { ...DEFAULT_MILLING_TOOL, toolDiaMm: 8 };
+
+  it('the default is the old blended 0.4 D', () => {
+    expect(finishingRateCm2PerMin(m, cfg)).toBeCloseTo(finishingRateCm2PerMin(m, cfg, 'blend'), 12);
+  });
+
+  it('a wall is swept at two diameters of flute, a flat floor at 0.7 D', () => {
+    const blend = finishingRateCm2PerMin(m, cfg);
+    expect(finishingRateCm2PerMin(m, cfg, 'wall') / blend).toBeCloseTo(2 / 0.4, 9);
+    expect(finishingRateCm2PerMin(m, cfg, 'floor') / blend).toBeCloseTo(0.7 / 0.4, 9);
+  });
+
+  it('a wall cannot be taller than the part', () => {
+    const capped = finishingRateCm2PerMin(m, cfg, 'wall', 6);
+    expect(capped / finishingRateCm2PerMin(m, cfg)).toBeCloseTo(6 / 3.2, 9);
+  });
+});
