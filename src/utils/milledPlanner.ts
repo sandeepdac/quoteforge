@@ -95,6 +95,8 @@ export interface MilledPlanInput {
   deburrEdges?: number;
   /** Parting a bar-fed part off the bar, and the bar it comes off. */
   partoffSec?: number;
+  /** Bar stop / bar feed per part (s) — machine idle, only on bar-fed routes. */
+  barStopSec?: number;
   partoffBarDiaMm?: number;
   countersinks?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
   chamfers?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
@@ -137,7 +139,12 @@ interface DraftOp {
   driver: string;
   color: string;
   setup: number; // 1-based
+  /** Not a tool operation: no tool change and no approach move (a bar stop). */
+  noTool?: boolean;
 }
+
+/** The pseudo-tool a bar stop row carries; it is not counted as a tool. */
+export const BAR_STOP_TOOL = 'Bar stop';
 
 const r1 = (v: number) => Math.round(v * 10) / 10;
 const toolName = (t: MillingTool | undefined, fallback: string) => (t ? t.description : fallback);
@@ -439,6 +446,23 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
     }
   }
 
+  // --- Bar stop: the first thing that happens on a bar-fed part --------------
+  // Both of Lance's cycle sheets open with the same row: "bar stop process, pull
+  // bar to stop, close door", 30 s, no cutting. A milled part fed from bar has it
+  // too, and it had no row at all.
+  if ((inp.barStopSec ?? 0) > 0) {
+    ops.unshift({
+      name: 'Bar stop / feed',
+      tool: BAR_STOP_TOOL,
+      sec: 0,
+      idleSec: inp.barStopSec ?? 0,
+      driver: 'pull the bar to the stop and close the door',
+      color: c.facing,
+      setup: 1,
+      noTool: true,
+    });
+  }
+
   // --- Part-off: the last thing that happens on the bar ----------------------
   // On a bar-fed route the part comes off the bar at the end of the first
   // holding; anything after that is a second op on the cut-off part.
@@ -457,7 +481,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   const planSetups: PlanSetup[] = [];
   for (let s = 1; s <= setups; s++) {
     const mine = ops.filter((o) => o.setup === s);
-    const distinctTools = new Set(mine.map((o) => o.tool)).size;
+    const distinctTools = new Set(mine.filter((o) => !o.noTool).map((o) => o.tool)).size;
     // EVERY OPERATION CARRIES ITS OWN IDLE, as on a cycle sheet and as the
     // turning side now does. The ATC change and the approach used to be summed
     // into one per-setup lump added after the rows, so the plan showed six
@@ -468,10 +492,11 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
     // the seconds onto the rows without inventing or losing any.
     const seen = new Set<string>();
     const operations: PlanOperation[] = mine.map((o) => {
-      const firstUse = !seen.has(o.tool);
+      const firstUse = !o.noTool && !seen.has(o.tool);
       seen.add(o.tool);
-      const idleSec = (inp.approachSecPerOp ?? 0) + (firstUse ? inp.toolChangeSec : 0)
-        + (o.idleSec ?? 0);
+      const idleSec = o.noTool
+        ? (o.idleSec ?? 0)
+        : (inp.approachSecPerOp ?? 0) + (firstUse ? inp.toolChangeSec : 0) + (o.idleSec ?? 0);
       // Efficiency scales CUTTING only. Idle here is the ATC's own change time
       // and a rapid at the machine's own traverse rate — specifications, not
       // estimates, and nothing is gained by asserting the machine is slower
@@ -484,7 +509,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
         idleSeconds: idleSec,
         cost: inp.opCost(o.sec) + inp.airCost(idleSec),
         driver: `${o.driver} · ${r1(o.sec / inp.eff)}s cutting + ${r1(idleSec)}s idle`
-          + (firstUse ? ' (idle includes the tool change)' : ' · tool already in the spindle'),
+          + (o.noTool ? '' : firstUse ? ' (idle includes the tool change)' : ' · tool already in the spindle'),
         color: o.color,
       };
     });
@@ -506,6 +531,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   const agg = new Map<string, { name: string; ops: number; seconds: number }>();
   for (const s of planSetups) {
     for (const o of s.operations) {
+      if (o.tool === BAR_STOP_TOOL) continue; // a handling step, not a tool
       const cur = agg.get(o.tool) ?? { name: o.tool, ops: 0, seconds: 0 };
       cur.ops += 1;
       cur.seconds += o.seconds;

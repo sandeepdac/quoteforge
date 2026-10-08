@@ -109,7 +109,10 @@ export const DEFAULT_CNC_SETTINGS: CncSettings = {
   feedrateRatioPercent: 100, // client-facing feed override; 100 = programmed feed (neutral)
   maxRpm: 6000,
   toolChangeSec: 8,
-  barLoadSec: 8,
+  // 30 s: both of Lance's cycle sheets open with a "bar stop process - pull bar to
+  // stop - close door" row of exactly this length, one on the Mori NL and one on
+  // the NTX. It was 8 s, a load/unload figure with no source.
+  barLoadSec: 30,
   toolingCostPerOp: 0.5,
   radialStockAllowanceMm: 2,
   facingAllowanceMm: 2,
