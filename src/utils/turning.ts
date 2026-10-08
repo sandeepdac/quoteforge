@@ -61,6 +61,12 @@ export interface TurningProfile {
   /** Number of SINGLE-POINT threaded features (screwcut, not tapped). */
   threadCount: number;
   /**
+   * Ends of the part that carry the main bore: 1 (default) or 2. The VOC
+   * housing has a G1/4 bore in each end; the sheet times the front one and the
+   * router has a second operation for the back.
+   */
+  boreEndCount?: number;
+  /**
    * Pitch of those screwcut threads (mm), from the drawing callout.
    *
    * It sets both the feed (a thread's feed IS its pitch) and the number of
@@ -856,6 +862,8 @@ export function estimateTurningTimes(
   // real cost driver on a big bore (the old model priced it as one finish pass).
   let drillSec = 0;
   let spotSec = 0;
+  // Bores at each end of the part; clamped to the two ends a part has.
+  const boreEnds = Math.min(2, Math.max(1, Math.round(profile.boreEndCount ?? 1)));
   let boreSec = 0;
   let drillDiaMm = 0;
   let drillCutSec = 0;
@@ -938,6 +946,9 @@ export function estimateTurningTimes(
       : 0;
     boreCutSec = boreRoughSec + boreFinishSec;
     boreIdleSec = borePassRetractSec + approach(boreFeedMmPerMin);
+    // One bore per END the part carries it at (a bore at each end is two bores).
+    boreCutSec *= boreEnds;
+    boreIdleSec *= boreEnds;
     boreSec = boreCutSec + boreIdleSec;
   }
 
@@ -1123,7 +1134,7 @@ export function estimateTurningTimes(
   // thread. The cut is a chamfer's width at finishing feed; the cost is the
   // approach, because on a spinning part that is what the operation really is.
   const deburrEdges: number[] = [];
-  if (profile.boreDiaMm > 0 && profile.boreDepthMm > 0) deburrEdges.push(profile.boreDiaMm);
+  if (profile.boreDiaMm > 0 && profile.boreDepthMm > 0) for (let e = 0; e < boreEnds; e++) deburrEdges.push(profile.boreDiaMm);
   for (const h of profile.additionalBores ?? []) {
     deburrEdges.push(h.diameterMm);
     // Through the part: the far side gets a burr too.

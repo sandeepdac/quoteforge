@@ -14,6 +14,8 @@ export interface GeometryProfile {
   lengthMm: number;
   boreDiaMm: number;
   boreDepthMm: number;
+  /** Ends of the part that carry the main bore (0 none, 1 one, 2 both). */
+  boreEndCount?: number;
   grooveCount: number;
   threadCount: number;
   faceCount: number;

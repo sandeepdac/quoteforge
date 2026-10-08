@@ -432,15 +432,53 @@ export function calculateMachiningCosts(
   // The plan now accounts for the whole cycle on its own rows: no air lump to
   // add back, because there is no longer one. Bar load is still outside the
   // operations because it belongs to the job, not to a cut.
-  const setup1Sec = planOps.reduce((a, o) => a + o.seconds, 0) + cnc.barLoadSec;
-  const setup1Cost = planOps.reduce((a, o) => a + o.cost, 0) + cnc.barLoadSec * ratePerSec;
+  // A BORE AT EACH END IS TWO OPERATIONS. The front end is cut in the first
+  // operation, which is what a cycle sheet like Lance's records (it ends with the
+  // part-off); the back end is cut after it, in the second. The time is already
+  // in the cycle, counted once per end — this only decides which operation shows
+  // it, so the first operation stays comparable with a sheet that stops at the
+  // part-off. Boring and threading are the per-end work; the ends are alike.
+  const ends = Math.min(2, Math.max(1, Math.round(input.profile.boreEndCount ?? 1)));
+  const backShare = ends > 1 ? (ends - 1) / ends : 0;
+  const PER_END_OPS = new Set<EstimatedTurningOp>(['bore', 'thread']);
+  const backRows: PlanOperation[] = [];
+  const frontOps: PlanOperation[] = backShare > 0
+    ? planOps.map((o) => {
+        if (!PER_END_OPS.has(o.op as EstimatedTurningOp)) return o;
+        const part = (v: number | undefined) => (v ?? 0) * backShare;
+        backRows.push({
+          ...o,
+          name: `${o.name} — back end`,
+          seconds: part(o.seconds), cuttingSeconds: part(o.cuttingSeconds),
+          idleSeconds: part(o.idleSeconds), cost: part(o.cost),
+        });
+        const keep = 1 - backShare;
+        return {
+          ...o,
+          seconds: o.seconds * keep, cuttingSeconds: (o.cuttingSeconds ?? 0) * keep,
+          idleSeconds: (o.idleSeconds ?? 0) * keep, cost: o.cost * keep,
+        };
+      })
+    : planOps;
+  const setup1Sec = frontOps.reduce((a, o) => a + o.seconds, 0) + cnc.barLoadSec;
+  const setup1Cost = frontOps.reduce((a, o) => a + o.cost, 0) + cnc.barLoadSec * ratePerSec;
   const planSetups = [
     // NAMED "Op", not "Setup". These groups are FIXTURINGS and the time against
     // them is CUTTING time; "Setup labour" further down is the time to prepare
     // the machine. Calling both of them "setup" put 2m 15s and 900 min in the
     // same table under the same word, which reads as a contradiction.
-    { index: 1, name: setups > 1 ? 'Op 1 — main turning' : 'Op 1', operations: planOps, seconds: setup1Sec, cost: setup1Cost, toolChanges: t.toolChangeCount },
+    { index: 1, name: setups > 1 || backRows.length ? 'Op 1 — main turning' : 'Op 1', operations: frontOps, seconds: setup1Sec, cost: setup1Cost, toolChanges: t.toolChangeCount },
   ];
+  if (backRows.length && setups <= 1) {
+    planSetups.push({
+      index: 2,
+      name: 'Op 2 — back end',
+      operations: backRows,
+      seconds: backRows.reduce((a, o) => a + o.seconds, 0),
+      cost: backRows.reduce((a, o) => a + o.cost, 0),
+      toolChanges: 0,
+    });
+  }
   if (setups > 1) {
     // The second op used to be an empty row costing nothing, which reads as "no
     // work here" — when what it actually means is "there IS work here and its
@@ -473,9 +511,9 @@ export function calculateMachiningCosts(
     planSetups.push({
       index: 2,
       name: 'Op 2 — second op (back-face / cross features)',
-      operations: secondOps,
-      seconds: 0,
-      cost: 0,
+      operations: [...backRows, ...secondOps],
+      seconds: backRows.reduce((a, o) => a + o.seconds, 0),
+      cost: backRows.reduce((a, o) => a + o.cost, 0),
       toolChanges: 0,
     });
   }

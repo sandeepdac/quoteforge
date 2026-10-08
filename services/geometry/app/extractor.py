@@ -294,9 +294,20 @@ def extract(path: str) -> dict:
         runs = _merge_touching_runs(same, gap_tol)
         bore_depth = round(max(hi - lo for lo, hi in runs), 3) if runs else 0.0
         main_run = max(runs, key=lambda r: r[1] - r[0]) if runs else None
+        # HOW MANY ENDS CARRY THIS BORE. The VOC housing has a ⌀11.8 x 14 bore in
+        # each end, 42 mm apart; its sheet times the front one and the router has
+        # a second operation for the back. A run counts as an END's bore only if
+        # it sits on an end face of the part, so a bore that is merely interrupted
+        # by a cross hole in the middle is never read as two.
+        part_lo, part_hi = min(axial), max(axial)
+        end_tol = max(0.1, 0.01 * max(axis_length, 1.0))
+        bore_end_count = sum(1 for lo, hi in runs
+                             if hi - lo >= 0.5 and (lo <= part_lo + end_tol or hi >= part_hi - end_tol))
+        bore_end_count = max(1, bore_end_count)
     else:
         bore_depth = 0.0
         main_run = None
+        bore_end_count = 0
 
     # EVERY OTHER HOLE ON THE AXIS — which used to be thrown away.
     #
@@ -657,6 +668,8 @@ def extract(path: str) -> dict:
             "lengthMm": axis_length,
             "boreDiaMm": bore_dia,
             "boreDepthMm": bore_depth,
+            # Ends of the part that carry the main bore (0 none, 1 one, 2 both).
+            "boreEndCount": bore_end_count,
             # Every other coaxial hole, each run separately. See above.
             "additionalBores": additional_bores,
             # The narrow hole a stepped bore is drilled through at, and how far.
