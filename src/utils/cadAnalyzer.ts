@@ -593,12 +593,28 @@ async function analyzeSolid(
       machineRecommendation.route === 'mill-turn' &&
       machineRecommendation.barDiameterMm
     ) {
-      milledProfile = toBarStockProfile(
-        milledProfile,
-        machineRecommendation.barDiameterMm,
-        machineRecommendation.effectiveSetups ?? 1,
-        DEFAULT_CNC_SETTINGS
-      );
+      milledProfile = machineRecommendation.prismaticBar
+        // A small prismatic part is bought as bar of its OWN section: keep the
+        // stock the profile already has and mark it bar-fed, so it is cut off
+        // rather than sawn — it is not hogged down from a round.
+        ? {
+            ...milledProfile,
+            fromBarStock: true,
+            // The cut-off goes across the section's diagonal, not a notional round.
+            barDiameterMm: Math.hypot(milledProfile.stockMm.x, milledProfile.stockMm.y),
+            // Its "turned" cylinders are fragments of a milled body (the router
+            // already refuses to bar-feed on them), so nothing is spindle-turned.
+            turningRoute: false,
+            turnedFeatures: [],
+            setupCount: Math.max(1, Math.round(machineRecommendation.effectiveSetups ?? 1)),
+            sparseBillet: false,
+          }
+        : toBarStockProfile(
+            milledProfile,
+            machineRecommendation.barDiameterMm,
+            machineRecommendation.effectiveSetups ?? 1,
+            DEFAULT_CNC_SETTINGS
+          );
       // Bar is the right stock now: setups collapse and the sparse-billet warning
       // (which only applied to hogging a solid block) no longer holds.
       setups = Math.max(1, milledProfile.setupCount);

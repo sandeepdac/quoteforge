@@ -73,7 +73,10 @@ export const STEEL_MILL_TOOLS: MillingTool[] = [
 
 /** Standard jobber drill ladder (mm) — the shop's drill set, coarsened to stock sizes. */
 export const DRILL_LADDER_MM = [
-  1, 1.5, 2, 2.5, 3, 3.2, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 6.8, 7, 7.5, 8, 8.5, 9, 9.5,
+  // Micro-drills come in 0.1 mm steps (Lance's sheets name 0.7, 1.0 and 1.4 mm
+  // drills). A ladder that started at 1 mm drilled a ⌀0.7 hole with a ⌀1 drill.
+  0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2, 2.1, 2.2, 2.3, 2.4,
+  2.5, 2.6, 2.7, 2.8, 2.9, 3, 3.2, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 6.8, 7, 7.5, 8, 8.5, 9, 9.5,
   10, 10.5, 11, 11.5, 12, 12.5, 13, 14, 15, 16, 17, 18, 19, 20,
 ];
 
