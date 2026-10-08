@@ -90,3 +90,28 @@ describe('the money still adds up', () => {
     });
   }
 });
+
+describe('a bar-fed part starts with the bar stop', () => {
+  it('has a no-cutting handling row of the shop bar-handling time, only on bar', () => {
+    const b = op(run(bar), 'Bar stop / feed')!;
+    expect(b).toBeDefined();
+    expect(b.cuttingSeconds).toBe(0);
+    expect(b.idleSeconds).toBe(DEFAULT_SHOP_SETTINGS.cnc!.barLoadSec);
+    expect(op(run(billet), 'Bar stop / feed')).toBeUndefined();
+  });
+
+  it('is not charged a tool change or an approach, and is not counted as a tool', () => {
+    const c = run(bar);
+    const b = op(c, 'Bar stop / feed')!;
+    expect(b.seconds).toBeCloseTo(DEFAULT_SHOP_SETTINGS.cnc!.barLoadSec, 9);
+    expect(c.plan!.tools.some((t) => t.name === 'Bar stop')).toBe(false);
+  });
+
+  it('is the first thing in the cycle', () => {
+    expect(ops(run(bar))[0].name).toBe('Bar stop / feed');
+  });
+
+  it('the default is the 30 s both of Lance\'s sheets give', () => {
+    expect(DEFAULT_SHOP_SETTINGS.cnc!.barLoadSec).toBe(30);
+  });
+});

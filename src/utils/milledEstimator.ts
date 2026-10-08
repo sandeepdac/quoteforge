@@ -27,7 +27,7 @@ import { materialPropsFor } from './materials';
 import { SHOP_MILL_AXIAL_FACTOR, millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, DEFAULT_MILLING_TOOL, MillingToolConfig } from './milling';
 import { millingToolsFor, roughingTool, wallFinisher, floorFinisher, toolChipLoadMm, type MillingTool } from './millingTools';
 import { roughingMrrCm3PerMin, rpm as turningRpm } from './turning';
-import { buildMilledPlan } from './milledPlanner';
+import { buildMilledPlan, BAR_STOP_TOOL } from './milledPlanner';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
 import { realisation } from './realisation';
 import { drillHoleSec, drillHoleSplit, spotDrillSplit, pairHoles, crossFeaturesSplit, tapThreadsSplit, DEFAULT_DRILL_CONFIG, DEFAULT_CROSS_CONFIG, type OpSplit } from './drilling';
@@ -726,6 +726,8 @@ export function calculateMilledCosts(
   // 0.08 mm/rev), so a bar part costs the same to part off whichever estimator
   // sees it. A slitting saw is a different tool and is not modelled here.
   const partoffBarDiaMm = p.fromBarStock ? (p.barDiameterMm ?? minStockMm) : 0;
+  // Bar stop / feed per part on a bar-fed route (the shop's own bar-handling time).
+  const barStopSec = p.fromBarStock ? Math.max(0, cnc.barLoadSec ?? 0) : 0;
   const partoffSec = partoffBarDiaMm > 0
     ? (() => {
         const n = turningRpm(m.cuttingSpeedFinish * 0.6, partoffBarDiaMm, cnc.maxRpm);
@@ -777,6 +779,7 @@ export function calculateMilledCosts(
     deburrEdges: deburrEdgeDias.length,
     partoffSec,
     partoffBarDiaMm,
+    barStopSec,
     countersinks: csinks,
     chamfers: chamfs,
     finishBaseSec,
@@ -839,7 +842,8 @@ export function calculateMilledCosts(
   // Use the same tools and non-cutting events in the price and traveller.
   const toolCount = plan.tools.length;
   const toolChanges = plan.setups.reduce((sum, setup) => sum + setup.toolChanges, 0);
-  const plannedOpCount = plan.setups.reduce((sum, setup) => sum + setup.operations.length, 0);
+  // The bar stop is a handling step with no approach move of its own.
+  const plannedOpCount = plan.setups.reduce((sum, setup) => sum + setup.operations.filter((o) => o.tool !== BAR_STOP_TOOL).length, 0);
   const airSec = toolChanges * toolChangeSec + plannedOpCount * approachSecPerOp;
   // The idle each hole-making operation carries on its own row of the plan —
   // charged only where the plan actually has that row, which is wherever the
@@ -944,6 +948,7 @@ export function calculateMilledCosts(
     { key: 'tap', name: 'Tapping', driver: tapSec > 0 ? `${(p.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ')} — ${secStr(tapSec)} cutting + ${r1(tapIdleCharged)} s idle` : '', value: opCost(tapSec) + airCost(tapIdleCharged), color: COLORS.thread ?? COLORS.drill },
     { key: 'edge', name: 'Countersink / chamfer', driver: edgeSec > 0 ? `${countersinkCount ? `${countersinkCount} countersink${countersinkCount === 1 ? '' : 's'}` : ''}${countersinkCount && chamferCount ? ' + ' : ''}${chamferCount ? `${chamferCount} chamfer${chamferCount === 1 ? '' : 's'}` : ''} measured from the solid — ${secStr(edgeSec)}` : '', value: opCost(edgeSec), color: COLORS.facing },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
+    { key: 'barstop', name: 'Bar stop / feed', driver: barStopSec > 0 ? `${r1(barStopSec)} s per part to pull the bar to the stop and close the door — machine idle, so no efficiency is applied` : '', value: airCost(barStopSec), color: COLORS.noncut },
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${toolChanges} tool changes × ${r1(toolChangeSec)}s, plus ${plannedOpCount} approaches × ${r1(approachSecPerOp)}s at ${Math.round(rapidMmPerMin / 1000)} m/min rapid — machine specifications, so no efficiency is applied`, value: airCost(airSec), color: COLORS.noncut },
     { key: 'deburr', name: 'Deburring', driver: deburrSec > 0 ? `trace every edge a cutter left — ${deburrEdgeDias.length} hole and feature edge${deburrEdgeDias.length === 1 ? '' : 's'} plus the outline — ${secStr(deburrSec)} cutting + ${r1(deburrIdleSec)} s idle` : '', value: deburrSec > 0 ? opCost(deburrSec) + airCost(deburrIdleSec) : 0, color: COLORS.facing },
     { key: 'partoff', name: 'Part-off', driver: partoffSec > 0 ? `cut the part off the ⌀${r1(partoffBarDiaMm)} bar — ${secStr(partoffSec)}` : '', value: opCost(partoffSec), color: COLORS.facing },
