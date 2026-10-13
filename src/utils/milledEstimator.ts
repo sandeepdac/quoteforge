@@ -127,6 +127,8 @@ export interface MilledProfile {
    * one clamp, so far less material is removed and setups collapse.
    */
   fromBarStock?: boolean;
+  /** Tightest tolerance on the drawing, ± mm (undefined = general). Drives proving time in setup. */
+  tightestToleranceMm?: number;
   /** Round bar ⌀ (mm) when `fromBarStock` — the stock is bar, not a block. */
   barDiameterMm?: number;
 }
@@ -884,6 +886,7 @@ export function calculateMilledCosts(
     featureCount: (p.holeDiametersMm ?? []).length
       + (p.crossFeatureList ?? []).length + (p.threads ?? []).length,
     cycleMin: cycleTimeSec / 60,
+    toleranceMm: p.tightestToleranceMm,
   }) : null;
   const derivedProgrammingMin = derivedSetup?.perOp.reduce((sum, op) => sum + op.breakdown.programmingMin, 0) ?? 0;
   const setupTimeMin = derivedSetup ? derivedSetup.totalMin - derivedProgrammingMin : (routeSetupMin || (

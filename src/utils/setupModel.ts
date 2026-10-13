@@ -45,6 +45,11 @@ export interface SetupDrivers {
   featureCount: number;
   /** One part's cutting time, minutes — what a proving run costs each time. */
   cycleMin: number;
+  /**
+   * The tightest tolerance on the drawing, as ± mm (undefined = general
+   * tolerance). It sets how many measure-and-correct rounds the first-off takes.
+   */
+  toleranceMm?: number;
 }
 
 /**
@@ -71,6 +76,27 @@ export const PER_FIXTURING_MIN = 30;
 export const PER_FEATURE_MIN = 12;
 /** Measure the first one, correct the offsets. Per fixturing. */
 export const FIRST_OFF_MIN = 30;
+
+/**
+ * Where a first part lands before any correction, as ± mm: tool offsets touched
+ * off by hand, a fresh workholding. A drawing at or looser than this is held in
+ * ONE measure-and-correct round (the FIRST_OFF_MIN above).
+ */
+export const UNCORRECTED_ERROR_MM = 0.1;
+
+/**
+ * HOW MANY MEASURE-AND-CORRECT ROUNDS A TOLERANCE TAKES.
+ *
+ * Each correction roughly halves the error left, so reaching ±t from a first part
+ * that lands within ±0.1 takes one round for anything at or above that and one
+ * more for each halving below it: ±0.05 two, ±0.025 three, ±0.01 four. The model
+ * proved every part in one round whatever the drawing said, which is why it read
+ * Lance's precision parts at x0.4 of his booked setup.
+ */
+export function provingRounds(toleranceMm?: number): number {
+  if (!Number.isFinite(toleranceMm) || (toleranceMm ?? 0) <= 0) return 1;
+  return 1 + Math.max(0, Math.ceil(Math.log2(UNCORRECTED_ERROR_MM / (toleranceMm as number)) - 1e-9));
+}
 /** How many parts you run before you trust the numbers. */
 export const PROVE_PARTS = 3;
 
@@ -103,7 +129,8 @@ export function deriveSetup(machine: MachineSpec, d: SetupDrivers): SetupBreakdo
   const toolingMin = tools * PER_TOOL_MIN;
   const workholdingMin = fix * PER_FIXTURING_MIN;
   const programmingMin = feats * PER_FEATURE_MIN;
-  const provingMin = fix * FIRST_OFF_MIN + PROVE_PARTS * cycle;
+  const rounds = provingRounds(d.toleranceMm);
+  const provingMin = fix * FIRST_OFF_MIN * rounds + PROVE_PARTS * cycle;
 
   const totalMin = Math.round(dialInMin + toolingMin + workholdingMin + programmingMin + provingMin);
   return {
@@ -115,7 +142,8 @@ export function deriveSetup(machine: MachineSpec, d: SetupDrivers): SetupBreakdo
       + `, ${toolingMin} for ${tools} tool${tools === 1 ? '' : 's'}`
       + `, ${workholdingMin} work-holding over ${fix} fixturing${fix === 1 ? '' : 's'}`
       + `, ${programmingMin} programming ${feats} feature${feats === 1 ? '' : 's'}`
-      + `, ${Math.round(provingMin)} proving the first one`,
+      + `, ${Math.round(provingMin)} proving the first one`
+      + (rounds > 1 ? ` (${rounds} measure-and-correct rounds for ±${d.toleranceMm} mm)` : ''),
   };
 }
 
@@ -177,6 +205,7 @@ export function deriveRouteSetup(ops: RouteSetupOp[], d: RouteSetupDrivers): Rou
         fixturings: o.setups,
         featureCount: d.featureCount * share,
         cycleMin: d.cycleMin * share,
+        toleranceMm: d.toleranceMm,
       }),
     };
   });

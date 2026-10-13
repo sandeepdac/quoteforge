@@ -266,6 +266,7 @@ export function calculateMachiningCosts(
       + (input.profile.boreDiaMm > 0 ? 1 : 0)
       + input.profile.grooveCount + input.profile.threadCount,
     cycleMin: cycleTimeSec / 60,
+    toleranceMm: input.profile.tightestToleranceMm,
   }) : null;
   const derivedProgrammingMin = derivedSetup?.perOp.reduce((sum, op) => sum + op.breakdown.programmingMin, 0) ?? 0;
   const setupTimeMin = derivedSetup ? derivedSetup.totalMin - derivedProgrammingMin : (routeSetupMin || (

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveSetup, deriveRouteSetup, routeRateMultiplier, DIAL_IN_MIN, PER_EXTRA_AXIS_MIN, routeSetupLabour, PROGRAMMING_RATE_PER_MIN } from './setupModel';
+import { deriveSetup, deriveRouteSetup, routeRateMultiplier, DIAL_IN_MIN, PER_EXTRA_AXIS_MIN, routeSetupLabour, PROGRAMMING_RATE_PER_MIN, provingRounds } from './setupModel';
 import { MACHINE_CATALOG } from './machineSelection';
 
 const ntx = MACHINE_CATALOG['ntx-1000'];       // turn-mill, 5 axes, £135/hr
@@ -109,5 +109,38 @@ describe('setup labour at the rate Lance books for each machine', () => {
 
   it('programming is billed at his PROG rate', () => {
     expect(PROGRAMMING_RATE_PER_MIN * 60).toBeCloseTo(40, 9);
+  });
+});
+
+describe('proving rounds follow the tolerance', () => {
+  it('a drawing at or looser than a first part\'s ±0.1 is one round', () => {
+    for (const t of [undefined, 0, 0.2, 0.1]) expect(provingRounds(t), String(t)).toBe(1);
+  });
+
+  it('each halving below it is another round', () => {
+    expect(provingRounds(0.05)).toBe(2);
+    expect(provingRounds(0.025)).toBe(3);
+    expect(provingRounds(0.0125)).toBe(4);
+    expect(provingRounds(0.01)).toBe(5);
+    expect(provingRounds(0.005)).toBe(6);
+  });
+
+  it('only the first-off grows: dial-in, tooling and work-holding are unchanged', () => {
+    const base = { toolCount: 6, fixturings: 2, featureCount: 4, cycleMin: 3 };
+    const loose = deriveSetup(MACHINE_CATALOG['nl-2000'], base);
+    const tight = deriveSetup(MACHINE_CATALOG['nl-2000'], { ...base, toleranceMm: 0.05 });
+    expect(tight.dialInMin).toBe(loose.dialInMin);
+    expect(tight.toolingMin).toBe(loose.toolingMin);
+    expect(tight.workholdingMin).toBe(loose.workholdingMin);
+    expect(tight.provingMin - loose.provingMin).toBe(2 * 30 * (2 - 1));
+    expect(tight.explanation).toMatch(/2 measure-and-correct rounds/);
+  });
+
+  it('reaches a route, on every machine of it', () => {
+    const d = { toolCount: 6, featureCount: 5, cycleMin: 4 };
+    const route = [{ machine: MACHINE_CATALOG['nl-2000'], setups: 1 }, { machine: MACHINE_CATALOG['haas-vf2'], setups: 1 }];
+    const loose = deriveRouteSetup(route, d);
+    const tight = deriveRouteSetup(route, { ...d, toleranceMm: 0.025 });
+    expect(tight.totalMin - loose.totalMin).toBe(2 * 30 * 2);
   });
 });
