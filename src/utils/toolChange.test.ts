@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { calculateMachiningCosts } from './cncEstimator';
 import { MACHINE_CATALOG, TOOL_CHANGE_SEC } from './machineSelection';
-import { DEFAULT_SHOP_SETTINGS } from '../constants';
+import { DEFAULT_SHOP_SETTINGS as BASE_SETTINGS } from '../constants';
+
+// These tests compare what each machine's own tool change and rapid do to a
+// cycle. The per-operation idle floor lifts every row to one figure and would
+// mask exactly that, so it is off here (see turning.idleFloor.test.ts).
+const DEFAULT_SHOP_SETTINGS = { ...BASE_SETTINGS, cnc: { ...BASE_SETTINGS.cnc!, opIdleFloorSec: 0 } };
 import type { TurningProfile } from './turning';
 
 const profile: TurningProfile = {
