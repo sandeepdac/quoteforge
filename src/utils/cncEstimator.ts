@@ -348,6 +348,7 @@ export function calculateMachiningCosts(
     { key: 'facing', name: 'Facing', driver: `${input.profile.faceCount} face${input.profile.faceCount === 1 ? '' : 's'} — ${splitStr('face')}`, seconds: opSecs('face'), value: opTotalCost('face'), color: COLORS.facing },
     { key: 'rough', name: 'Rough turning', driver: `${roughWhat} @ ${Math.round(m.cuttingSpeedRough * m.feedRough * m.depthOfCutRough)} cm³/min — ${splitStr('rough')}`, seconds: opSecs('rough'), value: opTotalCost('rough'), color: COLORS.rough },
     { key: 'finish', name: 'Finish turning', driver: `${finishWhat} @ ${m.cuttingSpeedFinish} m/min — ${splitStr('finish')}`, seconds: opSecs('finish'), value: opTotalCost('finish'), color: COLORS.finish },
+    { key: 'threaddeburr', name: 'Deburr thread', driver: `${splitStr('threaddeburr')}`, seconds: opSecs('threaddeburr'), value: opTotalCost('threaddeburr'), color: COLORS.finish },
     { key: 'deburr', name: 'Deburring', driver: `breaking the edges the cutters leave — ${splitStr('deburr')}`, seconds: opSecs('deburr'), value: opTotalCost('deburr'), color: COLORS.finish },
     { key: 'spot', name: 'Spot drilling', driver: `centre the ⌀${r1(t.drillDiaMm)} drill before it wanders — ${splitStr('spot')}`, seconds: opSecs('spot'), value: opTotalCost('spot'), color: COLORS.drill },
     { key: 'drill', name: 'Drilling', driver: `${drillWhat} — ${splitStr('drill')}`, seconds: opSecs('drill'), value: opTotalCost('drill'), color: COLORS.drill },
@@ -400,6 +401,7 @@ export function calculateMachiningCosts(
     { op: 'finish', name: 'Finish turning', sec: t.finishSec, tool: toolFor('finish', 'OD finishing tool'), driver: finishWhat, color: COLORS.finish },
     { op: 'groove', name: grooveName, sec: t.grooveSec, tool: toolFor('groove', 'Unassigned groove tool'), driver: grooveWhat, color: COLORS.groove },
     { op: 'thread', name: 'Threading', sec: t.threadSec, tool: toolFor('thread', 'Unassigned thread tool'), driver: threadWhat, color: COLORS.thread },
+    { op: 'threaddeburr', name: 'Deburr thread', sec: t.threadDeburrSec, tool: toolFor('threaddeburr', 'Unassigned thread tool'), driver: 'run the threading tool along the helix again to take the burr off every turn', color: COLORS.finish },
     { op: 'partoff', name: 'Part-off', sec: t.partingSec, tool: toolFor('partoff', 'Parting blade'), driver: 'cut to length', color: COLORS.parting },
     { op: 'tap', name: 'Tapping', sec: t.tapSec, tool: toolFor('tap', 'Unassigned tap tool'), driver: (p.threads ?? []).map((th) => `${Math.max(1, th.count ?? 1)}x ${th.callout}`).join(', ') || 'threads', color: COLORS.thread },
     { op: 'cross', name: 'Off-axis features', sec: t.crossSec, tool: toolFor('cross', 'Unassigned cross tool'), driver: `${p.crossFeatureList?.length ?? 0} cross feature${(p.crossFeatureList?.length ?? 0) === 1 ? '' : 's'}`, color: COLORS.drill },
@@ -444,10 +446,10 @@ export function calculateMachiningCosts(
   // part-off); the back end is cut after it, in the second. The time is already
   // in the cycle, counted once per end — this only decides which operation shows
   // it, so the first operation stays comparable with a sheet that stops at the
-  // part-off. Boring and threading are the per-end work; the ends are alike.
+  // part-off. Boring, threading and the thread deburr are the per-end work; the ends are alike.
   const ends = Math.min(2, Math.max(1, Math.round(input.profile.boreEndCount ?? 1)));
   const backShare = ends > 1 ? (ends - 1) / ends : 0;
-  const PER_END_OPS = new Set<EstimatedTurningOp>(['bore', 'thread']);
+  const PER_END_OPS = new Set<EstimatedTurningOp>(['bore', 'thread', 'threaddeburr']);
   const backRows: PlanOperation[] = [];
   const frontOps: PlanOperation[] = backShare > 0
     ? planOps.map((o) => {

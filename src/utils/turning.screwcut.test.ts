@@ -78,11 +78,34 @@ describe('the bookkeeping follows the operation', () => {
   });
 
   it('a screwcut thread is deburred along its helix, not with a chamfer at the mouth', () => {
-    // The deburr row's cutting time includes a pass the length of the thread
-    // at threading feed, which is far more than a 0.3 mm chamfer.
+    // The thread deburr is its own operation: a pass the length of the thread at
+    // threading feed, which is far more than a 0.3 mm chamfer.
     const bare = estimateTurningTimes(housing, brass, 55, cfg);
-    const extra = op(screwcut, 'deburr')!.cuttingSec - op(bare, 'deburr')!.cuttingSec;
+    const extra = op(screwcut, 'threaddeburr')!.cuttingSec - (op(bare, 'threaddeburr')?.cuttingSec ?? 0);
     const onePass = op(screwcut, 'thread')!.cuttingSec / 10; // G1/4: 9 infeeds + spring pass
     expect(extra).toBeCloseTo(onePass, 6);
+  });
+});
+
+describe('the thread deburr is its own operation on the threading tool', () => {
+  const t = estimateTurningTimes(housing, brass, 55, cfg);
+  const g14b = threadFromCallout('G1/4', 14, 1)!;
+  const withThread = estimateTurningTimes({ ...housing, threads: [g14b] }, brass, 55, cfg);
+
+  it('is a separate row from the chamfer deburr', () => {
+    expect(withThread.opTimes.some((o) => o.op === 'threaddeburr')).toBe(true);
+    expect(withThread.opTimes.some((o) => o.op === 'deburr')).toBe(true);
+    expect(t.opTimes.some((o) => o.op === 'threaddeburr')).toBe(false);
+  });
+
+  it('is the same tool as the threading, so it costs no extra turret index', () => {
+    const a = withThread.toolAssignments.find((x) => x.op === 'thread')!;
+    const b = withThread.toolAssignments.find((x) => x.op === 'threaddeburr')!;
+    expect(b.identity).toBe(a.identity);
+  });
+
+  it('sits straight after the thread, so the tool never leaves the work', () => {
+    const ops = withThread.opTimes.map((o) => o.op);
+    expect(ops.indexOf('threaddeburr')).toBe(ops.indexOf('thread') + 1);
   });
 });

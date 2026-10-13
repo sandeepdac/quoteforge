@@ -1,9 +1,9 @@
 import type { ShopTool, TurningOp, TurningToolAssembly } from '../types';
 import type { DrillSubstrate } from './drilling';
 
-export type EstimatedTurningOp = TurningOp | 'groove' | 'thread' | 'tap' | 'cross';
+export type EstimatedTurningOp = TurningOp | 'groove' | 'thread' | 'threaddeburr' | 'tap' | 'cross';
 export const TURNING_SEQUENCE: EstimatedTurningOp[] = [
-  'face', 'rough', 'spot', 'drill', 'bore', 'finish', 'groove', 'thread', 'deburr', 'partoff', 'tap', 'cross',
+  'face', 'rough', 'spot', 'drill', 'bore', 'finish', 'groove', 'thread', 'threaddeburr', 'deburr', 'partoff', 'tap', 'cross',
 ];
 
 export interface ToolAssignment {
@@ -31,15 +31,18 @@ const stationKey = (s: string) => s.trim().toUpperCase().replace(/\s+/g, '');
 
 /** No silent substitution when an explicit assignment is missing or broken. */
 export function resolveTurningTool(
-  op: EstimatedTurningOp, tools: ShopTool[], assemblies?: TurningToolAssembly[],
+  requestedOp: EstimatedTurningOp, tools: ShopTool[], assemblies?: TurningToolAssembly[],
 ): ToolAssignment {
+  // Deburring a screwcut thread is done with the THREADING TOOL, run along the
+  // helix again — the same tool in the same station, so it is the same selection.
+  const op: EstimatedTurningOp = requestedOp === 'threaddeburr' ? 'thread' : requestedOp;
   const row = tools.find(t => t.op === op);
   const assembly = row?.assemblyId ? assemblies?.find(a => a.id === row.assemblyId) : undefined;
   const record = row?.assemblyId ? assembly : row;
   const station = stationKey(record?.station ?? '');
   const description = record?.description.trim() ?? '';
   if (!record || !station || !description) {
-    return { op, identity: `unassigned:${op}`, label: `Unassigned ${op} tool`, station: '', description: '',
+    return { op: requestedOp, identity: `unassigned:${op}`, label: `Unassigned ${op} tool`, station: '', description: '',
       warning: `${op}: assign a tool assembly with a station and description; one provisional selection is allowed.` };
   }
   // Old rows with conflicting descriptions at the same station must not be
@@ -47,7 +50,7 @@ export function resolveTurningTool(
   const conflict = !row?.assemblyId && tools.some(t => !t.assemblyId && t.op !== op
     && stationKey(t.station) === station && t.description.trim() !== description);
   return {
-    op, identity: row?.assemblyId ? `assembly:${row.assemblyId}` : `station:${station}${conflict ? `:${op}` : ''}`,
+    op: requestedOp, identity: row?.assemblyId ? `assembly:${row.assemblyId}` : `station:${station}${conflict ? `:${op}` : ''}`,
     label: `${station} — ${description}`, station, description, noseRadiusMm: record.noseRadiusMm,
     // Only an assembly records geometry; a legacy row carries none.
     diameterMm: assembly?.diameterMm,
