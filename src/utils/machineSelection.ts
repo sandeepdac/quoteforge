@@ -739,6 +739,7 @@ export function buildRoute(
   dims?: { x: number; y: number; z: number },
   owned?: MachineId[],
   stockForm?: StockForm,
+  prismaticBar?: boolean,
 ): MachineRoute {
   const first: RouteOp = {
     machine: primary.id, machineName: primary.name, role: 'primary', setups: 1,
@@ -761,7 +762,8 @@ export function buildRoute(
   // is cheaper to do it on a mill. That is precisely Lance's 035838 — the Mori
   // for the bulk, then the VF2 to face to length and deburr.
   const canTurnAround =
-    (primary.kind === 'turn-mill' || primary.kind === 'sliding-head') && stockForm === 'bar';
+    (primary.kind === 'turn-mill' || primary.kind === 'sliding-head') && stockForm === 'bar'
+    && !prismaticBar;
   const pool = (owned ?? (Object.keys(MACHINE_CATALOG) as MachineId[])).map((id) => MACHINE_CATALOG[id]);
   const secondOpMill = pool
     .filter((m) => m.kind === 'mill' && fitsEnvelope(m, dims))
@@ -790,7 +792,7 @@ export const SECOND_OP_SETUP_FRACTION = 0.5;
 export function selectMachine(input: MachineSelectionInput): MachineRecommendation {
   const rec = input.isTurned ? selectTurningMachine(input) : selectMilledPartMachine(input);
   const spec = MACHINE_CATALOG[rec.recommended];
-  const machineRoute = buildRoute(spec, rec.effectiveSetups ?? 1, input.partDimsMm, input.ownedMachines, rec.stockForm);
+  const machineRoute = buildRoute(spec, rec.effectiveSetups ?? 1, input.partDimsMm, input.ownedMachines, rec.stockForm, rec.prismaticBar);
   return { ...rec, machineRoute };
 }
 
@@ -1027,7 +1029,15 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
       });
       reason = `Round ⌀${r0(fit!.widthMm)} × ${r0(fit!.lengthMm)} mm → ⌀${fit!.barDiameterMm} bar within its ${m.maxBarDiaMm} mm capacity; turned and milled in one clamp.`;
     } else if (smallBarOk && lenOk) {
-      const plan = turnMillSetups(m, true, angled);
+      // CUT OFF WITH A SAW, NOT PICKED OFF BY A SUB-SPINDLE. Lance's sheet for the
+      // Hollow Arm ends in a 50 mm slitting-saw cut-off, and his router has a
+      // second operation after it, on the mini mill ("M/C op 2", 600 min setup,
+      // 20 min cycle). A square part cannot be turned round by a spindle, so the
+      // back of it is a second holding on a mill.
+      const plan: MachineSetupPlan = {
+        setups: 2 + angled,
+        reason: 'Milled in the bar and cut off with a saw; a square part cannot be turned round by a sub-spindle, so its back is a second operation on a mill.',
+      };
       offers.push({
         machine: m, route: 'mill-turn', stockForm: 'bar', barDiameterMm: fit!.barDiameterMm, prismaticBar: true,
         setups: plan.setups, setupReason: plan.reason, cost: price(m, plan),
