@@ -310,6 +310,17 @@ export default function NewQuotePage() {
               if (tp.surfaceFinishRaUm === generalRaUm && tp.sealingFaceRaUm === sealingFaceRaUm) return prev;
               return { ...prev, turningProfile: { ...tp, surfaceFinishRaUm: generalRaUm, sealingFaceRaUm } };
             })}
+            onToleranceChange={(tightestToleranceMm) => setCadAnalysis((prev) => {
+              // Tolerance is a setup input for whichever profile is costing the part.
+              if (!prev) return prev;
+              const cur = prev.turningProfile?.tightestToleranceMm ?? prev.milledProfile?.tightestToleranceMm;
+              if (cur === tightestToleranceMm) return prev;
+              return {
+                ...prev,
+                turningProfile: prev.turningProfile ? { ...prev.turningProfile, tightestToleranceMm } : prev.turningProfile,
+                milledProfile: prev.milledProfile ? { ...prev.milledProfile, tightestToleranceMm } : prev.milledProfile,
+              };
+            })}
             onBack={handleBack}
             onSnapshot={setPartImage}
             savedThumbnail={partImage ?? seedThumbnail}

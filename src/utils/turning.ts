@@ -122,6 +122,8 @@ export interface TurningProfile {
    * costing it as an ordinary turned diameter.
    */
   surfaceFinishRaUm?: number;
+  /** Tightest tolerance on the drawing, ± mm (undefined = general). Drives proving time in setup. */
+  tightestToleranceMm?: number;
   /**
    * Ra (um) called out for SEALING FACES only, when the drawing gives them a
    * finer finish than the rest of the part ("Ra 0.4 sealing faces" over a title

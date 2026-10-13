@@ -46,6 +46,11 @@ interface StepExtractProps {
    * means the drawing does not say. It sets the finishing feed on the lathe.
    */
   onFinishChange?: (finish: { generalRaUm?: number; sealingFaceRaUm?: number }) => void;
+  /**
+   * The tightest tolerance on the drawing, ± mm (undefined = general tolerance).
+   * It sets how many measure-and-correct rounds the first-off takes in setup.
+   */
+  onToleranceChange?: (toleranceMm: number | undefined) => void;
   onBack: () => void;
   /** Receives a rendered still of the 3D model, to persist as the part thumbnail. */
   onSnapshot?: (dataUrl: string) => void;
@@ -62,7 +67,7 @@ const loadingMessages = [
   "Calculating volume, surface area, and mass..."
 ];
 
-export default function StepExtract({ cadAnalysis, materialId, onContinue, onBack, onSnapshot, savedThumbnail, onThreadsChange, onFinishChange }: StepExtractProps) {
+export default function StepExtract({ cadAnalysis, materialId, onContinue, onBack, onSnapshot, savedThumbnail, onThreadsChange, onFinishChange, onToleranceChange }: StepExtractProps) {
   // Seeded from whatever the geometry service proposed, then owned by the
   // quoter. Re-seeding on a new part, not on every render, so an edit sticks.
   const detectedThreads = (cadAnalysis?.turningProfile?.threads
@@ -77,6 +82,10 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
     setSealingFaceRaUm(cadAnalysis?.turningProfile?.sealingFaceRaUm);
   }, [cadAnalysis?.fileName]);
   useEffect(() => { onFinishChange?.({ generalRaUm, sealingFaceRaUm }); }, [generalRaUm, sealingFaceRaUm]);
+  const profileTolerance = cadAnalysis?.turningProfile?.tightestToleranceMm ?? cadAnalysis?.milledProfile?.tightestToleranceMm;
+  const [toleranceMm, setToleranceMm] = useState<number | undefined>(profileTolerance);
+  useEffect(() => { setToleranceMm(profileTolerance); }, [cadAnalysis?.fileName]);
+  useEffect(() => { onToleranceChange?.(toleranceMm); }, [toleranceMm]);
   const { materials } = useQuotes();
   const { symbol } = useMoney();
   // Face coverage: the part painted by what the engine understood, including the
@@ -601,6 +610,35 @@ export default function StepExtract({ cadAnalysis, materialId, onContinue, onBac
                 }}
                 className="w-full px-3 py-2 rounded-md border border-dashed border-border text-xs font-medium hover:bg-accent"
               >+ Add a thread from the drawing</button>
+            </div>
+          )}
+
+          {/* TOLERANCE — read off the drawing. A tighter tolerance takes more
+              measure-and-correct rounds to prove the first part, which is setup
+              time, not cutting time. Applies to turned and milled parts. */}
+          {isMachined && cadAnalysis && (
+            <div className="bg-card border border-border p-5 rounded-xl space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-foreground border-b border-border pb-2.5">
+                Tightest tolerance (from the drawing)
+              </h3>
+              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                A CAD solid carries no tolerances. Enter the tightest one the machine has to hold,
+                not the general tolerance in the title block. A first part lands within about
+                &plusmn;0.1 mm; each tighter step is another measure-and-correct round before the
+                first good part, charged as setup time.
+              </p>
+              <div className="flex items-center justify-between gap-3">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase">Tightest tolerance</label>
+                <select
+                  aria-label="Tightest tolerance"
+                  className="w-40 bg-background border border-border rounded-md px-2 py-1.5 text-xs font-semibold"
+                  value={toleranceMm ?? ''}
+                  onChange={(e) => setToleranceMm(e.target.value ? Number(e.target.value) : undefined)}
+                >
+                  <option value="">General (±0.1 or looser)</option>
+                  {[0.05, 0.025, 0.01, 0.005].map((t) => <option key={t} value={t}>±{t} mm</option>)}
+                </select>
+              </div>
             </div>
           )}
 
