@@ -203,6 +203,8 @@ export interface MachiningPlan {
   tools: Array<{ name: string; ops: number; seconds: number }>;
   totalSeconds: number;
   totalCost: number;
+  /** Idle seconds added by the per-operation idle floor (milled plans). */
+  idleFloorSec?: number;
 }
 
 /**
@@ -391,6 +393,16 @@ export interface CncSettings {
   toolChangeSec: number;
   /** Load / unload / bar-feed time per part (s). */
   barLoadSec: number;
+  /**
+   * The least idle any single operation carries (s). Every operation on both of
+   * Lance's cycle sheets has at least 10 s of idle (min 10 on the NTX, 12 on the
+   * Mori) where the model's own moves came to 2-6 s: tool change, approach and
+   * the things around them that the model does not count move by move. An
+   * operation whose counted idle is above it keeps its own figure. The evidence
+   * is a Mori NL2000Y and an NTX 1000; a shop whose other machines idle less sets
+   * it lower, or 0 to switch it off.
+   */
+  opIdleFloorSec?: number;
   /** Consumable tooling allowance per operation. */
   toolingCostPerOp: number;
   /** Radial stock allowance over the OD before choosing the next standard bar (mm). */

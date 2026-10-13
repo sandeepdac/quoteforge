@@ -97,6 +97,8 @@ export interface MilledPlanInput {
   partoffSec?: number;
   /** Bar stop / bar feed per part (s) — machine idle, only on bar-fed routes. */
   barStopSec?: number;
+  /** The least idle one operation carries (s). */
+  idleFloorSec?: number;
   partoffBarDiaMm?: number;
   countersinks?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
   chamfers?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
@@ -479,6 +481,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
 
   // --- Group into setups ----------------------------------------------------
   const planSetups: PlanSetup[] = [];
+  let floorExtraSec = 0;
   for (let s = 1; s <= setups; s++) {
     const mine = ops.filter((o) => o.setup === s);
     const distinctTools = new Set(mine.filter((o) => !o.noTool).map((o) => o.tool)).size;
@@ -494,9 +497,12 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
     const operations: PlanOperation[] = mine.map((o) => {
       const firstUse = !o.noTool && !seen.has(o.tool);
       seen.add(o.tool);
-      const idleSec = o.noTool
+      const counted = o.noTool
         ? (o.idleSec ?? 0)
         : (inp.approachSecPerOp ?? 0) + (firstUse ? inp.toolChangeSec : 0) + (o.idleSec ?? 0);
+      // The shop's floor on one operation's idle; a bar stop is not an operation.
+      const idleSec = o.noTool ? counted : Math.max(counted, inp.idleFloorSec ?? 0);
+      floorExtraSec += idleSec - counted;
       // Efficiency scales CUTTING only. Idle here is the ATC's own change time
       // and a rapid at the machine's own traverse rate — specifications, not
       // estimates, and nothing is gained by asserting the machine is slower
@@ -544,5 +550,6 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
     tools: [...agg.values()].sort((a, b) => b.seconds - a.seconds),
     totalSeconds: planSetups.reduce((a, s) => a + s.seconds, 0),
     totalCost: planSetups.reduce((a, s) => a + s.cost, 0),
+    idleFloorSec: floorExtraSec,
   };
 }

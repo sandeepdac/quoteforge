@@ -115,3 +115,32 @@ describe('a bar-fed part starts with the bar stop', () => {
     expect(DEFAULT_SHOP_SETTINGS.cnc!.barLoadSec).toBe(30);
   });
 });
+
+describe('the per-operation idle floor on milled parts', () => {
+  const withFloor = (floor: number, machine: keyof typeof MACHINE_CATALOG) => calculateMilledCosts(
+    { materialName: 'Stainless 316', profile: bar, materialPricePerKg: 8.5 },
+    10, false, 0.25,
+    { ...DEFAULT_SHOP_SETTINGS, cnc: { ...DEFAULT_SHOP_SETTINGS.cnc!, opIdleFloorSec: floor } },
+    1, 0, [{ machine: MACHINE_CATALOG[machine], setups: 1 }]);
+
+  it('lifts every operation to the floor, but not the bar stop', () => {
+    const c = withFloor(25, 'ntx-1000');
+    for (const o of c.plan!.setups.flatMap((s) => s.operations)) {
+      if (o.name === 'Bar stop / feed') continue;
+      expect(o.idleSeconds!, o.name).toBeGreaterThanOrEqual(25);
+    }
+  });
+
+  it('is a shop-wide setting: a machining centre carries it too, and 0 switches it off', () => {
+    const a = withFloor(25, 'haas-vf2');
+    const b = withFloor(0, 'haas-vf2');
+    expect(a.cycleTimeSec).toBeGreaterThan(b.cycleTimeSec);
+    expect(b.lineItems.find((li) => li.key === 'idlefloor')?.value ?? 0).toBe(0);
+  });
+
+  it('the breakdown still adds up to the subtotal', () => {
+    const c = withFloor(25, 'ntx-1000');
+    expect(c.lineItems.reduce((a, li) => a + li.value, 0)).toBeCloseTo(c.subtotal, 5);
+    expect(c.lineItems.find((li) => li.key === 'idlefloor')!.value).toBeGreaterThan(0);
+  });
+});
