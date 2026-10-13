@@ -210,6 +210,8 @@ export interface TurningTimes {
   spotSec: number;
   /** Breaking the edges a cutter leaves — see deburrSec. */
   deburrSec: number;
+  /** Deburring the screwcut threads with the threading tool: its own operation. */
+  threadDeburrSec: number;
   /**
    * The drill actually used (mm) — a stocked size UNDER the finished bore, not
    * the bore's own diameter. Carried so the plan can name the tool that runs,
@@ -1166,10 +1168,16 @@ export function estimateTurningTimes(
   // as mouth chamfers above and screwcut ones here.)
   // Every single-point thread — entered by count or screwcut from a callout —
   // at its OWN feed, length and speed.
+  // ...and it is its OWN OPERATION, as on Lance's sheet ("Deburr thread", after
+  // "Deburr bore chamfer"): the threading tool, not the chamfer tool, so it has
+  // its own approach and its own row.
+  let threadDeburrCutSec = 0;
+  let threadDeburrIdleSec = 0;
   for (const th of singlePointThreads) {
-    deburrCutSec += min(th.lengthMm / th.feed);
-    deburrIdleSec += approach(th.feed) + 60 / Math.max(1, th.n) + th.lagSec;
+    threadDeburrCutSec += min(th.lengthMm / th.feed);
+    threadDeburrIdleSec += approach(th.feed) + 60 / Math.max(1, th.n) + th.lagSec;
   }
+  const threadDeburrSec = threadDeburrCutSec + threadDeburrIdleSec;
 
   for (const dia of deburrEdges) {
     const edgeRpm = rpm(m.cuttingSpeedFinish, Math.max(0.5, dia), cfg.maxRpm);
@@ -1196,18 +1204,18 @@ export function estimateTurningTimes(
   const tapSec = tap.cuttingSec + tap.idleSec;
 
   const times = { face: facingSec, rough: roughSec, finish: finishSec, spot: spotSec, drill: drillSec,
-    bore: boreSec, groove: grooveSec, thread: threadSec, partoff: partingSec, cross: crossSec,
+    bore: boreSec, groove: grooveSec, thread: threadSec, threaddeburr: threadDeburrSec, partoff: partingSec, cross: crossSec,
     tap: tapSec, deburr: deburrSec };
   // The cutting half and the idle half of each of those, in the same keys.
   const cut: Record<EstimatedTurningOp, number> = {
     face: facingCutSec, rough: roughCutSec, finish: finishCutSec, spot: spotCutSec,
     drill: drillCutSec, bore: boreCutSec, groove: grooveCutSec, thread: threadCutSec,
-    partoff: partingCutSec, cross: cross.cuttingSec, tap: tap.cuttingSec, deburr: deburrCutSec,
+    threaddeburr: threadDeburrCutSec, partoff: partingCutSec, cross: cross.cuttingSec, tap: tap.cuttingSec, deburr: deburrCutSec,
   };
   const idle: Record<EstimatedTurningOp, number> = {
     face: facingIdleSec, rough: roughIdleSec, finish: finishIdleSec, spot: spotIdleSec,
     drill: drillIdleSec, bore: boreIdleSec, groove: grooveIdleSec, thread: threadIdleSec,
-    partoff: partingIdleSec, cross: cross.idleSec, tap: tap.idleSec, deburr: deburrIdleSec,
+    threaddeburr: threadDeburrIdleSec, partoff: partingIdleSec, cross: cross.idleSec, tap: tap.idleSec, deburr: deburrIdleSec,
   };
 
   const liveOps = TURNING_SEQUENCE.filter(op => times[op] > 0);
@@ -1256,7 +1264,7 @@ export function estimateTurningTimes(
   const cuttingSec = opTimes.reduce((a, o) => a + o.cuttingSec, 0);
   const idleSec = opTimes.reduce((a, o) => a + o.idleSec, 0);
 
-  return { spotSec, deburrSec, drillDiaMm, facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec,
+  return { spotSec, deburrSec, threadDeburrSec, drillDiaMm, facingSec, roughSec, finishSec, drillSec, boreSec, grooveSec, threadSec, partingSec, crossSec, tapSec,
     airSec: idleSec, idleSec, cuttingSec, opTimes, toolCount, toolChangeCount, rapidSec: 0,
     screwcutCallouts: screwcutThreads.map((t) => t.callout),
     toolAssignments, operationCount: toolAssignments.length };

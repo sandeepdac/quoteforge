@@ -95,8 +95,10 @@ describe('fault 2 — a screwcut thread is deburred along its helix', () => {
   it('deburring costs about a thread pass, not a chamfer', () => {
     const withThread = estimateTurningTimes(housing, brass, 55, cfg);
     const without = estimateTurningTimes({ ...housing, threadCount: 0 }, brass, 55, cfg);
-    const delta = withThread.opTimes.find(o => o.op === 'deburr')!.cuttingSec
-      - (without.opTimes.find(o => o.op === 'deburr')?.cuttingSec ?? 0);
+    // The thread deburr is its own operation (the threading tool, not the chamfer
+    // tool), so the delta is that operation's cutting time.
+    const delta = withThread.opTimes.find(o => o.op === 'threaddeburr')!.cuttingSec
+      - (without.opTimes.find(o => o.op === 'threaddeburr')?.cuttingSec ?? 0);
     const onePass = withThread.opTimes.find(o => o.op === 'thread')!.cuttingSec / threadPassCount(1.5);
     // The same order as one threading pass — that IS the mechanism.
     expect(delta).toBeGreaterThan(onePass * 0.5);

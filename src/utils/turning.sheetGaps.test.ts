@@ -64,7 +64,9 @@ describe('deburring is an operation, not an afterthought', () => {
     const t = threadFromCallout('G1/4', 12, 1)!;
     const plain = estimateTurningTimes(housing, brass, 55, cfg);
     const threaded = estimateTurningTimes({ ...housing, threads: [t] }, brass, 55, cfg);
-    expect(threaded.deburrSec).toBeGreaterThan(plain.deburrSec);
+    // A screwcut thread's edge is its own operation, on the threading tool.
+    expect(threaded.threadDeburrSec).toBeGreaterThan(plain.threadDeburrSec);
+    expect(plain.threadDeburrSec).toBe(0);
   });
 
   it('it is dominated by reaching the edge, not by the chamfer', () => {

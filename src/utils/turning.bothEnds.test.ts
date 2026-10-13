@@ -51,16 +51,16 @@ describe('the plan puts the back end in its own operation', () => {
   const cut = (xs: Array<{ cuttingSeconds?: number }>) => xs.reduce((a, o) => a + (o.cuttingSeconds ?? 0), 0);
 
   it('Op 1\'s boring and threading are the same work as a one-ended part\'s', () => {
-    for (const name of ['Boring', 'Threading']) {
+    for (const name of ['Boring', 'Threading', 'Deburr thread']) {
       const a = rows(c2, 0).find((o) => o.name === name)!;
       const b = rows(c1, 0).find((o) => o.name === name)!;
       expect(a.cuttingSeconds, name).toBeCloseTo(b.cuttingSeconds!, 6);
     }
   });
 
-  it('Op 2 carries the back end\'s boring and threading', () => {
+  it('Op 2 carries the back end\'s boring, threading and thread deburr', () => {
     expect(c2.plan!.setups[1].name).toMatch(/back end/i);
-    expect(rows(c2, 1).map((o) => o.name)).toEqual(['Boring — back end', 'Threading — back end']);
+    expect(rows(c2, 1).map((o) => o.name)).toEqual(['Boring — back end', 'Threading — back end', 'Deburr thread — back end']);
     expect(cut(rows(c2, 1))).toBeGreaterThan(0);
   });
 
