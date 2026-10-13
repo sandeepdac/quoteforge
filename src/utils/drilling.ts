@@ -71,7 +71,17 @@ export const DEFAULT_DRILL_CONFIG: DrillConfig = {
  */
 export function drillFeedPerRev(diaMm: number, m: MaterialProps): number {
   const base = 0.015 * Math.max(0.1, diaMm);
-  return Math.max(0.002, base * Math.min(1.5, Math.max(0.3, m.machinability)));
+  // The material's effect on DRILL FEED is the square root of its machinability
+  // rating, not the rating itself. Lance's CAM program feeds a ⌀3.2 solid-carbide
+  // drill 0.033 mm/rev in 316 (4,476 rpm at 147 mm/min, 4 s for 10 mm); the linear
+  // law gave 0.0216 there (machinability 0.45) and so ran 1.5x slow, while the
+  // root gives 0.032. Handbook feeds agree in shape: stainless drills at roughly
+  // two-thirds the feed of mild steel, where machinability alone would say under
+  // half. The root applies BELOW 1 only, where that evidence is; at and above 1
+  // (steel, brass, aluminium) the factor is the machinability itself, capped at
+  // 1.5, exactly as before, so nothing above steel moves.
+  const mach = Math.min(1.5, Math.max(0.3, m.machinability));
+  return Math.max(0.002, base * (mach < 1 ? Math.sqrt(mach) : mach));
 }
 
 /**

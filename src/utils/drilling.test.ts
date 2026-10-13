@@ -197,3 +197,28 @@ describe('threads a quoter types in', () => {
     expect(THREAD_CATALOG['M6'].majorMm).toBe(6);
   });
 });
+
+describe('drill feed against the material', () => {
+  const m = (name: string) => materialPropsFor(name);
+
+  it('a hard material feeds at the root of its machinability, not at its machinability', () => {
+    // Lance's CAM: a ⌀3.2 carbide drill at 0.033 mm/rev in 316 (machinability 0.45).
+    const f = drillFeedPerRev(3.2, m('Stainless 316'));
+    expect(f).toBeCloseTo(0.015 * 3.2 * Math.sqrt(0.45), 9);
+    expect(f).toBeGreaterThan(0.03);
+    expect(f).toBeLessThan(0.035);
+  });
+
+  it('materials at or above steel feed exactly as before', () => {
+    for (const name of ['Brass CZ121', 'Aluminium 6082']) {
+      const mach = Math.min(1.5, m(name).machinability);
+      expect(drillFeedPerRev(5, m(name)), name).toBeCloseTo(0.015 * 5 * mach, 9);
+    }
+  });
+
+  it('is continuous at machinability 1', () => {
+    const below = { ...m('Stainless 316'), machinability: 0.9999 };
+    const at = { ...m('Stainless 316'), machinability: 1 };
+    expect(drillFeedPerRev(4, below)).toBeCloseTo(drillFeedPerRev(4, at), 3);
+  });
+});
