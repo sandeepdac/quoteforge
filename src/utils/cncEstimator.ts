@@ -22,7 +22,7 @@ import {
 import { DEFAULT_CNC_SETTINGS, DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor, nextStandardBar } from './materials';
 import { estimateTurningTimes, DEFAULT_OP_APPROACH, TurningProfile, polygonSectionMm2, acrossCornersMm } from './turning';
-import { deriveRouteSetup, routeRateMultiplier, type RouteSetupOp } from './setupModel';
+import { deriveRouteSetup, routeSetupLabour, PROGRAMMING_RATE_PER_MIN, routeRateMultiplier, type RouteSetupOp } from './setupModel';
 import { TOOL_CHANGE_SEC } from './machineSelection';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
 import type { SecondaryOperation } from './secondaryOps';
@@ -275,7 +275,7 @@ export function calculateMachiningCosts(
   // Setup billing: time-based labour, a flat per-setup charge, or both (one-time
   // job costs amortised over the batch). 'flat' matches how CAM quotes bill setup.
   const flatSetupCharge = Math.max(0, cnc.flatSetupChargePerSetup ?? 0) * setups;
-  const setupLabour = setupTimeMin * cnc.setupRatePerMin;
+  const setupLabour = derivedSetup ? routeSetupLabour(derivedSetup, cnc.setupRatePerMin) : setupTimeMin * cnc.setupRatePerMin;
   const setupMode = cnc.setupBillingMode ?? 'both';
   const setupLabourBilled = setupMode === 'flat' ? 0 : setupLabour;
   const flatBilled = setupMode === 'time' ? 0 : flatSetupCharge;
@@ -295,7 +295,7 @@ export function calculateMachiningCosts(
   // Programming/proving the turning cycle is one-time and does not recur on a
   // reorder; amortised over the first batch, excluded from the repeat price.
   const programmingMin = derivedSetup ? derivedProgrammingMin : Math.max(0, cnc.programmingMinPerSetup ?? 0) * setups;
-  const nreCost = programmingMin * cnc.setupRatePerMin;
+  const nreCost = programmingMin * (derivedSetup ? PROGRAMMING_RATE_PER_MIN : cnc.setupRatePerMin);
   const programmingPerUnit = nreCost / qty;
 
   // --- Roll-up (per unit) --------------------------------------------------
