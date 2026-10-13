@@ -111,6 +111,13 @@ export interface MachineSpec {
    */
   hourlyRate: number;
   /**
+   * What Lance books per HOUR for SETTING this machine (not running it): £40 on
+   * the Mori NL, the VF-2 and the mini mill, £50 on the NTX and the sliding
+   * heads, read off the setup rate column of his routers. Unset where no router
+   * of his names the machine; the shop's own setup rate applies there.
+   */
+  setupRatePerHr?: number;
+  /**
    * Relative charge-out vs the reference spindle rate — DERIVED from hourlyRate,
    * never hand-set. Kept because the cost models multiply the shop's base rate
    * by it; changing hourlyRate is what moves the quote.
@@ -143,6 +150,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 240, // assumed: same class as the SR-20, untested
     accuracyMm: 0.01, rapidTraverseMmPerMin: 24000, // assumed: same class as the Star sliding heads, untested
     hourlyRate: 48,
+    setupRatePerHr: 50, // OBSERVED on Lance's routers
     note: 'Small bar-fed precision turning to ⌀10 bar (⌀45 turned). Driven tools: profiles, drilling, tapping, thread whirling.',
   }),
   'star-sr20': spec({
@@ -151,6 +159,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 240, // OBSERVED 240 (029068)
     accuracyMm: 0.005, rapidTraverseMmPerMin: 24000, // assumed from the SR-32 specification, same series
     hourlyRate: 52,
+    setupRatePerHr: 50, // OBSERVED on Lance's routers
     note: 'Bar-fed to ⌀20 × 350 mm. Tightest tolerance on the floor (0.005 mm). Driven tools + thread whirling.',
   }),
   'star-sr32': spec({
@@ -159,6 +168,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 900, // OBSERVED 900 (OLY014_01297) - 3.75x the SR-20, unexplained
     accuracyMm: 0.01, rapidTraverseMmPerMin: 24000, // SOURCED: Star SR-32J, 24 m/min
     hourlyRate: 58,
+    setupRatePerHr: 50, // OBSERVED on Lance's routers
     note: 'Bar-fed to ⌀32 × 310 mm. Driven tools: profiles, drilling, tapping, thread whirling.',
   }),
   'ntx-1000': spec({
@@ -167,6 +177,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 900, // OBSERVED 600 and 1200, mean 900 - the 2x spread is unmodelled
     accuracyMm: 0.01, rapidTraverseMmPerMin: 40000, // SOURCED: DMG Mori NTX 1000, X/Y/Z 40/40/50 m/min - the slowest axis
     hourlyRate: 135,
+    setupRatePerHr: 50, // OBSERVED on Lance's routers
     note: 'The only 5-axis machine on the floor: B-axis milling spindle, turning and milling in one clamp. Also mills PRISMATIC work done-complete in soft jaws — the reason a compound-angle part belongs here and not on a VMC. Premium rate, repaid by eliminating setups.',
   }),
   'nl-2000': spec({
@@ -175,6 +186,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 210, // OBSERVED 180 and 240 (031169, 035838)
     accuracyMm: 0.01, rapidTraverseMmPerMin: 30000, // assumed: large-capacity turning centre of this class
     hourlyRate: 88,
+    setupRatePerHr: 40, // OBSERVED on Lance's routers
     note: 'Large-capacity mill-turn: ⌀65 bar, but chucks to ⌀430 × 450 mm. Driven tools with Y ±70 for off-axis work. One rotary axis, so a compound angle still needs fixturing.',
   }),
   'hi-turner': spec({
@@ -191,6 +203,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 240, // assumed as a FIRST op; observed 60 as a second op (035838)
     rapidTraverseMmPerMin: 10200, // SOURCED: Haas VF-2, 400 ipm standard (20.3 m/min with the XRT option)
     hourlyRate: 55,
+    setupRatePerHr: 40, // OBSERVED on Lance's routers
     note: 'Vertical machining centre with a 4th axis — indexes around ONE axis to reach the faces about it without a re-fixture. A compound angle needs two rotations, so it still costs a tilted fixture here.',
   }),
   sabre: spec({
@@ -207,6 +220,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 405, // OBSERVED 210 and 600 as SECOND ops, mean 405
     accuracyMm: 0.01, rapidTraverseMmPerMin: 20000, // assumed: small high-speed machining centre
     hourlyRate: 40,
+    setupRatePerHr: 40, // OBSERVED on Lance's routers
     note: 'Small machining centre with ⌀10–60 collet / bar workholding, billet to 370 mm. CONFIRM its exact classification with the shop.',
   }),
 };

@@ -152,7 +152,7 @@ export interface RouteSetupOp {
 export interface RouteSetupBreakdown {
   totalMin: number;
   /** Per op, in route order — so a quoter can see which machine owes what. */
-  perOp: { machineName: string; setups: number; breakdown: SetupBreakdown }[];
+  perOp: { machineName: string; machine: MachineSpec; setups: number; breakdown: SetupBreakdown }[];
   explanation: string;
 }
 
@@ -170,6 +170,7 @@ export function deriveRouteSetup(ops: RouteSetupOp[], d: RouteSetupDrivers): Rou
     const share = o.setups / totalSetups;
     return {
       machineName: o.machine.name,
+      machine: o.machine,
       setups: o.setups,
       breakdown: deriveSetup(o.machine, {
         toolCount: d.toolCount * share,
@@ -197,6 +198,25 @@ export function deriveRouteSetup(ops: RouteSetupOp[], d: RouteSetupDrivers): Rou
             + ` ${b.programmingMin} programming, ${b.provingMin} proving)`;
         }).join('; then '),
   };
+}
+
+/**
+ * What Lance books per hour for CAM programming — the rate on the PROG centre of
+ * his only router that has one (OLY014_01921, 150 min at £40/hr).
+ */
+export const PROGRAMMING_RATE_PER_MIN = 40 / 60;
+
+/**
+ * Setup LABOUR in money: each machine's preparation (programming excluded, which
+ * is billed as NRE) at the rate Lance books for setting THAT machine, falling
+ * back to the shop's own rate where no router of his names it. A flat shop rate
+ * charged a £40 Mori and a £50 NTX the same.
+ */
+export function routeSetupLabour(r: RouteSetupBreakdown, fallbackRatePerMin: number): number {
+  return r.perOp.reduce((sum, o) => {
+    const rate = o.machine.setupRatePerHr != null ? o.machine.setupRatePerHr / 60 : fallbackRatePerMin;
+    return sum + (o.breakdown.totalMin - o.breakdown.programmingMin) * rate;
+  }, 0);
 }
 
 /**

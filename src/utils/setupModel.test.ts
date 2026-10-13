@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveSetup, deriveRouteSetup, routeRateMultiplier, DIAL_IN_MIN, PER_EXTRA_AXIS_MIN } from './setupModel';
+import { deriveSetup, deriveRouteSetup, routeRateMultiplier, DIAL_IN_MIN, PER_EXTRA_AXIS_MIN, routeSetupLabour, PROGRAMMING_RATE_PER_MIN } from './setupModel';
 import { MACHINE_CATALOG } from './machineSelection';
 
 const ntx = MACHINE_CATALOG['ntx-1000'];       // turn-mill, 5 axes, £135/hr
@@ -78,5 +78,36 @@ describe('the route rate is weighted, and is NOT what we bill today', () => {
 
   it('has nothing to say about an empty route', () => {
     expect(routeRateMultiplier([])).toBeNull();
+  });
+});
+
+describe('setup labour at the rate Lance books for each machine', () => {
+  const d = { toolCount: 6, featureCount: 5, cycleMin: 4 };
+
+  it('his rates are on the machines his routers name', () => {
+    expect(MACHINE_CATALOG['nl-2000'].setupRatePerHr).toBe(40);
+    expect(MACHINE_CATALOG['haas-vf2'].setupRatePerHr).toBe(40);
+    expect(MACHINE_CATALOG['ntx-1000'].setupRatePerHr).toBe(50);
+    expect(MACHINE_CATALOG['star-sr32'].setupRatePerHr).toBe(50);
+    expect(MACHINE_CATALOG['sabre'].setupRatePerHr).toBeUndefined();
+  });
+
+  it('is each machine\'s minutes (programming excluded) at its own rate', () => {
+    const r = deriveRouteSetup([
+      { machine: MACHINE_CATALOG['nl-2000'], setups: 1 },
+      { machine: MACHINE_CATALOG['ntx-1000'], setups: 1 },
+    ], d);
+    const expected = r.perOp.reduce((sum, o, i) =>
+      sum + (o.breakdown.totalMin - o.breakdown.programmingMin) * (i === 0 ? 40 : 50) / 60, 0);
+    expect(routeSetupLabour(r, 0.8)).toBeCloseTo(expected, 9);
+  });
+
+  it('falls back to the shop rate where no router of his names the machine', () => {
+    const r = deriveRouteSetup([{ machine: MACHINE_CATALOG['sabre'], setups: 1 }], d);
+    expect(routeSetupLabour(r, 0.8)).toBeCloseTo((r.totalMin - r.perOp[0].breakdown.programmingMin) * 0.8, 9);
+  });
+
+  it('programming is billed at his PROG rate', () => {
+    expect(PROGRAMMING_RATE_PER_MIN * 60).toBeCloseTo(40, 9);
   });
 });

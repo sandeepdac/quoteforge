@@ -36,7 +36,7 @@ import { TOOL_CHANGE_SEC } from './machineSelection';
 
 /** A mill's approach crosses the table and plunges; a lathe's slides along Z. */
 const MILL_APPROACH_TRAVEL_MM = 250;
-import { deriveRouteSetup, type RouteSetupOp } from './setupModel';
+import { deriveRouteSetup, routeSetupLabour, PROGRAMMING_RATE_PER_MIN, type RouteSetupOp } from './setupModel';
 import type { ThreadSpec } from './drilling';
 import type { SecondaryOperation } from './secondaryOps';
 
@@ -893,7 +893,7 @@ export function calculateMilledCosts(
   // Setup billing: time-based labour, a flat per-setup charge, or both (one-time
   // job costs amortised over the batch). 'flat' matches how CAM quotes bill setup.
   const flatSetupCharge = Math.max(0, cnc.flatSetupChargePerSetup ?? 0) * setups;
-  const setupLabour = setupTimeMin * cnc.setupRatePerMin;
+  const setupLabour = derivedSetup ? routeSetupLabour(derivedSetup, cnc.setupRatePerMin) : setupTimeMin * cnc.setupRatePerMin;
   const setupMode = cnc.setupBillingMode ?? 'both';
   const setupLabourBilled = setupMode === 'flat' ? 0 : setupLabour;
   const flatBilled = setupMode === 'time' ? 0 : flatSetupCharge;
@@ -922,7 +922,7 @@ export function calculateMilledCosts(
   // are excluded from the repeat price. (Separating this is what lets us show a
   // first-order vs repeat-order price — a ~30% swing at mid quantities.)
   const programmingMin = derivedSetup ? derivedProgrammingMin : Math.max(0, cnc.programmingMinPerSetup ?? 0) * setups;
-  const nreProgrammingCost = programmingMin * cnc.setupRatePerMin;
+  const nreProgrammingCost = programmingMin * (derivedSetup ? PROGRAMMING_RATE_PER_MIN : cnc.setupRatePerMin);
   const nreCost = nreProgrammingCost + fixtureCostTotal; // one-time for the whole job
   const programmingPerUnit = nreProgrammingCost / qty;
 
