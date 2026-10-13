@@ -345,7 +345,7 @@ function EstimateTab({
             const value = Math.max(0, Number(barLoad) || 0); setBarLoad(String(value)); onSaveCnc({ barLoadSec: value }); flash('Turning handling');
           }} className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right" />
         </SettingField>
-        <SettingField label="Idle Floor per Operation" hint="The least idle any one operation carries (turning and milling), on top of the moves the model counts. Lance's two cycle sheets bottom out at 10 s. Set 0 to switch off; an operation already above it keeps its own figure. Not scaled by efficiency." unit="s">
+        <SettingField label="Idle Floor per Operation" hint="The least idle any one operation carries (turning and milling), on top of the moves the model counts. Lance's two cycle sheets average 15 s (least 10 s). Set 0 to switch off; an operation already above it keeps its own figure. Not scaled by efficiency." unit="s">
           <input aria-label="Idle floor seconds per operation" type="number" min="0" step="0.5" value={idleFloor} onChange={e => setIdleFloor(e.target.value)} onBlur={() => {
             const value = Math.max(0, Number(idleFloor) || 0); setIdleFloor(String(value)); onSaveCnc({ opIdleFloorSec: value }); flash('Operation idle floor');
           }} className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right" />

@@ -74,7 +74,7 @@ describe('milling charges the moves it actually makes', () => {
       { materialName: 'Aluminium 6082',
         profile: { ...(profile as object), holeCount: 1, holeDiametersMm: [6], holeDepthsMm: [25] } as never,
         materialPricePerKg: 6.5 },
-      1, false, 0.25, DEFAULT_SHOP_SETTINGS, 1, 0, [{ machine: MACHINE_CATALOG['haas-vf2'], setups: 2 }]);
+      1, false, 0.25, SETTINGS, 1, 0, [{ machine: MACHINE_CATALOG['haas-vf2'], setups: 2 }]);
     const many = run('haas-vf2');
     expect(many.cycleTimeSec).toBeGreaterThan(few.cycleTimeSec);
   });

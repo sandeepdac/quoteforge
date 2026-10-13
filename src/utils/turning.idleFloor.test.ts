@@ -39,8 +39,8 @@ describe('the per-operation idle floor', () => {
     expect(t.opTimes.find((o) => o.idleSec === high)!.idleSec).toBe(high);
   });
 
-  it('the shop default is the 10 s both of Lance\'s sheets bottom out at', () => {
-    expect(DEFAULT_CNC_SETTINGS.opIdleFloorSec).toBe(10);
+  it('the shop default is Lance\'s per-operation average idle, 15 s', () => {
+    expect(DEFAULT_CNC_SETTINGS.opIdleFloorSec).toBe(15);
   });
 
   it('the plan still adds up to the cycle', () => {
