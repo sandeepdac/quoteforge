@@ -502,6 +502,24 @@ describe('signals that decide the machine', () => {
       expect(MACHINE_CATALOG[r.recommended].kind).toBe('turn-mill');
     });
 
+    it('is cut off with a saw, so its back is a second operation on a mill, as on Lance\'s router', () => {
+      const r = selectMachine(arm);
+      expect(r.effectiveSetups).toBe(2);
+      expect(r.machineRoute!.ops).toHaveLength(2);
+      expect(r.machineRoute!.ops[0].machine).toBe(r.recommended);
+      expect(MACHINE_CATALOG[r.machineRoute!.ops[1].machine].kind).toBe('mill');
+    });
+
+    it('a round part bar-fed on a turn-mill is still turned round by the sub-spindle', () => {
+      const round = selectMachine({
+        isTurned: false as const, setupCount: 2, axisAlignedSetups: 2,
+        partDimsMm: { x: 6.1, y: 6.9, z: 8.9 }, partVolumeCm3: 0.064,
+        onAxisTurnedFeatures: 3, discardedAreaShare: 0.05,
+      });
+      expect(round.prismaticBar).toBeFalsy();
+      expect(round.machineRoute!.ops).toHaveLength(1);
+    });
+
     it('a block over the limit is still sawn from billet', () => {
       const block = selectMachine({
         isTurned: false as const, setupCount: 4, axisAlignedSetups: 4,
