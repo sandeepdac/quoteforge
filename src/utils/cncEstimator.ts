@@ -137,6 +137,11 @@ export function calculateMachiningCosts(
   const toolChangeSec = routeOps?.length
     ? TOOL_CHANGE_SEC[routeOps[0].machine.kind] ?? cnc.toolChangeSec
     : cnc.toolChangeSec;
+  // THE SHOP'S PER-OPERATION IDLE FLOOR (CncSettings.opIdleFloorSec). Evidence is
+  // two cycle sheets, a Mori NL2000Y and an NTX 1000; it is charged on every
+  // machine because the shop sets it, and a shop with a faster sliding head can
+  // set it lower or to 0.
+  const idleFloorSec = cnc.opIdleFloorSec ?? 0;
   // ...and so is the rapid rate. Sourced per machine where a specification was
   // published; see MachineSpec.rapidTraverseMmPerMin.
   const rapidMmPerMin = routeOps?.length
@@ -148,6 +153,7 @@ export function calculateMachiningCosts(
     { ...input.profile, barDiameterMm }, m, removedVol, {
     maxRpm: cnc.maxRpm,
     toolChangeSec,
+    opIdleFloorSec: idleFloorSec,
     roughFraction: 0.9,
     maxDrillDiaMm: cnc.maxDrillDiaMm ?? 20,
     toolLibrary: cnc.toolLibrary ?? DEFAULT_TURNING_TOOLS,

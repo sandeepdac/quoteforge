@@ -157,6 +157,8 @@ export interface TurningConfig {
   maxRpm: number;
   /** Turret index / tool-change time (s each). */
   toolChangeSec: number;
+  /** The least idle one operation carries (s); see CncSettings.opIdleFloorSec. Default 0. */
+  opIdleFloorSec?: number;
   /** Fraction of removal done at roughing feed (rest is the finish skin). */
   roughFraction: number;
   /**
@@ -1229,13 +1231,18 @@ export function estimateTurningTimes(
   // A CHANGE COSTS THE INDEX PLUS THE TRIP TO WHERE IT IS SAFE TO INDEX.
   // Two operations sharing a tool pay neither: the tool never leaves the work.
   const changeSec = toolChangeSec + indexRetractSec(cfg.opApproach);
+  // No operation carries less idle than the shop's floor (default none).
+  const idleFloorSec = Number.isFinite(cfg.opIdleFloorSec) && (cfg.opIdleFloorSec ?? 0) > 0 ? (cfg.opIdleFloorSec as number) : 0;
   const opTimes: TurningOpTime[] = liveOps.map((op, i) => ({
     op,
     cuttingSec: cut[op],
-    idleSec: idle[op]
-      // `identity`, the same key countToolSelections counts by — so the per-op
-      // indexes still sum to exactly toolChangeCount × toolChangeSec.
-      + (i === 0 || toolAssignments[i].identity !== toolAssignments[i - 1].identity ? changeSec : 0),
+    idleSec: Math.max(
+      idleFloorSec,
+      idle[op]
+        // `identity`, the same key countToolSelections counts by — so the per-op
+        // indexes still sum to exactly toolChangeCount × toolChangeSec.
+        + (i === 0 || toolAssignments[i].identity !== toolAssignments[i - 1].identity ? changeSec : 0),
+    ),
   }));
 
   // THE TOTALS ARE NOW THE SUM OF THE ROWS, which is the property that makes the

@@ -113,6 +113,8 @@ export const DEFAULT_CNC_SETTINGS: CncSettings = {
   // stop - close door" row of exactly this length, one on the Mori NL and one on
   // the NTX. It was 8 s, a load/unload figure with no source.
   barLoadSec: 30,
+  // 10 s: the least idle any operation carries on either of Lance's two sheets.
+  opIdleFloorSec: 10,
   toolingCostPerOp: 0.5,
   radialStockAllowanceMm: 2,
   facingAllowanceMm: 2,

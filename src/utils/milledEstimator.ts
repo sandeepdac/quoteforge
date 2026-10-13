@@ -366,6 +366,8 @@ export function calculateMilledCosts(
   const toolChangeSec = routeOps?.length
     ? TOOL_CHANGE_SEC[routeOps[0].machine.kind] ?? (cnc.millToolChangeSec ?? 10)
     : (cnc.millToolChangeSec ?? 10);
+  // The shop's per-operation idle floor; see cncEstimator.ts.
+  const idleFloorSec = cnc.opIdleFloorSec ?? 0;
   const rapidMmPerMin = routeOps?.length
     ? routeOps[0].machine.rapidTraverseMmPerMin || DEFAULT_OP_APPROACH.rapidMmPerMin
     : DEFAULT_OP_APPROACH.rapidMmPerMin;
@@ -805,6 +807,7 @@ export function calculateMilledCosts(
     airCost,
     toolChangeSec,
     approachSecPerOp,
+    idleFloorSec,
     colors: COLORS,
   });
   // Allocate runtime to the machine that owns each holding. Previously every
@@ -949,6 +952,7 @@ export function calculateMilledCosts(
     { key: 'edge', name: 'Countersink / chamfer', driver: edgeSec > 0 ? `${countersinkCount ? `${countersinkCount} countersink${countersinkCount === 1 ? '' : 's'}` : ''}${countersinkCount && chamferCount ? ' + ' : ''}${chamferCount ? `${chamferCount} chamfer${chamferCount === 1 ? '' : 's'}` : ''} measured from the solid — ${secStr(edgeSec)}` : '', value: opCost(edgeSec), color: COLORS.facing },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
     { key: 'barstop', name: 'Bar stop / feed', driver: barStopSec > 0 ? `${r1(barStopSec)} s per part to pull the bar to the stop and close the door — machine idle, so no efficiency is applied` : '', value: airCost(barStopSec), color: COLORS.noncut },
+    { key: 'idlefloor', name: 'Operation idle floor', driver: (plan.idleFloorSec ?? 0) > 0 ? `${r1(plan.idleFloorSec ?? 0)} s lifting each operation's idle to the shop's ${r1(idleFloorSec)} s minimum — machine idle, so no efficiency is applied` : '', value: airCost(plan.idleFloorSec ?? 0), color: COLORS.noncut },
     { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${toolChanges} tool changes × ${r1(toolChangeSec)}s, plus ${plannedOpCount} approaches × ${r1(approachSecPerOp)}s at ${Math.round(rapidMmPerMin / 1000)} m/min rapid — machine specifications, so no efficiency is applied`, value: airCost(airSec), color: COLORS.noncut },
     { key: 'deburr', name: 'Deburring', driver: deburrSec > 0 ? `trace every edge a cutter left — ${deburrEdgeDias.length} hole and feature edge${deburrEdgeDias.length === 1 ? '' : 's'} plus the outline — ${secStr(deburrSec)} cutting + ${r1(deburrIdleSec)} s idle` : '', value: deburrSec > 0 ? opCost(deburrSec) + airCost(deburrIdleSec) : 0, color: COLORS.facing },
     { key: 'partoff', name: 'Part-off', driver: partoffSec > 0 ? `cut the part off the ⌀${r1(partoffBarDiaMm)} bar — ${secStr(partoffSec)}` : '', value: opCost(partoffSec), color: COLORS.facing },

@@ -10,7 +10,10 @@ import type { ShopTool } from '../types';
 const input: MachiningInput = { isTurned: true, materialName: 'Brass CZ121', volumeCm3: 8, setups: 1,
   materialPricePerKg: 9, profile: { odMm: 20, lengthMm: 40, boreDiaMm: 8, boreDepthMm: 30,
     faceCount: 1, grooveCount: 0, threadCount: 0, crossFeatures: false } };
-const settings = { ...DEFAULT_SHOP_SETTINGS, cnc: { ...DEFAULT_CNC_SETTINGS, machineRatePerMin: 1, efficiencyFactor: 1, toolChangeSec: 8 } };
+const settings = { ...DEFAULT_SHOP_SETTINGS, cnc: { ...DEFAULT_CNC_SETTINGS, machineRatePerMin: 1, efficiencyFactor: 1, toolChangeSec: 8,
+  // These tests isolate what ONE tool change costs; a floor on every row's idle
+  // would swallow it by design (see turning.idleFloor.test.ts).
+  opIdleFloorSec: 0 } };
 
 describe('turning assembly identity and migration', () => {
   it('converts shared legacy rows to one unconfirmed assembly without mutating them', () => {

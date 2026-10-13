@@ -196,6 +196,7 @@ function EstimateTab({
   const [toolChange, setToolChange] = useState(String(cnc.millToolChangeSec ?? 10));
   const [turnChange, setTurnChange] = useState(String(cnc.toolChangeSec ?? DEFAULT_CNC_SETTINGS.toolChangeSec));
   const [barLoad, setBarLoad] = useState(String(cnc.barLoadSec ?? DEFAULT_CNC_SETTINGS.barLoadSec));
+  const [idleFloor, setIdleFloor] = useState(String(cnc.opIdleFloorSec ?? DEFAULT_CNC_SETTINGS.opIdleFloorSec ?? 0));
   const [saved, setSaved] = useState('');
   const flash = (what: string) => {
     setSaved(what);
@@ -342,6 +343,11 @@ function EstimateTab({
         <SettingField label="Turning Load / Unload / Bar Feed" hint="Separate per-part handling allowance. Not a tool change; not scaled by efficiency." unit="s">
           <input aria-label="Turning load seconds" type="number" min="0" step="0.1" value={barLoad} onChange={e => setBarLoad(e.target.value)} onBlur={() => {
             const value = Math.max(0, Number(barLoad) || 0); setBarLoad(String(value)); onSaveCnc({ barLoadSec: value }); flash('Turning handling');
+          }} className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right" />
+        </SettingField>
+        <SettingField label="Idle Floor per Operation" hint="The least idle any one operation carries (turning and milling), on top of the moves the model counts. Lance's two cycle sheets bottom out at 10 s. Set 0 to switch off; an operation already above it keeps its own figure. Not scaled by efficiency." unit="s">
+          <input aria-label="Idle floor seconds per operation" type="number" min="0" step="0.5" value={idleFloor} onChange={e => setIdleFloor(e.target.value)} onBlur={() => {
+            const value = Math.max(0, Number(idleFloor) || 0); setIdleFloor(String(value)); onSaveCnc({ opIdleFloorSec: value }); flash('Operation idle floor');
           }} className="w-28 bg-background border border-border rounded px-3 py-2 text-sm text-right" />
         </SettingField>
       </div>

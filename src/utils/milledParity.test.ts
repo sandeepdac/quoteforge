@@ -18,9 +18,13 @@ const profile = {
   holeDiametersMm: [6, 6, 6, 10, 10, 3], holeDepthsMm: [25, 25, 25, 12, 12, 8],
 } as never;
 
+// These tests isolate what a machine's own tool change and rapid do to a cycle.
+// The per-operation idle floor would mask exactly that difference, so it is off here (see turning.idleFloor.test.ts).
+const SETTINGS = { ...DEFAULT_SHOP_SETTINGS, cnc: { ...DEFAULT_SHOP_SETTINGS.cnc!, opIdleFloorSec: 0 } };
+
 const run = (id?: keyof typeof MACHINE_CATALOG) => calculateMilledCosts(
   { materialName: 'Aluminium 6082', profile, materialPricePerKg: 6.5 },
-  1, false, 0.25, DEFAULT_SHOP_SETTINGS, 1, 0,
+  1, false, 0.25, SETTINGS, 1, 0,
   id ? [{ machine: MACHINE_CATALOG[id], setups: 2 }] : undefined);
 
 describe('a milled part is timed by the machine that makes it', () => {
