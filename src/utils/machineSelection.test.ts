@@ -516,6 +516,18 @@ describe('signals that decide the machine', () => {
     });
   });
 
+  describe('the 5-axis chosen for fine features is not undone', () => {
+    it('a cheaper turn-mill does not undo the choice of the 5-axis (the Hollow Arm)', () => {
+      const arm = selectMachine({
+        isTurned: false as const, setupCount: 2, axisAlignedSetups: 2,
+        partDimsMm: { x: 6.1, y: 6.9, z: 8.9 }, partVolumeCm3: 0.064,
+        onAxisTurnedFeatures: 3, discardedAreaShare: 0.55, smallestFeatureMm: 0.65, quantity: 15,
+      });
+      expect(arm.recommended).toBe('ntx-1000');
+      expect(arm.reasons.join(' ')).not.toMatch(/routed to the Mori NL/);
+    });
+  });
+
   it('sub-1.5 mm features send NON-BAR work to the 5-axis, and say it is a guess', () => {
     // FITTED TO TWO PARTS. Kept separate so the next quote can disprove it.
     const block = {

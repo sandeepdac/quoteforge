@@ -1140,18 +1140,24 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
   // machine, never away. Wrong, it over-quotes the hardest parts, which are the
   // ones we currently under-quote worst.
   const FINE_FEATURE_MM = 1.5;
-  const fine = (input.smallestFeatureMm ?? Infinity) < FINE_FEATURE_MM;
+  const smallest = input.smallestFeatureMm ?? Infinity;
+  const fine = smallest < FINE_FEATURE_MM;
   const fiveAxisOffer = ranked.find((o) => o.machine.axes >= 5 && o.machine.kind === 'turn-mill');
-  if (fine && fiveAxisOffer && fiveAxisOffer !== winner && (winner.stockForm !== 'bar' || winner.machine.kind === 'turn-mill')) {
+  const fineEnoughToMove = fine && (winner.stockForm !== 'bar' || winner.machine.kind === 'turn-mill');
+  if (fineEnoughToMove && fiveAxisOffer && fiveAxisOffer !== winner) {
     reasons.push(
-      `Smallest feature is ⌀${(input.smallestFeatureMm ?? 0).toFixed(2)} mm. The ${winner.machine.name} is cheaper per part, but a cutter that size needs the spindle speed and rigidity of the ${fiveAxisOffer.machine.name} — CONFIRM this: the size threshold behind it is calibrated on only two jobs.`
+      `Smallest feature is ⌀${smallest.toFixed(2)} mm. The ${winner.machine.name} is cheaper per part, but a cutter that size needs the spindle speed and rigidity of the ${fiveAxisOffer.machine.name} — CONFIRM this: the size threshold behind it is calibrated on only a few jobs.`
     );
     winner = fiveAxisOffer;
   }
 
   const TURN_ROUTE_TOLERANCE = 1.5;
   const turnOffer = ranked.find((o) => o.route === 'mill-turn');
-  if (turnOffer && turnOffer !== winner && turnOffer.cost.totalPerPart <= winner.cost.totalPerPart * TURN_ROUTE_TOLERANCE) {
+  // Only a MILLING winner is nudged to a spindle route. A winner that already is
+  // one (the 5-axis chosen for fine features above) is not undone for a cheaper
+  // turn-mill: that put the Hollow Arm on the Mori where Lance runs it on the NTX.
+  if (turnOffer && turnOffer !== winner && winner.route !== 'mill-turn'
+    && turnOffer.cost.totalPerPart <= winner.cost.totalPerPart * TURN_ROUTE_TOLERANCE) {
     reasons.push(
       `Costed against the ${winner.machine.name} at ${winner.cost.totalPerPart.toFixed(2)}/part, but routed to the ${turnOffer.machine.name} at ${turnOffer.cost.totalPerPart.toFixed(2)}: this part has coaxial features a spindle TURNS, which the comparison above prices as milling. Turning them is several times faster, and the round part chucks far more easily than it clamps.`
     );
