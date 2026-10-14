@@ -369,7 +369,7 @@ export function calculateMilledCosts(
     ? TOOL_CHANGE_SEC[routeOps[0].machine.kind] ?? (cnc.millToolChangeSec ?? 10)
     : (cnc.millToolChangeSec ?? 10);
   // The shop's per-operation idle floor; see cncEstimator.ts.
-  const idleFloorSec = cnc.opIdleFloorSec ?? 0;
+  const idleFloorSec = cnc.opIdleFloorSec ?? DEFAULT_CNC_SETTINGS.opIdleFloorSec ?? 0;
   const rapidMmPerMin = routeOps?.length
     ? routeOps[0].machine.rapidTraverseMmPerMin || DEFAULT_OP_APPROACH.rapidMmPerMin
     : DEFAULT_OP_APPROACH.rapidMmPerMin;
