@@ -141,7 +141,7 @@ export function calculateMachiningCosts(
   // two cycle sheets, a Mori NL2000Y and an NTX 1000; it is charged on every
   // machine because the shop sets it, and a shop with a faster sliding head can
   // set it lower or to 0.
-  const idleFloorSec = cnc.opIdleFloorSec ?? 0;
+  const idleFloorSec = cnc.opIdleFloorSec ?? DEFAULT_CNC_SETTINGS.opIdleFloorSec ?? 0;
   // ...and so is the rapid rate. Sourced per machine where a specification was
   // published; see MachineSpec.rapidTraverseMmPerMin.
   const rapidMmPerMin = routeOps?.length

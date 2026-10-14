@@ -3,6 +3,7 @@ import { estimateTurningTimes, DEFAULT_TURNING_CONFIG, type TurningProfile } fro
 import { calculateMachiningCosts } from './cncEstimator';
 import { DEFAULT_TURNING_TOOLS, DEFAULT_SHOP_SETTINGS, DEFAULT_CNC_SETTINGS } from '../constants';
 import { materialPropsFor } from './materials';
+import { MACHINE_CATALOG } from './machineSelection';
 
 /**
  * NO OPERATION IS ALL MOVES AND NO WAIT.
@@ -49,5 +50,23 @@ describe('the per-operation idle floor', () => {
       1, false, 0.25, DEFAULT_SHOP_SETTINGS);
     const planSec = c.plan!.setups.reduce((a, s) => a + s.seconds, 0);
     expect(planSec).toBeCloseTo(c.cycleTimeSec, 0);
+  });
+});
+
+describe('an unset floor is the default; 0 switches it off', () => {
+  const profile = housing;
+  const cost = (cnc: Record<string, unknown>) => calculateMachiningCosts(
+    { isTurned: true, materialName: 'Brass CZ121', volumeCm3: 21, profile, setups: 1, materialPricePerKg: 12 },
+    1, false, 0.25, { ...DEFAULT_SHOP_SETTINGS, cnc: { ...DEFAULT_CNC_SETTINGS, ...cnc } as never },
+    1, 0, [{ machine: (MACHINE_CATALOG as any)['nl-2000'], setups: 1 }]);
+
+  it('a settings object with the field missing behaves as the default', () => {
+    const { opIdleFloorSec: _drop, ...without } = DEFAULT_CNC_SETTINGS;
+    const missing = calculateMachiningCosts(
+      { isTurned: true, materialName: 'Brass CZ121', volumeCm3: 21, profile, setups: 1, materialPricePerKg: 12 },
+      1, false, 0.25, { ...DEFAULT_SHOP_SETTINGS, cnc: without as never },
+      1, 0, [{ machine: (MACHINE_CATALOG as any)['nl-2000'], setups: 1 }]);
+    expect(missing.cycleTimeSec).toBe(cost({}).cycleTimeSec);
+    expect(cost({ opIdleFloorSec: 0 }).cycleTimeSec).toBeLessThan(cost({}).cycleTimeSec);
   });
 });
