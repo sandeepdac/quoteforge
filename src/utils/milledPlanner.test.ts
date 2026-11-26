@@ -96,10 +96,12 @@ describe('milled plan reads like a CAM operation sheet', () => {
     expect(names).toContain('Rest roughing');
     expect(names).toContain('Wall finishing');
     expect(names).toContain('Floor finishing');
-    // No chamfer GEOMETRY in this profile, so the plan reserves an allowance and
-    // says so. Conical faces were invisible to the analyser until recently, and
-    // "there are holes, someone breaks the edges" was all it could honestly say.
-    expect(names).toContain('Chamfer / edge break (estimated)');
+    // No chamfer GEOMETRY in this profile, so the edges are broken by a real
+    // DEBURR operation — one lap round every hole mouth, through-hole exit and
+    // the outline — rather than the old "(estimated)" allowance, which was a
+    // slice carved out of wall finishing and so charged nothing at all.
+    expect(names).toContain('Deburr / edge break');
+    expect(names).not.toContain('Chamfer / edge break (estimated)');
   });
 
   it('groups work into the measured number of setups', () => {
@@ -156,6 +158,7 @@ describe('countersinks and chamfers come off the solid', () => {
     holeCount: 4, holeDiametersMm: [6, 6, 6, 6], maxDrillMm: 20,
     bossCount: 0, setups: 1, eff: 0.8,
     opCost: (sec: number) => sec / 60,
+    airCost: (sec: number) => sec / 60,
     toolChangeSec: 10,
     colors: { rough: '#1', finish: '#2', drill: '#3', deep: '#4', facing: '#5', turn: '#6' },
   };
@@ -183,11 +186,14 @@ describe('countersinks and chamfers come off the solid', () => {
     const nameOf = (p: typeof withOut) => p.setups.flatMap((s) => s.operations).map((o) => o.name);
     // Measured → named plainly; unmeasured → labelled as the allowance it is.
     expect(nameOf(withCham)).toContain('Chamfer / edge break');
-    expect(nameOf(withOut)).toContain('Chamfer / edge break (estimated)');
-    // The allowance is carved out of wall finishing; the measured one is not.
+    // Without measurements there is no "(estimated)" allowance any more.
+    expect(nameOf(withOut)).not.toContain('Chamfer / edge break (estimated)');
+    // AND BREAKING EDGES NEVER TAKES TIME OUT OF FINISHING. The old allowance
+    // carved its seconds out of wall finishing to conserve the total; the
+    // finish budget is now the same whatever happens to the edges.
     const wall = (p: typeof withOut) =>
       p.setups.flatMap((s) => s.operations).find((o) => o.name === 'Wall finishing')!.seconds;
-    expect(wall(withCham)).toBeGreaterThan(wall(withOut));
+    expect(wall(withCham)).toBeCloseTo(wall(withOut), 9);
   });
 
   it('does not invent a countersink when the solid has none', () => {

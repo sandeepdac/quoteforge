@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateTurningTimes, DEFAULT_TURNING_CONFIG, type TurningProfile } from './turning';
+import { estimateTurningTimes, DEFAULT_TURNING_CONFIG, indexRetractSec, type TurningProfile } from './turning';
 import { DEFAULT_TURNING_TOOLS } from '../constants';
 import { materialPropsFor } from './materials';
 import { threadFromCallout } from './drilling';
@@ -64,7 +64,9 @@ describe('deburring is an operation, not an afterthought', () => {
     const t = threadFromCallout('G1/4', 12, 1)!;
     const plain = estimateTurningTimes(housing, brass, 55, cfg);
     const threaded = estimateTurningTimes({ ...housing, threads: [t] }, brass, 55, cfg);
-    expect(threaded.deburrSec).toBeGreaterThan(plain.deburrSec);
+    // A screwcut thread's edge is its own operation, on the threading tool.
+    expect(threaded.threadDeburrSec).toBeGreaterThan(plain.threadDeburrSec);
+    expect(plain.threadDeburrSec).toBe(0);
   });
 
   it('it is dominated by reaching the edge, not by the chamfer', () => {
@@ -78,10 +80,13 @@ describe('deburring is an operation, not an afterthought', () => {
     expect(three.deburrSec / one.deburrSec).toBeLessThan(4);
   });
 
-  it('it is counted in cutting time, and the named operations still sum', () => {
+  it('it is counted in the cycle, and the named operations still sum', () => {
     const t = estimateTurningTimes(housing, brass, 55, cfg);
     const named = t.spotSec + t.deburrSec + t.facingSec + t.roughSec + t.finishSec + t.drillSec
       + t.boreSec + t.grooveSec + t.threadSec + t.partingSec + t.crossSec + t.tapSec;
-    expect(named).toBeCloseTo(t.cuttingSec, 6);
+    // Each named figure is that operation's own total; the turret indexes are
+    // the remainder, charged once per actual change.
+    const changeSec = cfg.toolChangeSec + indexRetractSec(cfg.opApproach);
+    expect(named + t.toolChangeCount * changeSec).toBeCloseTo(t.cuttingSec + t.idleSec, 6);
   });
 });

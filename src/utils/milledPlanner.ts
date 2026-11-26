@@ -35,7 +35,33 @@ export interface MilledPlanInput {
   /** Extra small-tool detail seconds split out of rough/finish (deepMult − 1). */
   roughComplexSec: number;
   finishComplexSec: number;
+  /**
+   * Walls and floors timed SEPARATELY, each with the cutter that finishes it.
+   * Absent, finishBaseSec is split 60/40 by area as before.
+   */
+  finishWallSec?: number;
+  finishFloorSec?: number;
+  wallRate?: number;
+  floorRate?: number;
   drillSec: number;
+  /**
+   * THE IDLE THAT BELONGS TO AN OPERATION, separate from its cutting.
+   *
+   * Drilling, spotting, driven-tool cross features and tapping all spend most
+   * of their time NOT cutting: positioning to each hole, peck retracts, the
+   * spindle indexing round to an off-axis feature, a tap reversing out. That
+   * time was summed into the cutting seconds above, so it was multiplied by the
+   * realisation stack and divided by efficiency as though it were metal being
+   * removed — on a part with twenty small cross features, most of what the plan
+   * called "cutting" was the spindle indexing. It is machine time, taken as
+   * specified, and charged in the operation's idle column.
+   */
+  drillIdleSec?: number;
+  /** Spotting, separately: its own tool, its own row — as on a cycle sheet. */
+  spotSec?: number;
+  spotIdleSec?: number;
+  crossIdleSec?: number;
+  tapIdleSec?: number;
   /** Measured hole depths, index-matched to holeDiametersMm. */
   holeDepthsMm?: number[];
   /** Seconds of OFF-AXIS (driven-tool) work, and the features it covers. */
@@ -63,6 +89,17 @@ export interface MilledPlanInput {
    *  looked for, which was the situation until cones were inspected at all. */
   countersinkSec?: number;
   chamferSec?: number;
+  /** Deburring every edge a cutter leaves — see milledEstimator. Additive. */
+  deburrSec?: number;
+  deburrIdleSec?: number;
+  deburrEdges?: number;
+  /** Parting a bar-fed part off the bar, and the bar it comes off. */
+  partoffSec?: number;
+  /** Bar stop / bar feed per part (s) — machine idle, only on bar-fed routes. */
+  barStopSec?: number;
+  /** The least idle one operation carries (s). */
+  idleFloorSec?: number;
+  partoffBarDiaMm?: number;
   countersinks?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
   chamfers?: Array<{ diameterMm: number; includedDeg: number; depthMm: number; count?: number }>;
   setups: number;
@@ -73,8 +110,10 @@ export interface MilledPlanInput {
    */
   angledSetups?: number;
   eff: number;
-  /** theoretical sec → machine cost. */
+  /** theoretical CUTTING sec → machine cost (efficiency applied). */
   opCost: (sec: number) => number;
+  /** IDLE sec → machine cost. Machine-spec time, so no efficiency is applied. */
+  airCost: (sec: number) => number;
   toolChangeSec: number;
   /** Rapid-motion allowance relative to cutting time; excludes tool changes. */
   /**
@@ -97,10 +136,17 @@ interface DraftOp {
   name: string;
   tool: string;
   sec: number; // theoretical
+  /** Machine idle intrinsic to this operation (pecks, index, positioning). */
+  idleSec?: number;
   driver: string;
   color: string;
   setup: number; // 1-based
+  /** Not a tool operation: no tool change and no approach move (a bar stop). */
+  noTool?: boolean;
 }
+
+/** The pseudo-tool a bar stop row carries; it is not counted as a tool. */
+export const BAR_STOP_TOOL = 'Bar stop';
 
 const r1 = (v: number) => Math.round(v * 10) / 10;
 const toolName = (t: MillingTool | undefined, fallback: string) => (t ? t.description : fallback);
@@ -110,6 +156,8 @@ interface SubOp {
   name: string;
   tool: string;
   sec: number;
+  /** Machine idle intrinsic to this operation — see MilledPlanInput.drillIdleSec. */
+  idleSec?: number;
   driver: string;
   color: string;
   /**
@@ -129,7 +177,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   const face = faceMill(tools);
   const rough = roughingTool(tools, inp.minPlaneDimMm);
   const wallFin = wallFinisher(tools, rough);
-  const floorFin = floorFinisher(tools);
+  const floorFin = floorFinisher(tools, rough);
   const detail = detailTool(tools);
   const restRough = restRoughTool(tools, rough);
   const cham = chamferTool(tools);
@@ -189,15 +237,15 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   addSub({
     name: 'Wall finishing',
     tool: toolName(wallFin, 'Finisher'),
-    sec: inp.finishBaseSec * 0.6,
-    driver: `${r1(inp.finishAreaCm2 * 0.6)} cm² walls @ ${r1(inp.finishRate)} cm²/min`,
+    sec: inp.finishWallSec ?? inp.finishBaseSec * 0.6,
+    driver: `${r1(inp.finishAreaCm2 * 0.6)} cm² walls @ ${r1(inp.wallRate ?? inp.finishRate)} cm²/min`,
     color: c.finish,
   });
   addSub({
     name: 'Floor finishing',
     tool: toolName(floorFin, 'Ball finisher'),
-    sec: inp.finishBaseSec * 0.4,
-    driver: `${r1(inp.finishAreaCm2 * 0.4)} cm² floors @ ${r1(inp.finishRate)} cm²/min`,
+    sec: inp.finishFloorSec ?? inp.finishBaseSec * 0.4,
+    driver: `${r1(inp.finishAreaCm2 * 0.4)} cm² floors @ ${r1(inp.floorRate ?? inp.finishRate)} cm²/min`,
     color: c.finish,
   });
   addSub({
@@ -224,13 +272,30 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   };
   const weights = groups.map(weightOf);
   const totalWeight = weights.reduce((a, w) => a + w, 0) || totalHoles;
+  // SPOTTING, before any drill goes in — a separate tool and a separate row.
+  // It was computed by the estimator and never handed to the plan, and the plan
+  // is what sets the cycle time, so on a milled part it was never charged.
+  //
+  // NOT a substantive operation for setup-sizing, and not round-robined: you
+  // spot and drill in the same clamping, so it is placed in front of the first
+  // drill once the setups are assigned (below), never in a setup of its own.
+  const spotOp: Omit<DraftOp, 'setup'> | null = (inp.spotSec ?? 0) > 0 ? {
+    name: 'Spot drilling',
+    tool: 'Spot drill',
+    sec: inp.spotSec ?? 0,
+    idleSec: inp.spotIdleSec ?? 0,
+    driver: `spot ${totalHoles} hole${totalHoles === 1 ? '' : 's'} so the drills start on position`,
+    color: c.drill,
+  } : null;
   for (const [i, g] of groups.entries()) {
     const secShare = inp.drillSec * (weights[i] / totalWeight);
+    const idleShare = (inp.drillIdleSec ?? 0) * (weights[i] / totalWeight);
     if (g.interpolate) {
       addSub({
         name: `Bore / interpolate ⌀${r1(g.drillMm)}`,
         tool: toolName(rough, 'End mill (helical)'),
         sec: secShare,
+        idleSec: idleShare,
         driver: `${g.count} hole${g.count === 1 ? '' : 's'} too big to drill — milled`,
         color: c.drill,
       });
@@ -239,6 +304,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
         name: `Drilling ⌀${r1(g.drillMm)}`,
         tool: `⌀${r1(g.drillMm)} mm drill`,
         sec: secShare,
+        idleSec: idleShare,
         driver: `${g.count} hole${g.count === 1 ? '' : 's'}`,
         color: c.drill,
       });
@@ -254,6 +320,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
       name: 'Off-axis features (driven tool)',
       tool: 'Driven tool (live tooling)',
       sec: inp.crossSec ?? 0,
+      idleSec: inp.crossIdleSec ?? 0,
       driver: feats.length
         ? `${feats.length} feature${feats.length === 1 ? '' : 's'} off the turning axis — `
           + feats.slice(0, 3).map((f) => `⌀${r1(f.diameterMm)}×${r1(f.lengthMm)}`).join(', ')
@@ -270,6 +337,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
       name: 'Tapping',
       tool: th.length ? `Tap ${th[0].callout}` : 'Tap',
       sec: inp.tapSec ?? 0,
+      idleSec: inp.tapIdleSec ?? 0,
       driver: th.map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ') || 'threads',
       color: c.thread ?? c.drill,
     });
@@ -308,20 +376,18 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
       driver: `${nCham} measured chamfer${nCham === 1 ? '' : 's'} — ${chamfs.map((x) => `⌀${r1(x.diameterMm)}@${Math.round(x.includedDeg)}°`).join(', ')}`,
       color: c.facing,
     };
-  } else if ((inp.holeCount > 0 || inp.bossCount > 0) && cham) {
-    const chamSec = Math.min(inp.finishBaseSec * 0.08, 30);
-    if (chamSec > 0) {
-      const wall = subs.find((o) => o.name === 'Wall finishing');
-      if (wall) wall.sec = Math.max(0, wall.sec - chamSec); // conserve total time
-      chamfer = {
-        name: 'Chamfer / edge break (estimated)',
-        tool: toolName(cham, 'Chamfer mill'),
-        sec: chamSec,
-        driver: `${inp.holeCount} holes + edges — no chamfer geometry found, allowance only`,
-        color: c.facing,
-      };
-    }
   }
+  // The time-conserving "Chamfer / edge break (estimated)" placeholder that
+  // used to sit here carved 8% out of wall finishing and so charged nothing for
+  // breaking edges. It is replaced by a real, additive deburr operation.
+  const deburr: SubOp | null = (inp.deburrSec ?? 0) > 0 ? {
+    name: 'Deburr / edge break',
+    tool: toolName(cham, 'Chamfer mill'),
+    sec: inp.deburrSec ?? 0,
+    idleSec: inp.deburrIdleSec ?? 0,
+    driver: `trace every edge a cutter left — ${inp.deburrEdges ?? 0} hole and feature edge${(inp.deburrEdges ?? 0) === 1 ? '' : 's'} plus the outline`,
+    color: c.facing,
+  } : null;
 
   // --- Size the setup count to the real work -------------------------------
   // A 3-axis part is re-clamped once per access direction, but the plan must
@@ -329,7 +395,9 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   // with only a facing skim is a phantom (part 12630 showed 6 setups, 4 of them
   // facing-only). Cap the requested count at the number of substantive ops.
   const requested = Math.max(1, Math.round(inp.setups));
-  const fillable = Math.max(1, subs.length + (chamfer ? 1 : 0));
+  // The deburr stands where the estimated edge break stood, so it counts the
+  // same way and setup counts do not move because of it.
+  const fillable = Math.max(1, subs.length + (chamfer || deburr ? 1 : 0));
   // ...but an ANGLED setup is not a phantom. It is forced by workholding — you
   // must re-fixture (or index a 4th/5th axis) to reach a compound-angle hole,
   // even if that setup carries a single short operation. Merging those away
@@ -353,6 +421,12 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
     slot += 1;
   }
   if (chamfer) ops.push({ ...chamfer, setup: setups }); // edge-break on the last setup
+  if (deburr) ops.push({ ...deburr, setup: setups });   // deburr after the last cut
+  if (spotOp) {
+    const firstDrill = ops.findIndex((o) => /^(Drilling|Bore \/ interpolate)/.test(o.name));
+    if (firstDrill >= 0) ops.splice(firstDrill, 0, { ...spotOp, setup: ops[firstDrill].setup });
+    else ops.push({ ...spotOp, setup: 1 });
+  }
 
   // --- Facing (once per real setup — you skim each re-clamped face) ---------
   const facePerSetup = inp.facingSec / setups;
@@ -374,24 +448,79 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
     }
   }
 
+  // --- Bar stop: the first thing that happens on a bar-fed part --------------
+  // Both of Lance's cycle sheets open with the same row: "bar stop process, pull
+  // bar to stop, close door", 30 s, no cutting. A milled part fed from bar has it
+  // too, and it had no row at all.
+  if ((inp.barStopSec ?? 0) > 0) {
+    ops.unshift({
+      name: 'Bar stop / feed',
+      tool: BAR_STOP_TOOL,
+      sec: 0,
+      idleSec: inp.barStopSec ?? 0,
+      driver: 'pull the bar to the stop and close the door',
+      color: c.facing,
+      setup: 1,
+      noTool: true,
+    });
+  }
+
+  // --- Part-off: the last thing that happens on the bar ----------------------
+  // On a bar-fed route the part comes off the bar at the end of the first
+  // holding; anything after that is a second op on the cut-off part.
+  if ((inp.partoffSec ?? 0) > 0) {
+    ops.push({
+      name: 'Part-off',
+      tool: 'Parting blade',
+      sec: inp.partoffSec ?? 0,
+      driver: `cut the part off the ⌀${r1(inp.partoffBarDiaMm ?? 0)} bar`,
+      color: c.facing,
+      setup: 1,
+    });
+  }
+
   // --- Group into setups ----------------------------------------------------
   const planSetups: PlanSetup[] = [];
+  let floorExtraSec = 0;
   for (let s = 1; s <= setups; s++) {
     const mine = ops.filter((o) => o.setup === s);
-    const distinctTools = new Set(mine.map((o) => o.tool)).size;
-    const changeSec = distinctTools * inp.toolChangeSec;
-    const operations: PlanOperation[] = mine.map((o) => ({
-      name: o.name,
-      tool: o.tool,
-      seconds: o.sec / inp.eff,
-      cost: inp.opCost(o.sec),
-      driver: o.driver,
-      color: o.color,
-    }));
-    // One approach per operation, not a percentage of the cutting.
-    const rapidSec = operations.length * (inp.approachSecPerOp ?? 0);
-    const seconds = operations.reduce((a, o) => a + o.seconds, 0) + (changeSec + rapidSec) / inp.eff;
-    const cost = operations.reduce((a, o) => a + o.cost, 0) + inp.opCost(changeSec + rapidSec);
+    const distinctTools = new Set(mine.filter((o) => !o.noTool).map((o) => o.tool)).size;
+    // EVERY OPERATION CARRIES ITS OWN IDLE, as on a cycle sheet and as the
+    // turning side now does. The ATC change and the approach used to be summed
+    // into one per-setup lump added after the rows, so the plan showed six
+    // operations and a total that none of them accounted for.
+    //
+    // The change is charged on a tool's FIRST appearance in the setup, which is
+    // the same count the lump used (distinct tools × the change), so this moves
+    // the seconds onto the rows without inventing or losing any.
+    const seen = new Set<string>();
+    const operations: PlanOperation[] = mine.map((o) => {
+      const firstUse = !o.noTool && !seen.has(o.tool);
+      seen.add(o.tool);
+      const counted = o.noTool
+        ? (o.idleSec ?? 0)
+        : (inp.approachSecPerOp ?? 0) + (firstUse ? inp.toolChangeSec : 0) + (o.idleSec ?? 0);
+      // The shop's floor on one operation's idle; a bar stop is not an operation.
+      const idleSec = o.noTool ? counted : Math.max(counted, inp.idleFloorSec ?? 0);
+      floorExtraSec += idleSec - counted;
+      // Efficiency scales CUTTING only. Idle here is the ATC's own change time
+      // and a rapid at the machine's own traverse rate — specifications, not
+      // estimates, and nothing is gained by asserting the machine is slower
+      // than it is built to be. Same rule as cncEstimator.
+      return {
+        name: o.name,
+        tool: o.tool,
+        seconds: o.sec / inp.eff + idleSec,
+        cuttingSeconds: o.sec / inp.eff,
+        idleSeconds: idleSec,
+        cost: inp.opCost(o.sec) + inp.airCost(idleSec),
+        driver: `${o.driver} · ${r1(o.sec / inp.eff)}s cutting + ${r1(idleSec)}s idle`
+          + (o.noTool ? '' : firstUse ? ' (idle includes the tool change)' : ' · tool already in the spindle'),
+        color: o.color,
+      };
+    });
+    const seconds = operations.reduce((a, o) => a + o.seconds, 0);
+    const cost = operations.reduce((a, o) => a + o.cost, 0);
     planSetups.push({
       index: s,
       // "Op", not "Setup": this group's time is CUTTING time, and the quote
@@ -408,6 +537,7 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
   const agg = new Map<string, { name: string; ops: number; seconds: number }>();
   for (const s of planSetups) {
     for (const o of s.operations) {
+      if (o.tool === BAR_STOP_TOOL) continue; // a handling step, not a tool
       const cur = agg.get(o.tool) ?? { name: o.tool, ops: 0, seconds: 0 };
       cur.ops += 1;
       cur.seconds += o.seconds;
@@ -420,5 +550,6 @@ export function buildMilledPlan(inp: MilledPlanInput): MachiningPlan {
     tools: [...agg.values()].sort((a, b) => b.seconds - a.seconds),
     totalSeconds: planSetups.reduce((a, s) => a + s.seconds, 0),
     totalCost: planSetups.reduce((a, s) => a + s.cost, 0),
+    idleFloorSec: floorExtraSec,
   };
 }

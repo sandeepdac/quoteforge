@@ -111,6 +111,13 @@ export interface MachineSpec {
    */
   hourlyRate: number;
   /**
+   * What Lance books per HOUR for SETTING this machine (not running it): £40 on
+   * the Mori NL, the VF-2 and the mini mill, £50 on the NTX and the sliding
+   * heads, read off the setup rate column of his routers. Unset where no router
+   * of his names the machine; the shop's own setup rate applies there.
+   */
+  setupRatePerHr?: number;
+  /**
    * Relative charge-out vs the reference spindle rate — DERIVED from hourlyRate,
    * never hand-set. Kept because the cost models multiply the shop's base rate
    * by it; changing hourlyRate is what moves the quote.
@@ -143,6 +150,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 240, // assumed: same class as the SR-20, untested
     accuracyMm: 0.01, rapidTraverseMmPerMin: 24000, // assumed: same class as the Star sliding heads, untested
     hourlyRate: 48,
+    setupRatePerHr: 50, // OBSERVED on Lance's routers
     note: 'Small bar-fed precision turning to ⌀10 bar (⌀45 turned). Driven tools: profiles, drilling, tapping, thread whirling.',
   }),
   'star-sr20': spec({
@@ -151,6 +159,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 240, // OBSERVED 240 (029068)
     accuracyMm: 0.005, rapidTraverseMmPerMin: 24000, // assumed from the SR-32 specification, same series
     hourlyRate: 52,
+    setupRatePerHr: 50, // OBSERVED on Lance's routers
     note: 'Bar-fed to ⌀20 × 350 mm. Tightest tolerance on the floor (0.005 mm). Driven tools + thread whirling.',
   }),
   'star-sr32': spec({
@@ -159,6 +168,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 900, // OBSERVED 900 (OLY014_01297) - 3.75x the SR-20, unexplained
     accuracyMm: 0.01, rapidTraverseMmPerMin: 24000, // SOURCED: Star SR-32J, 24 m/min
     hourlyRate: 58,
+    setupRatePerHr: 50, // OBSERVED on Lance's routers
     note: 'Bar-fed to ⌀32 × 310 mm. Driven tools: profiles, drilling, tapping, thread whirling.',
   }),
   'ntx-1000': spec({
@@ -167,6 +177,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 900, // OBSERVED 600 and 1200, mean 900 - the 2x spread is unmodelled
     accuracyMm: 0.01, rapidTraverseMmPerMin: 40000, // SOURCED: DMG Mori NTX 1000, X/Y/Z 40/40/50 m/min - the slowest axis
     hourlyRate: 135,
+    setupRatePerHr: 50, // OBSERVED on Lance's routers
     note: 'The only 5-axis machine on the floor: B-axis milling spindle, turning and milling in one clamp. Also mills PRISMATIC work done-complete in soft jaws — the reason a compound-angle part belongs here and not on a VMC. Premium rate, repaid by eliminating setups.',
   }),
   'nl-2000': spec({
@@ -175,6 +186,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 210, // OBSERVED 180 and 240 (031169, 035838)
     accuracyMm: 0.01, rapidTraverseMmPerMin: 30000, // assumed: large-capacity turning centre of this class
     hourlyRate: 88,
+    setupRatePerHr: 40, // OBSERVED on Lance's routers
     note: 'Large-capacity mill-turn: ⌀65 bar, but chucks to ⌀430 × 450 mm. Driven tools with Y ±70 for off-axis work. One rotary axis, so a compound angle still needs fixturing.',
   }),
   'hi-turner': spec({
@@ -191,6 +203,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 240, // assumed as a FIRST op; observed 60 as a second op (035838)
     rapidTraverseMmPerMin: 10200, // SOURCED: Haas VF-2, 400 ipm standard (20.3 m/min with the XRT option)
     hourlyRate: 55,
+    setupRatePerHr: 40, // OBSERVED on Lance's routers
     note: 'Vertical machining centre with a 4th axis — indexes around ONE axis to reach the faces about it without a re-fixture. A compound angle needs two rotations, so it still costs a tilted fixture here.',
   }),
   sabre: spec({
@@ -207,6 +220,7 @@ export const MACHINE_CATALOG: Record<MachineId, MachineSpec> = {
     setupCharacterMin: 405, // OBSERVED 210 and 600 as SECOND ops, mean 405
     accuracyMm: 0.01, rapidTraverseMmPerMin: 20000, // assumed: small high-speed machining centre
     hourlyRate: 40,
+    setupRatePerHr: 40, // OBSERVED on Lance's routers
     note: 'Small machining centre with ⌀10–60 collet / bar workholding, billet to 370 mm. CONFIRM its exact classification with the shop.',
   }),
 };
@@ -381,6 +395,11 @@ export interface MachineRecommendation {
   stockForm: StockForm;
   /** Round bar ⌀ (mm) when the route runs from bar — else undefined. */
   barDiameterMm?: number;
+  /**
+   * The bar is the part's own square/rectangular section (bought as such), not a
+   * round bar enclosing it — so the stock is not hogged down from a circle.
+   */
+  prismaticBar?: boolean;
   /** Setups the chosen route actually needs. */
   effectiveSetups?: number;
   /**
@@ -436,6 +455,24 @@ function crossSection(dims: { x: number; y: number; z: number }) {
     lengthMm: best.axis,
   };
 }
+
+/**
+ * A SMALL PRISMATIC PART IS BAR WORK TOO — a HYPOTHESIS, from one part.
+ *
+ * Lance's Hollow Arm is a milled bulkhead, 9.5 mm square, and his sheet opens
+ * with "bar stop process — pull bar to stop" and ends with a slitting-saw cut
+ * off: it is made from bar on the NTX, not from a sawn billet held in soft jaws.
+ * Nobody saws and re-fixtures 10 mm cubes when bar of that section is the
+ * standard stock and the machine feeds it. The router's "round enough" test is
+ * about turning, and rejects it (it fills 19% of its cylinder), so it was
+ * priced as billet work with no cut-off.
+ *
+ * The mechanism is ordinary; the 16 mm LIMIT is not derived. It is the size
+ * below which a billet is not a sensible stock form, chosen with one part in
+ * hand, and the next small prismatic quote that was made from a sawn block
+ * disproves it.
+ */
+export const SMALL_PART_BAR_MAX_SECTION_MM = 16;
 
 /** How turnable is this solid, and what stock would it need? */
 function turnFit(input: MachineSelectionInput) {
@@ -702,6 +739,7 @@ export function buildRoute(
   dims?: { x: number; y: number; z: number },
   owned?: MachineId[],
   stockForm?: StockForm,
+  prismaticBar?: boolean,
 ): MachineRoute {
   const first: RouteOp = {
     machine: primary.id, machineName: primary.name, role: 'primary', setups: 1,
@@ -724,7 +762,8 @@ export function buildRoute(
   // is cheaper to do it on a mill. That is precisely Lance's 035838 — the Mori
   // for the bulk, then the VF2 to face to length and deburr.
   const canTurnAround =
-    (primary.kind === 'turn-mill' || primary.kind === 'sliding-head') && stockForm === 'bar';
+    (primary.kind === 'turn-mill' || primary.kind === 'sliding-head') && stockForm === 'bar'
+    && !prismaticBar;
   const pool = (owned ?? (Object.keys(MACHINE_CATALOG) as MachineId[])).map((id) => MACHINE_CATALOG[id]);
   const secondOpMill = pool
     .filter((m) => m.kind === 'mill' && fitsEnvelope(m, dims))
@@ -753,7 +792,7 @@ export const SECOND_OP_SETUP_FRACTION = 0.5;
 export function selectMachine(input: MachineSelectionInput): MachineRecommendation {
   const rec = input.isTurned ? selectTurningMachine(input) : selectMilledPartMachine(input);
   const spec = MACHINE_CATALOG[rec.recommended];
-  const machineRoute = buildRoute(spec, rec.effectiveSetups ?? 1, input.partDimsMm, input.ownedMachines, rec.stockForm);
+  const machineRoute = buildRoute(spec, rec.effectiveSetups ?? 1, input.partDimsMm, input.ownedMachines, rec.stockForm, rec.prismaticBar);
   return { ...rec, machineRoute };
 }
 
@@ -878,6 +917,8 @@ interface Offer {
   route: MachiningRoute;
   stockForm: StockForm;
   barDiameterMm?: number;
+  /** Bar is the part's own (square/rectangular) section, not a round that encloses it. */
+  prismaticBar?: boolean;
   setups: number;
   setupReason: string;
   /** Why this machine, in the estimator's language. */
@@ -965,6 +1006,10 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
     const chuckOk = !!fit && fit.chuckSuitable && hasTurnedFeatures && m.liveTooling
       && m.kind !== 'sliding-head'
       && fit.containDiaMm <= (m.maxChuckDiaMm ?? 0);
+    // A small prismatic section is bought as bar and fed — see the constant.
+    const smallBarOk = !!fit && m.kind === 'turn-mill' && m.liveTooling
+      && fit.containDiaMm <= SMALL_PART_BAR_MAX_SECTION_MM
+      && fit.barDiameterMm <= (m.maxBarDiaMm ?? 0);
     // Soft-jaw milling: the workholding limit is the chuck, not roundness.
     const gripOk = !!fit && fit.containDiaMm <= (m.maxChuckDiaMm ?? 0) && lenOk;
     // It only earns its rate as a milling machine if it can actually collapse
@@ -983,6 +1028,25 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
         ],
       });
       reason = `Round ⌀${r0(fit!.widthMm)} × ${r0(fit!.lengthMm)} mm → ⌀${fit!.barDiameterMm} bar within its ${m.maxBarDiaMm} mm capacity; turned and milled in one clamp.`;
+    } else if (smallBarOk && lenOk) {
+      // CUT OFF WITH A SAW, NOT PICKED OFF BY A SUB-SPINDLE. Lance's sheet for the
+      // Hollow Arm ends in a 50 mm slitting-saw cut-off, and his router has a
+      // second operation after it, on the mini mill ("M/C op 2", 600 min setup,
+      // 20 min cycle). A square part cannot be turned round by a spindle, so the
+      // back of it is a second holding on a mill.
+      const plan: MachineSetupPlan = {
+        setups: 2 + angled,
+        reason: 'Milled in the bar and cut off with a saw; a square part cannot be turned round by a sub-spindle, so its back is a second operation on a mill.',
+      };
+      offers.push({
+        machine: m, route: 'mill-turn', stockForm: 'bar', barDiameterMm: fit!.barDiameterMm, prismaticBar: true,
+        setups: plan.setups, setupReason: plan.reason, cost: price(m, plan),
+        reasons: [
+          `Small section (${r0(fit!.containDiaMm)} mm across) is bought as ⌀${fit!.barDiameterMm} bar and fed through the ${m.name} — bar stop, mill, cut off — not sawn into billets and re-fixtured.`,
+          `Milled with driven tools in the bar, then cut off: ${plan.reason}`,
+        ],
+      });
+      reason = `Small prismatic section (${r0(fit!.containDiaMm)} mm) → ⌀${fit!.barDiameterMm} bar within its ${m.maxBarDiaMm} mm capacity; milled and cut off.`;
     } else if (chuckOk && lenOk) {
       const plan = turnMillSetups(m, false, angled, faces);
       offers.push({
@@ -1100,18 +1164,24 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
   // machine, never away. Wrong, it over-quotes the hardest parts, which are the
   // ones we currently under-quote worst.
   const FINE_FEATURE_MM = 1.5;
-  const fine = (input.smallestFeatureMm ?? Infinity) < FINE_FEATURE_MM;
+  const smallest = input.smallestFeatureMm ?? Infinity;
+  const fine = smallest < FINE_FEATURE_MM;
   const fiveAxisOffer = ranked.find((o) => o.machine.axes >= 5 && o.machine.kind === 'turn-mill');
-  if (fine && fiveAxisOffer && fiveAxisOffer !== winner && winner.stockForm !== 'bar') {
+  const fineEnoughToMove = fine && (winner.stockForm !== 'bar' || winner.machine.kind === 'turn-mill');
+  if (fineEnoughToMove && fiveAxisOffer && fiveAxisOffer !== winner) {
     reasons.push(
-      `Smallest feature is ⌀${(input.smallestFeatureMm ?? 0).toFixed(2)} mm. The ${winner.machine.name} is cheaper per part, but a cutter that size needs the spindle speed and rigidity of the ${fiveAxisOffer.machine.name} — CONFIRM this: the size threshold behind it is calibrated on only two jobs.`
+      `Smallest feature is ⌀${smallest.toFixed(2)} mm. The ${winner.machine.name} is cheaper per part, but a cutter that size needs the spindle speed and rigidity of the ${fiveAxisOffer.machine.name} — CONFIRM this: the size threshold behind it is calibrated on only a few jobs.`
     );
     winner = fiveAxisOffer;
   }
 
   const TURN_ROUTE_TOLERANCE = 1.5;
   const turnOffer = ranked.find((o) => o.route === 'mill-turn');
-  if (turnOffer && turnOffer !== winner && turnOffer.cost.totalPerPart <= winner.cost.totalPerPart * TURN_ROUTE_TOLERANCE) {
+  // Only a MILLING winner is nudged to a spindle route. A winner that already is
+  // one (the 5-axis chosen for fine features above) is not undone for a cheaper
+  // turn-mill: that put the Hollow Arm on the Mori where Lance runs it on the NTX.
+  if (turnOffer && turnOffer !== winner && winner.route !== 'mill-turn'
+    && turnOffer.cost.totalPerPart <= winner.cost.totalPerPart * TURN_ROUTE_TOLERANCE) {
     reasons.push(
       `Costed against the ${winner.machine.name} at ${winner.cost.totalPerPart.toFixed(2)}/part, but routed to the ${turnOffer.machine.name} at ${turnOffer.cost.totalPerPart.toFixed(2)}: this part has coaxial features a spindle TURNS, which the comparison above prices as milling. Turning them is several times faster, and the round part chucks far more easily than it clamps.`
     );
@@ -1141,6 +1211,7 @@ function selectMilledPartMachine(input: MachineSelectionInput): MachineRecommend
     route: winner.route,
     stockForm: winner.stockForm,
     barDiameterMm: winner.barDiameterMm,
+    prismaticBar: winner.prismaticBar,
     effectiveSetups: winner.setups,
     bakeOff: ranked.map((o) => o.cost),
     bakeOffNote,

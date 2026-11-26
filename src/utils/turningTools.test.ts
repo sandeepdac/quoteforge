@@ -4,12 +4,16 @@ import { countToolSelections, resolveTurningTool, seedTurningInventory } from '.
 import { calculateMachiningCosts, type MachiningInput } from './cncEstimator';
 import { generateTurningToolpath } from './toolpath';
 import { materialPropsFor } from './materials';
+import { indexRetractSec } from './turning';
 import type { ShopTool } from '../types';
 
 const input: MachiningInput = { isTurned: true, materialName: 'Brass CZ121', volumeCm3: 8, setups: 1,
   materialPricePerKg: 9, profile: { odMm: 20, lengthMm: 40, boreDiaMm: 8, boreDepthMm: 30,
     faceCount: 1, grooveCount: 0, threadCount: 0, crossFeatures: false } };
-const settings = { ...DEFAULT_SHOP_SETTINGS, cnc: { ...DEFAULT_CNC_SETTINGS, machineRatePerMin: 1, efficiencyFactor: 1, toolChangeSec: 8 } };
+const settings = { ...DEFAULT_SHOP_SETTINGS, cnc: { ...DEFAULT_CNC_SETTINGS, machineRatePerMin: 1, efficiencyFactor: 1, toolChangeSec: 8,
+  // These tests isolate what ONE tool change costs; a floor on every row's idle
+  // would swallow it by design (see turning.idleFloor.test.ts).
+  opIdleFloorSec: 0 } };
 
 describe('turning assembly identity and migration', () => {
   it('converts shared legacy rows to one unconfirmed assembly without mutating them', () => {
@@ -56,18 +60,39 @@ describe('tool library drives turning costing and the plan', () => {
     // Each +2 on the original: a spot drill and a deburr tool, both distinct.
     expect(shared.plan!.tools).toHaveLength(7);
     expect(separate.plan!.tools).toHaveLength(8);
-    expect(separate.machineCost - shared.machineCost).toBeCloseTo(8 / 60, 8);
+    // One more selection: the turret's index PLUS the trip out to where it is
+    // safe to index and back (indexRetractSec), charged at the machine rate.
+    const changeSec = settings.cnc.toolChangeSec + indexRetractSec();
+    expect(separate.machineCost - shared.machineCost).toBeCloseTo(changeSec / 60, 8);
     expect(separate.setupTimeMin - shared.setupTimeMin).toBeCloseTo(settings.cnc.setupTimePerToolMin);
-    expect(separate.plan!.setups[0].operations.map(o => o.seconds)).toEqual(shared.plan!.setups[0].operations.map(o => o.seconds));
+    // NOT CUTTING TIME — and now the plan says exactly where the extra second
+    // went. The turret index is charged to the operation that calls for it, so
+    // giving roughing its own station leaves every row's CUTTING seconds
+    // untouched and adds one change to the IDLE of the row that changed tool.
+    const cutOf = (c: typeof shared) =>
+      c.plan!.setups[0].operations.map(o => o.cuttingSeconds);
+    expect(cutOf(separate)).toEqual(cutOf(shared));
+    const idle = (c: typeof shared) =>
+      c.plan!.setups[0].operations.reduce((s, o) => s + (o.idleSeconds ?? 0), 0);
+    expect(idle(separate) - idle(shared)).toBeCloseTo(changeSec, 8);
   });
   it.each([1, .8])('reconciles all machine seconds and costs at efficiency %s', efficiencyFactor => {
     const c = calculateMachiningCosts(input, 15, false, .25, { ...settings, cnc: { ...settings.cnc, efficiencyFactor, feedrateRatioPercent: 60 } });
     expect(c.plan!.totalCost).toBeCloseTo(c.machineCost, 8);
     expect(Math.round(c.plan!.totalSeconds)).toBe(c.cycleTimeSec);
+    // ONE non-cutting row left, not three. The turret indexes and the rapids
+    // used to be swept into 'noncut' and 'rapids' at the bottom; they are now
+    // inside the operations that cause them. Bar load stays, because it belongs
+    // to no operation.
     const noncut = c.lineItems.filter(l => ['noncut', 'rapids', 'loading'].includes(l.key));
-    expect(noncut).toHaveLength(3);
-    const cutting = c.plan!.setups.flatMap(s => s.operations).reduce((sum, o) => sum + o.seconds, 0);
-    expect(cutting + noncut.reduce((sum, l) => sum + l.seconds!, 0)).toBeCloseTo(c.plan!.totalSeconds, 8);
+    expect(noncut.map(l => l.key)).toEqual(['loading']);
+    const ops = c.plan!.setups.flatMap(s => s.operations);
+    const opSeconds = ops.reduce((sum, o) => sum + o.seconds, 0);
+    expect(opSeconds + noncut.reduce((sum, l) => sum + l.seconds!, 0)).toBeCloseTo(c.plan!.totalSeconds, 8);
+    // Every operation's two columns still add up to the row it sits on.
+    for (const o of ops) {
+      expect((o.cuttingSeconds ?? 0) + (o.idleSeconds ?? 0)).toBeCloseTo(o.seconds, 8);
+    }
     expect(c.lineItems.reduce((sum, l) => sum + l.value, 0)).toBeCloseTo(c.subtotal, 8);
     expect(noncut.find(l => l.key === 'loading')!.seconds).toBe(settings.cnc.barLoadSec);
   });

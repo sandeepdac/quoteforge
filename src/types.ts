@@ -1,5 +1,7 @@
 import type { ExtractedCadAnalysis } from './utils/cadAnalyzer';
 import type { MachineId } from './utils/machineSelection';
+import type { RealisationFactors } from './utils/realisation';
+import type { DrillSubstrate } from './utils/drilling';
 
 export type QuoteStatus = 'draft' | 'sent' | 'won' | 'lost' | 'expired';
 
@@ -152,6 +154,18 @@ export interface PlanOperation {
   tool: string;
   /** Estimated time for this op (s), after the efficiency factor. */
   seconds: number;
+  /**
+   * The cutting half of `seconds` — the tool actually removing metal.
+   *
+   * A cycle sheet has two columns per operation and totals them separately,
+   * because they are different quantities: cutting time is speed, feed and
+   * distance, while idle time is the turret, the rapid rate and the spindle
+   * settling. One combined number cannot be compared against a shop's own sheet
+   * and hides an operation that is fast on metal and slow on air.
+   */
+  cuttingSeconds?: number;
+  /** The rest of `seconds`: tool change, approach, retract, clearance, pecks. */
+  idleSeconds?: number;
   /** Machine cost of this op. */
   cost: number;
   /** What drives the time — the number this op was computed from. */
@@ -189,6 +203,8 @@ export interface MachiningPlan {
   tools: Array<{ name: string; ops: number; seconds: number }>;
   totalSeconds: number;
   totalCost: number;
+  /** Idle seconds added by the per-operation idle floor (milled plans). */
+  idleFloorSec?: number;
 }
 
 /**
@@ -217,6 +233,8 @@ export interface MachiningCosts {
   nearNetStock?: boolean;
   /** Standard bar diameter selected (mm). */
   barDiameterMm: number;
+  /** What the bar is, in words — "25.4 A/F hex bar" or "⌀36 bar". */
+  stockDescription?: string;
   /** Per-part cycle time (spindle + air), after the efficiency factor (s). */
   cycleTimeSec: number;
   /** Total setup time for the job (min), amortised over the batch. */
@@ -281,6 +299,17 @@ export interface ShopTool {
   description: string;
   /** Insert nose radius (mm), optional. */
   noseRadiusMm?: number;
+  /**
+   * What the cutter is made of, for drills and spot drills.
+   *
+   * HSS softens above about 600 C and carbide holds past 1000, so published
+   * speeds for the same hole in the same material differ by more than two to
+   * one. It belongs on the TOOL because that is where it is known: the material
+   * table cannot tell you what is in the turret.
+   *
+   * Absent means carbide, which is what the model always silently assumed.
+   */
+  substrate?: DrillSubstrate;
 }
 
 /** Shop inventory record, separate from the operations that use it. */
@@ -289,6 +318,8 @@ export interface TurningToolAssembly {
   description: string;
   station: string;
   noseRadiusMm?: number;
+  /** HSS / cobalt / carbide — see ShopTool.substrate. */
+  substrate?: DrillSubstrate;
   diameterMm?: number;
   cuttingLengthMm?: number;
   usableReachMm?: number;
@@ -326,10 +357,29 @@ export interface CncSettings {
    */
   setupBillingMode?: 'time' | 'flat' | 'both';
   /**
-   * Shop efficiency factor (0.6–1.0). actual_time = theoretical_time / factor.
-   * The single most important calibration parameter — expose it prominently.
+   * MACHINE-TIME allowance (0.6–1.0). actual_time = theoretical_time / factor.
+   *
+   * Applied to the WHOLE cycle, cutting and idle alike: feed-hold, a door left
+   * open, the operator stepping away, a chip cleared mid-cycle. It is about time
+   * the machine is not running, and it says nothing about how fast it cuts when
+   * it is.
+   *
+   * HOW IT DIFFERS FROM `realisation`. This one used to be the only place a shop
+   * could say "we are slower than the book", so it was carrying two jobs at once
+   * and could not do either defensibly. Cutting CONDITIONS — tool life, rigidity,
+   * one-off programming, material, interrupted cuts — are now a named stack in
+   * `realisation.ts` that applies to cutting only. Keep them apart: setting both
+   * to absorb the same shortfall charges it twice.
    */
   efficiencyFactor: number;
+  /**
+   * What handbook cutting data actually delivers in this shop, as named factors.
+   *
+   * See `realisation.ts` — each factor is separately arguable and carries its own
+   * reasoning, and the product applies to CUTTING time only. Absent means the
+   * job-shop defaults.
+   */
+  realisation?: Partial<RealisationFactors>;
   /**
    * Client-facing feedrate override (%), mirroring a CAM estimator's "Feedrate
    * Ratio". 100 = run cutting at the programmed feed (default); below 100 runs
@@ -343,6 +393,16 @@ export interface CncSettings {
   toolChangeSec: number;
   /** Load / unload / bar-feed time per part (s). */
   barLoadSec: number;
+  /**
+   * The least idle any single operation carries (s). Every operation on both of
+   * Lance's cycle sheets has at least 10 s of idle (min 10 on the NTX, 12 on the
+   * Mori) where the model's own moves came to 2-6 s: tool change, approach and
+   * the things around them that the model does not count move by move. An
+   * operation whose counted idle is above it keeps its own figure. The evidence
+   * is a Mori NL2000Y and an NTX 1000; a shop whose other machines idle less sets
+   * it lower, or 0 to switch it off.
+   */
+  opIdleFloorSec?: number;
   /** Consumable tooling allowance per operation. */
   toolingCostPerOp: number;
   /** Radial stock allowance over the OD before choosing the next standard bar (mm). */
@@ -360,6 +420,18 @@ export interface CncSettings {
   millMaxRpm?: number;
   /** Roughing end-mill ⌀ (mm) assumed for milling MRR. */
   millToolDiaMm?: number;
+  /**
+   * Axial depth of cut per pass for milling roughing, as a fraction of the
+   * cutter diameter. Default 0.2, the shop's own practice (a 3 mm
+   * end mill at 0.5 mm in 316; an 8 mm at 2 mm in aluminium). 0.8 is full flute depth.
+   */
+  millAxialFactor?: number;
+  /**
+   * Apply the realisation stack to MILLED work too. Off by default: milled parts
+   * are timed at the shop's programmed depth of cut, which already carries those
+   * conditions.
+   */
+  realisationOnMilling?: boolean;
   /** ATC tool-change time (s) — slower than a lathe turret index. */
   millToolChangeSec?: number;
   /**

@@ -45,6 +45,11 @@ export interface SetupDrivers {
   featureCount: number;
   /** One part's cutting time, minutes — what a proving run costs each time. */
   cycleMin: number;
+  /**
+   * The tightest tolerance on the drawing, as ± mm (undefined = general
+   * tolerance). It sets how many measure-and-correct rounds the first-off takes.
+   */
+  toleranceMm?: number;
 }
 
 /**
@@ -71,6 +76,27 @@ export const PER_FIXTURING_MIN = 30;
 export const PER_FEATURE_MIN = 12;
 /** Measure the first one, correct the offsets. Per fixturing. */
 export const FIRST_OFF_MIN = 30;
+
+/**
+ * Where a first part lands before any correction, as ± mm: tool offsets touched
+ * off by hand, a fresh workholding. A drawing at or looser than this is held in
+ * ONE measure-and-correct round (the FIRST_OFF_MIN above).
+ */
+export const UNCORRECTED_ERROR_MM = 0.1;
+
+/**
+ * HOW MANY MEASURE-AND-CORRECT ROUNDS A TOLERANCE TAKES.
+ *
+ * Each correction roughly halves the error left, so reaching ±t from a first part
+ * that lands within ±0.1 takes one round for anything at or above that and one
+ * more for each halving below it: ±0.05 two, ±0.025 three, ±0.01 four. The model
+ * proved every part in one round whatever the drawing said, which is why it read
+ * Lance's precision parts at x0.4 of his booked setup.
+ */
+export function provingRounds(toleranceMm?: number): number {
+  if (!Number.isFinite(toleranceMm) || (toleranceMm ?? 0) <= 0) return 1;
+  return 1 + Math.max(0, Math.ceil(Math.log2(UNCORRECTED_ERROR_MM / (toleranceMm as number)) - 1e-9));
+}
 /** How many parts you run before you trust the numbers. */
 export const PROVE_PARTS = 3;
 
@@ -103,7 +129,8 @@ export function deriveSetup(machine: MachineSpec, d: SetupDrivers): SetupBreakdo
   const toolingMin = tools * PER_TOOL_MIN;
   const workholdingMin = fix * PER_FIXTURING_MIN;
   const programmingMin = feats * PER_FEATURE_MIN;
-  const provingMin = fix * FIRST_OFF_MIN + PROVE_PARTS * cycle;
+  const rounds = provingRounds(d.toleranceMm);
+  const provingMin = fix * FIRST_OFF_MIN * rounds + PROVE_PARTS * cycle;
 
   const totalMin = Math.round(dialInMin + toolingMin + workholdingMin + programmingMin + provingMin);
   return {
@@ -115,7 +142,8 @@ export function deriveSetup(machine: MachineSpec, d: SetupDrivers): SetupBreakdo
       + `, ${toolingMin} for ${tools} tool${tools === 1 ? '' : 's'}`
       + `, ${workholdingMin} work-holding over ${fix} fixturing${fix === 1 ? '' : 's'}`
       + `, ${programmingMin} programming ${feats} feature${feats === 1 ? '' : 's'}`
-      + `, ${Math.round(provingMin)} proving the first one`,
+      + `, ${Math.round(provingMin)} proving the first one`
+      + (rounds > 1 ? ` (${rounds} measure-and-correct rounds for ±${d.toleranceMm} mm)` : ''),
   };
 }
 
@@ -152,7 +180,7 @@ export interface RouteSetupOp {
 export interface RouteSetupBreakdown {
   totalMin: number;
   /** Per op, in route order — so a quoter can see which machine owes what. */
-  perOp: { machineName: string; setups: number; breakdown: SetupBreakdown }[];
+  perOp: { machineName: string; machine: MachineSpec; setups: number; breakdown: SetupBreakdown }[];
   explanation: string;
 }
 
@@ -170,12 +198,14 @@ export function deriveRouteSetup(ops: RouteSetupOp[], d: RouteSetupDrivers): Rou
     const share = o.setups / totalSetups;
     return {
       machineName: o.machine.name,
+      machine: o.machine,
       setups: o.setups,
       breakdown: deriveSetup(o.machine, {
         toolCount: d.toolCount * share,
         fixturings: o.setups,
         featureCount: d.featureCount * share,
         cycleMin: d.cycleMin * share,
+        toleranceMm: d.toleranceMm,
       }),
     };
   });
@@ -197,6 +227,25 @@ export function deriveRouteSetup(ops: RouteSetupOp[], d: RouteSetupDrivers): Rou
             + ` ${b.programmingMin} programming, ${b.provingMin} proving)`;
         }).join('; then '),
   };
+}
+
+/**
+ * What Lance books per hour for CAM programming — the rate on the PROG centre of
+ * his only router that has one (OLY014_01921, 150 min at £40/hr).
+ */
+export const PROGRAMMING_RATE_PER_MIN = 40 / 60;
+
+/**
+ * Setup LABOUR in money: each machine's preparation (programming excluded, which
+ * is billed as NRE) at the rate Lance books for setting THAT machine, falling
+ * back to the shop's own rate where no router of his names it. A flat shop rate
+ * charged a £40 Mori and a £50 NTX the same.
+ */
+export function routeSetupLabour(r: RouteSetupBreakdown, fallbackRatePerMin: number): number {
+  return r.perOp.reduce((sum, o) => {
+    const rate = o.machine.setupRatePerHr != null ? o.machine.setupRatePerHr / 60 : fallbackRatePerMin;
+    return sum + (o.breakdown.totalMin - o.breakdown.programmingMin) * rate;
+  }, 0);
 }
 
 /**

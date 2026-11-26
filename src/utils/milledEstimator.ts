@@ -24,17 +24,19 @@ import {
 } from '../types';
 import { DEFAULT_CNC_SETTINGS } from '../constants';
 import { materialPropsFor } from './materials';
-import { millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, MillingToolConfig } from './milling';
+import { SHOP_MILL_AXIAL_FACTOR, millingMrrCm3PerMin, finishingRateCm2PerMin, roughingToolDiaMm, DEFAULT_MILLING_TOOL, MillingToolConfig } from './milling';
+import { millingToolsFor, roughingTool, wallFinisher, floorFinisher, toolChipLoadMm, type MillingTool } from './millingTools';
 import { roughingMrrCm3PerMin, rpm as turningRpm } from './turning';
-import { buildMilledPlan } from './milledPlanner';
+import { buildMilledPlan, BAR_STOP_TOOL } from './milledPlanner';
 import { secondaryOpsCostPerUnit, secondaryOpsLineItems } from './secondaryOps';
-import { drillHoleSec, drillHolesSec, spotDrillsSec, pairHoles, crossFeaturesSec, tapThreadsSec, DEFAULT_DRILL_CONFIG, DEFAULT_CROSS_CONFIG } from './drilling';
-import { opApproachSec, DEFAULT_OP_APPROACH } from './turning';
+import { realisation } from './realisation';
+import { drillHoleSec, drillHoleSplit, spotDrillSplit, pairHoles, crossFeaturesSplit, tapThreadsSplit, DEFAULT_DRILL_CONFIG, DEFAULT_CROSS_CONFIG, type OpSplit } from './drilling';
+import { opApproachSec, repositionSec, DEFAULT_OP_APPROACH } from './turning';
 import { TOOL_CHANGE_SEC } from './machineSelection';
 
 /** A mill's approach crosses the table and plunges; a lathe's slides along Z. */
 const MILL_APPROACH_TRAVEL_MM = 250;
-import { deriveRouteSetup, type RouteSetupOp } from './setupModel';
+import { deriveRouteSetup, routeSetupLabour, PROGRAMMING_RATE_PER_MIN, type RouteSetupOp } from './setupModel';
 import type { ThreadSpec } from './drilling';
 import type { SecondaryOperation } from './secondaryOps';
 
@@ -125,6 +127,8 @@ export interface MilledProfile {
    * one clamp, so far less material is removed and setups collapse.
    */
   fromBarStock?: boolean;
+  /** Tightest tolerance on the drawing, ± mm (undefined = general). Drives proving time in setup. */
+  tightestToleranceMm?: number;
   /** Round bar ⌀ (mm) when `fromBarStock` — the stock is bar, not a block. */
   barDiameterMm?: number;
 }
@@ -336,6 +340,26 @@ export function calculateMilledCosts(
   // Client-facing feedrate override (Settings): 100% = programmed feed. Below 100
   // runs cutting slower (more time), above 100 faster. Scales CUTTING time only.
   const feedMult = 100 / Math.max(1, cnc.feedrateRatioPercent ?? 100);
+  // WHAT THE BOOK SPEEDS ACTUALLY DELIVER HERE — see realisation.ts. Applied to
+  // cutting only, in the same place and for the same reason as the feedrate
+  // override, so a milled part and a turned one derate identically.
+  //
+  // A MILLED PART IS ALWAYS AN INTERRUPTED CUT. An end mill's flutes leave the
+  // metal and re-enter it on every revolution — that is what milling IS, and it
+  // is the textbook case the catalogues say to slow down for. So the conditional
+  // factor always applies here, where on a turned part it depends on geometry.
+  //
+  // NOT APPLIED BY DEFAULT. The stack exists because book speeds assume favourable
+  // conditions the shop does not have. A milled part is now timed at the shop's
+  // OWN programmed depth of cut (SHOP_MILL_AXIAL_FACTOR), which already carries
+  // those conditions: stacking the derate on top counts them twice (measured:
+  // x2.65 and x4.37 of Lance's CAM totals on the two milled parts he sent, against
+  // x0.84 and x1.10 with it off). A shop that runs the book depth can turn it on.
+  const real = cnc.realisationOnMilling
+    ? realisation(cnc.realisation, true)
+    : realisation({ toolLife: 1, rigidity: 1, oneOffProgram: 1, materialCondition: 1, interruptedCut: 1 }, true);
+  /** Everything that scales CUTTING time: the override and the derate together. */
+  const cutScale = feedMult * real.multiplier;
   const machineRatePerMin = cnc.machineRatePerMin * (machineRateMultiplier > 0 ? machineRateMultiplier : 1);
   // TOOL CHANGE AND RAPID BELONG TO THE MACHINE, exactly as they do for turning
   // (cncEstimator.ts). Milling carried a flat 10 s change and an 8% rapid
@@ -344,6 +368,8 @@ export function calculateMilledCosts(
   const toolChangeSec = routeOps?.length
     ? TOOL_CHANGE_SEC[routeOps[0].machine.kind] ?? (cnc.millToolChangeSec ?? 10)
     : (cnc.millToolChangeSec ?? 10);
+  // The shop's per-operation idle floor; see cncEstimator.ts.
+  const idleFloorSec = cnc.opIdleFloorSec ?? DEFAULT_CNC_SETTINGS.opIdleFloorSec ?? 0;
   const rapidMmPerMin = routeOps?.length
     ? routeOps[0].machine.rapidTraverseMmPerMin || DEFAULT_OP_APPROACH.rapidMmPerMin
     : DEFAULT_OP_APPROACH.rapidMmPerMin;
@@ -377,13 +403,33 @@ export function calculateMilledCosts(
   // The roughing cutter is sized to the part, not fixed: it dominates MRR, and a
   // big open plate takes a far heavier cut than a small contoured one.
   const minDimMm = Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z) || 20;
-  const millCfg: MillingToolConfig = {
-    toolDiaMm: cnc.millToolDiaMm ?? roughingToolDiaMm(minDimMm),
-    flutes: 3,
+  // TIME THE CUT WITH THE CUTTER THE TRAVELLER NAMES.
+  //
+  // The plan picks its rougher and finishers from the shop's tool library; the
+  // clock used to time roughing with a formula cutter of at least 6 mm, and all
+  // finishing with that same rougher. On a 6 mm part the traveller said "3 mm
+  // rougher, 1.5 mm finisher" while the cycle time was computed for a 6 mm
+  // cutter taking a 10 mm cutter's chip. Now both read the same tools, with the
+  // flute count and catalogue chip load each one carries.
+  //
+  // A shop that sets a roughing ⌀ in Settings still gets it, at the table chip
+  // load scaled by diameter, since no library entry describes that cutter.
+  const sortedStockDims = [p.stockMm.x, p.stockMm.y, p.stockMm.z].sort((a, b) => a - b);
+  const libTools = millingToolsFor(m);
+  const libRough = roughingTool(libTools, sortedStockDims[1]);
+  const libWall = wallFinisher(libTools, libRough);
+  const libFloor = floorFinisher(libTools, libRough);
+  const toolCfg = (t: MillingTool | undefined, fallbackDia: number): MillingToolConfig => ({
+    toolDiaMm: t?.diaMm ?? fallbackDia,
+    flutes: t?.flutes ?? 3,
     radialFactor: 0.35,
-    axialFactor: 0.8,
+    axialFactor: cnc.millAxialFactor ?? SHOP_MILL_AXIAL_FACTOR,
     maxRpm: cnc.millMaxRpm ?? 12000,
-  };
+    feedPerToothMm: t ? toolChipLoadMm(t, m, libTools) : undefined,
+  });
+  const millCfg: MillingToolConfig = cnc.millToolDiaMm
+    ? { ...toolCfg(undefined, cnc.millToolDiaMm), toolDiaMm: cnc.millToolDiaMm }
+    : toolCfg(libRough, roughingToolDiaMm(minDimMm));
   const millMrr = millingMrrCm3PerMin(m, millCfg);
 
   // --- TURNED vs MILLED work ----------------------------------------------
@@ -425,7 +471,7 @@ export function calculateMilledCosts(
 
   // Base (open, part-sized tool) time; the complexity delta is billed separately
   // so the line items sum cleanly to the subtotal.
-  const roughBaseSec = (milledVol > 0 && millMrr > 0 ? (milledVol / millMrr) * 60 : 0) * feedMult;
+  const roughBaseSec = (milledVol > 0 && millMrr > 0 ? (milledVol / millMrr) * 60 : 0) * cutScale;
   const roughSec = roughBaseSec * deepMult;
   // Turning is not subject to the small-tool complexity derate: that models a
   // cutter squeezing into detail, which has no analogue on a spindle.
@@ -448,15 +494,21 @@ export function calculateMilledCosts(
     const roughSec = roughPasses * (depth / (m.feedRough * boreRpm)) * 60;
     const finishSec = (depth / (m.feedFinish * boreRpm)) * 60;
     return sum + pilotSec + roughSec + finishSec;
-  }, 0) * feedMult;
-  const turningVolumeSec = (turnedVol > 0 && turnMrr > 0 ? (turnedVol / turnMrr) * 60 : 0) * feedMult;
+  }, 0) * cutScale;
+  const turningVolumeSec = (turnedVol > 0 && turnMrr > 0 ? (turnedVol / turnMrr) * 60 : 0) * cutScale;
   const turningSec = Math.max(turningBoreSec, turningVolumeSec);
 
   // --- Facing --------------------------------------------------------------
   // On a lathe a face is spiralled from OD to centre in one pass — far quicker
   // than a face mill stepping over the whole footprint.
   const footprintCm2 = (p.stockMm.x * p.stockMm.y) / 100;
-  const finishRate = finishingRateCm2PerMin(m, millCfg);
+  // Facing is a face-mill operation and is deliberately unchanged here: it is
+  // timed at the rate the old single-cutter model gave, so this change moves
+  // only the end-mill work it is about.
+  const finishRate = finishingRateCm2PerMin(m, {
+    ...DEFAULT_MILLING_TOOL, toolDiaMm: roughingToolDiaMm(minDimMm), flutes: 3,
+    maxRpm: cnc.millMaxRpm ?? 12000, feedPerToothMm: m.feedPerToothMm,
+  });
   const facesToTurn = p.turningRoute ? Math.min(2, p.facingCandidates ?? 0) : 0;
   const facingSec = facesToTurn > 0
     ? (() => {
@@ -464,16 +516,33 @@ export function calculateMilledCosts(
         const perFaceSec = faceRpm > 0 && m.feedFinish > 0
           ? ((stockDiaMm / 2) / (m.feedFinish * faceRpm)) * 60
           : 0;
-        return facesToTurn * perFaceSec * feedMult;
+        return facesToTurn * perFaceSec * cutScale;
       })()
-    : (finishRate > 0 ? (footprintCm2 / finishRate) * 60 : 0) * feedMult;
+    : (finishRate > 0 ? (footprintCm2 / finishRate) * 60 : 0) * cutScale;
 
   // --- Finishing: walls + floors of the machined faces ---------------------
   // Contoured parts finish far slower (small ball at fine stepover); the multiplier
   // is 1 for prismatic parts and plates, so simple-part calibration is unchanged.
   const finishSculpt = sculptFinishMult(p);
   const finishAreaCm2 = FINISH_MACHINED_FRACTION * Math.max(0, p.surfaceAreaCm2);
-  const finishBaseSec = (finishRate > 0 ? (finishAreaCm2 / finishRate) * 60 * finishSculpt : 0) * feedMult;
+  // Walls with the wall finisher, floors with the floor finisher — the 60/40
+  // split the plan has always shown, each now at its own cutter's rate.
+  // A WALL is swept at its height in one pass; a FLAT floor at a light stepover;
+  // only a CONTOURED floor needs the ball at a fine stepover. How much of the
+  // floor is contoured follows the part's own contour measure: 0 for a prismatic
+  // part, 1 once the sculpt multiplier has doubled the finishing time.
+  const wallHeightCapMm = Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z);
+  const wallRate = finishingRateCm2PerMin(m, toolCfg(libWall, millCfg.toolDiaMm), 'wall', wallHeightCapMm);
+  const ballRate = finishingRateCm2PerMin(m, toolCfg(libFloor, millCfg.toolDiaMm));
+  const flatFloorRate = finishingRateCm2PerMin(m, toolCfg(libWall, millCfg.toolDiaMm), 'floor');
+  const contouredShare = Math.min(1, Math.max(0, finishSculpt - 1));
+  const floorAreaCm2 = finishAreaCm2 * 0.4;
+  // The floor's effective rate, for the plan: area-weighted across flat and ball.
+  const floorRate = 1 / (((1 - contouredShare) / Math.max(1e-9, flatFloorRate)) + (contouredShare / Math.max(1e-9, ballRate)));
+  const finishWallSec = (wallRate > 0 ? ((finishAreaCm2 * 0.6) / wallRate) * 60 * finishSculpt : 0) * cutScale;
+  const finishFloorSec = ((flatFloorRate > 0 ? (floorAreaCm2 * (1 - contouredShare)) / flatFloorRate : 0)
+    + (ballRate > 0 ? (floorAreaCm2 * contouredShare) / ballRate : 0)) * 60 * finishSculpt * cutScale;
+  const finishBaseSec = finishWallSec + finishFloorSec;
   const finishSec = finishBaseSec * deepMult;
   // Extra seconds attributable to small-tool feature detail (rough + finish).
   const complexitySec = (roughBaseSec + finishBaseSec) * (deepMult - 1);
@@ -514,15 +583,25 @@ export function calculateMilledCosts(
   // Spot every hole before drilling it: a twist drill wanders off the mark until
   // its margins engage, and on a mill that is the difference between a hole on
   // position and one that is not. Turning got this in 22842fb.
-  const spotSec = spotDrillsSec(holeSpecs, m, {
-    ...DEFAULT_DRILL_CONFIG,
-    maxRpm: cnc.maxRpm,
-    rapidMmPerMin,
-  });
-  const drillSec = drillHolesSec(holeSpecs, m, {
-    ...DEFAULT_DRILL_CONFIG,
-    maxRpm: cnc.millMaxRpm ?? DEFAULT_DRILL_CONFIG.maxRpm,
-  }) * feedMult;
+  //
+  // CUTTING AND IDLE KEPT APART. A drill spends most of a small hole NOT
+  // cutting — positioning to it, settling, feeding through the clearance gap,
+  // pecking out — and all of that used to be summed into the cutting seconds,
+  // where the realisation stack multiplied it and efficiency divided it as if it
+  // were metal. Only the cutting half is scaled now; the idle half is machine
+  // time and rides on the operation's idle column. Same rule as turning.
+  //
+  // Both at the machine's OWN rapid: drilling used the 10 m/min default while
+  // spotting on the same machine used the real one.
+  const holeCfg = (maxRpm: number) => ({ ...DEFAULT_DRILL_CONFIG, maxRpm, rapidMmPerMin });
+  const sumSplits = (xs: OpSplit[]): OpSplit =>
+    xs.reduce((a, x) => ({ cuttingSec: a.cuttingSec + x.cuttingSec, idleSec: a.idleSec + x.idleSec }),
+      { cuttingSec: 0, idleSec: 0 });
+  const spot = sumSplits(holeSpecs.map((h) => spotDrillSplit(h.diameterMm, m, holeCfg(cnc.maxRpm))));
+  const drill = sumSplits(holeSpecs.map((h) =>
+    drillHoleSplit(h, m, holeCfg(cnc.millMaxRpm ?? DEFAULT_DRILL_CONFIG.maxRpm))));
+  const spotSec = spot.cuttingSec * cutScale;
+  const drillSec = drill.cuttingSec * cutScale;
 
   // --- Off-axis features the hole finder discarded -------------------------
   //
@@ -547,15 +626,22 @@ export function calculateMilledCosts(
     if (i >= 0) { alreadyCounted.splice(i, 1); return false; }
     return true;
   });
-  const crossSec = crossFeaturesSec(extraCross, m, {
+  // Cut and idle apart, as for drilling. On a part with many small cross
+  // features almost all of this is the spindle indexing round to each one —
+  // eight seconds a feature against a second or two of cutting.
+  const cross = crossFeaturesSplit(extraCross, m, {
     ...DEFAULT_CROSS_CONFIG,
     maxRpm: cnc.millMaxRpm ?? DEFAULT_CROSS_CONFIG.maxRpm,
-  }) * feedMult;
+    rapidMmPerMin,
+  });
+  const crossSec = cross.cuttingSec * cutScale;
 
   // --- Tapping -------------------------------------------------------------
   // The tap drill is already paid for above as a hole; this is the thread cut
   // into it. Feed is locked to the pitch, and the tap has to reverse back out.
-  const tapSec = tapThreadsSec(p.threads, m) * feedMult;
+  // Only the way in cuts; reversing out and the cycle overhead are idle.
+  const tap = tapThreadsSplit(p.threads, m);
+  const tapSec = tap.cuttingSec * cutScale;
 
   // --- Conical features: countersinks and chamfers -------------------------
   // These cost nothing at all until now, because the analyser read only planes
@@ -578,14 +664,81 @@ export function calculateMilledCosts(
   const countersinkSec = csinks.reduce(
     (sec, c) => sec + Math.max(1, c.count ?? 1) * (2.0 + 0.25 * Math.max(0, c.diameterMm)) * machDerate,
     0
-  ) * feedMult;
+  ) * cutScale;
   // One lap of the edge at a chamfer-mill feed; a circular chamfer is πd long.
   const CHAMFER_FEED_MM_PER_MIN = 900;
   const chamferSec = chamfs.reduce((sec, c) => {
     const pathMm = Math.PI * Math.max(1, c.diameterMm);
     return sec + Math.max(1, c.count ?? 1) * ((pathMm / CHAMFER_FEED_MM_PER_MIN) * 60) * machDerate;
-  }, 0) * feedMult;
+  }, 0) * cutScale;
   const edgeSec = countersinkSec + chamferSec;
+
+  // --- Deburring: every edge a cutter leaves -------------------------------
+  //
+  // Milling had no deburr. It had a placeholder — "Chamfer / edge break
+  // (estimated)" — that carved 8% out of wall finishing and so added nothing,
+  // which is the state turning was in before its deburr became an operation.
+  // Every drawing in the calibration set says CLEAN AND BURR FREE, and the
+  // shop's sheet for OLY014_01921-A spends 150 s on it.
+  //
+  // THE RULE IS THE SHOP'S OWN, from both cycle sheets: an edge is deburred by
+  // a tool tracing it — "deburr 3.3mm dia slots thro" with the end mill that
+  // cut them, "deburr thread" with the threading tool. Here that is one lap of
+  // a chamfer mill round each edge the geometry gives us:
+  //
+  //   the MOUTH of every hole and off-axis feature, and its far side too when
+  //   it runs through the part, because a drill or cutter breaking out raises a
+  //   burr on the exit;
+  //   the machined OUTLINE once per setup — taken as the stock footprint's
+  //   perimeter, which is a floor on the real outline, not an estimate of it.
+  //
+  // Edges already broken by a MEASURED chamfer are not deburred twice.
+  // Each lap is timed like the measured chamfers above (πd at the chamfer-mill
+  // feed). Between edges the tool makes a short hop, not a full approach: it is
+  // one operation working round the part.
+  const minStockMm = Math.min(p.stockMm.x, p.stockMm.y, p.stockMm.z) || 10;
+  const deburrEdgeDias: number[] = [];
+  for (const h of holeSpecs) {
+    deburrEdgeDias.push(h.diameterMm);
+    if (h.depthMm >= 0.95 * throughDepthMm) deburrEdgeDias.push(h.diameterMm);
+  }
+  for (const f of extraCross) {
+    deburrEdgeDias.push(f.diameterMm);
+    if (f.isBore && f.lengthMm >= 0.95 * minStockMm) deburrEdgeDias.push(f.diameterMm);
+  }
+  for (const f of onAxis) if (f.kind === 'bore') deburrEdgeDias.push(f.diameterMm);
+  // Measured chamfers have already broken that many edges.
+  deburrEdgeDias.sort((a, b) => b - a).splice(0, Math.min(deburrEdgeDias.length, chamferCount));
+  const outlinePerimeterMm = p.fromBarStock
+    ? Math.PI * (p.barDiameterMm ?? minStockMm)
+    : 2 * (p.stockMm.x + p.stockMm.y);
+  const deburrSetups = Math.max(1, Math.round(p.setupCount || 1));
+  const lapSec = (pathMm: number) => ((pathMm / CHAMFER_FEED_MM_PER_MIN) * 60) * machDerate;
+  const deburrCutBase = deburrEdgeDias.reduce((a, d) => a + lapSec(Math.PI * Math.max(0.5, d)), 0)
+    + deburrSetups * lapSec(outlinePerimeterMm);
+  const deburrSec = deburrCutBase * cutScale;
+  const hopApproach = { ...DEFAULT_OP_APPROACH, rapidMmPerMin };
+  const deburrIdleSec = deburrEdgeDias.length * repositionSec(CHAMFER_FEED_MM_PER_MIN, hopApproach);
+
+  // --- Part-off: a bar-fed part has to come off the bar ---------------------
+  //
+  // toBarStockProfile already adds the parting width to the bar length, so the
+  // MATERIAL for the cut has always been charged; the CUT has not. On a
+  // turn-mill a bar part is parted off at the end of the cycle — the shop's
+  // sheet for OLY014 ends "50mm slitting saw — cut off", 55 s. Timed with the
+  // same parting arithmetic turning uses (plunge to centre at reduced speed and
+  // 0.08 mm/rev), so a bar part costs the same to part off whichever estimator
+  // sees it. A slitting saw is a different tool and is not modelled here.
+  const partoffBarDiaMm = p.fromBarStock ? (p.barDiameterMm ?? minStockMm) : 0;
+  // Bar stop / feed per part on a bar-fed route (the shop's own bar-handling time).
+  const barStopSec = p.fromBarStock ? Math.max(0, cnc.barLoadSec ?? 0) : 0;
+  const partoffSec = partoffBarDiaMm > 0
+    ? (() => {
+        const n = turningRpm(m.cuttingSpeedFinish * 0.6, partoffBarDiaMm, cnc.maxRpm);
+        const feed = Math.max(0.001, 0.08 * n);
+        return ((partoffBarDiaMm / 2) / feed) * 60 * cutScale;
+      })()
+    : 0;
 
   // --- Cycle time (theoretical → actual via efficiency) --------------------
   const cuttingSec = roughSec + turningSec + facingSec + finishSec + spotSec + drillSec + edgeSec + crossSec + tapSec;
@@ -593,6 +746,9 @@ export function calculateMilledCosts(
 
   const ratePerSec = machineRatePerMin / 60;
   const opCost = (sec: number) => (sec / eff) * ratePerSec;
+  // Idle is machine-spec time — the ATC's change, the machine's own rapid — so
+  // no efficiency is applied to it. See cncEstimator for the full reasoning.
+  const airCost = (sec: number) => sec * ratePerSec;
 
   // --- Per-setup / per-operation plan (tool-by-tool job sheet) -------------
   // Built BEFORE setup billing because the plan is the source of truth for how
@@ -605,8 +761,13 @@ export function calculateMilledCosts(
   const plan = buildMilledPlan({
     holeDepthsMm: remainingHoles.map((h) => h.depthMm),
     crossSec,
+    crossIdleSec: cross.idleSec,
     crossFeatures: extraCross,
     tapSec,
+    tapIdleSec: tap.idleSec,
+    spotSec,
+    spotIdleSec: spot.idleSec,
+    drillIdleSec: drill.idleSec,
     threads: p.threads,
     m,
     minPlaneDimMm: sortedDims[1], // the smaller in-plane dimension (not the thickness)
@@ -617,9 +778,19 @@ export function calculateMilledCosts(
     turningRoute: !!p.turningRoute,
     countersinkSec,
     chamferSec,
+    deburrSec,
+    deburrIdleSec,
+    deburrEdges: deburrEdgeDias.length,
+    partoffSec,
+    partoffBarDiaMm,
+    barStopSec,
     countersinks: csinks,
     chamfers: chamfs,
     finishBaseSec,
+    finishWallSec,
+    finishFloorSec,
+    wallRate,
+    floorRate,
     roughComplexSec: roughBaseSec * (deepMult - 1),
     finishComplexSec: finishBaseSec * (deepMult - 1),
     drillSec,
@@ -635,8 +806,10 @@ export function calculateMilledCosts(
     angledSetups: p.angledSetups,
     eff,
     opCost,
+    airCost,
     toolChangeSec,
     approachSecPerOp,
+    idleFloorSec,
     colors: COLORS,
   });
   // Allocate runtime to the machine that owns each holding. Previously every
@@ -662,20 +835,27 @@ export function calculateMilledCosts(
       ...operation,
       cost: operation.cost * rateFactor,
     }));
-    const cuttingCost = setup.operations.reduce((sum, operation) => sum + operation.cost, 0);
-    // Divided by eff to match how the planner charged it — the planner applies
-    // eff to (changeSec + rapidSec) together, and recomputing only one of them
+    // The non-cutting seconds are INSIDE the operation rows now — each one
+    // carries its approach and, on a tool's first use, its change — so the
+    // setup is just the sum of its rows. There is no lump left to re-derive
+    // here, which also closes the old trap: the planner divided
+    // (changeSec + rapidSec) by eff together, and recomputing only one of them
     // raw made plan.totalCost drift from plan.totalSeconds.
-    const rapidSec = (setup.operations.length * approachSecPerOp) / eff;
-    const nonCutCost = (setup.toolChanges * toolChangeSec / eff + rapidSec) * (ratePerMin / 60);
-    setup.cost = cuttingCost + nonCutCost;
+    setup.cost = setup.operations.reduce((sum, operation) => sum + operation.cost, 0);
   }
   plan.totalCost = plan.setups.reduce((sum, setup) => sum + setup.cost, 0);
   // Use the same tools and non-cutting events in the price and traveller.
   const toolCount = plan.tools.length;
   const toolChanges = plan.setups.reduce((sum, setup) => sum + setup.toolChanges, 0);
-  const plannedOpCount = plan.setups.reduce((sum, setup) => sum + setup.operations.length, 0);
+  // The bar stop is a handling step with no approach move of its own.
+  const plannedOpCount = plan.setups.reduce((sum, setup) => sum + setup.operations.filter((o) => o.tool !== BAR_STOP_TOOL).length, 0);
   const airSec = toolChanges * toolChangeSec + plannedOpCount * approachSecPerOp;
+  // The idle each hole-making operation carries on its own row of the plan —
+  // charged only where the plan actually has that row, which is wherever the
+  // operation has cutting time.
+  const holeIdleCharged = (drillSec > 0 ? drill.idleSec : 0) + (spotSec > 0 ? spot.idleSec : 0);
+  const crossIdleCharged = crossSec > 0 ? cross.idleSec : 0;
+  const tapIdleCharged = tapSec > 0 ? tap.idleSec : 0;
   const cycleTimeSec = plan.totalSeconds;
   const machineCost = plan.totalCost;
   const primaryRuntimeCost = (cycleTimeSec / 60) * primaryRatePerMin;
@@ -706,6 +886,7 @@ export function calculateMilledCosts(
     featureCount: (p.holeDiametersMm ?? []).length
       + (p.crossFeatureList ?? []).length + (p.threads ?? []).length,
     cycleMin: cycleTimeSec / 60,
+    toleranceMm: p.tightestToleranceMm,
   }) : null;
   const derivedProgrammingMin = derivedSetup?.perOp.reduce((sum, op) => sum + op.breakdown.programmingMin, 0) ?? 0;
   const setupTimeMin = derivedSetup ? derivedSetup.totalMin - derivedProgrammingMin : (routeSetupMin || (
@@ -715,7 +896,7 @@ export function calculateMilledCosts(
   // Setup billing: time-based labour, a flat per-setup charge, or both (one-time
   // job costs amortised over the batch). 'flat' matches how CAM quotes bill setup.
   const flatSetupCharge = Math.max(0, cnc.flatSetupChargePerSetup ?? 0) * setups;
-  const setupLabour = setupTimeMin * cnc.setupRatePerMin;
+  const setupLabour = derivedSetup ? routeSetupLabour(derivedSetup, cnc.setupRatePerMin) : setupTimeMin * cnc.setupRatePerMin;
   const setupMode = cnc.setupBillingMode ?? 'both';
   const setupLabourBilled = setupMode === 'flat' ? 0 : setupLabour;
   const flatBilled = setupMode === 'time' ? 0 : flatSetupCharge;
@@ -744,7 +925,7 @@ export function calculateMilledCosts(
   // are excluded from the repeat price. (Separating this is what lets us show a
   // first-order vs repeat-order price — a ~30% swing at mid quantities.)
   const programmingMin = derivedSetup ? derivedProgrammingMin : Math.max(0, cnc.programmingMinPerSetup ?? 0) * setups;
-  const nreProgrammingCost = programmingMin * cnc.setupRatePerMin;
+  const nreProgrammingCost = programmingMin * (derivedSetup ? PROGRAMMING_RATE_PER_MIN : cnc.setupRatePerMin);
   const nreCost = nreProgrammingCost + fixtureCostTotal; // one-time for the whole job
   const programmingPerUnit = nreProgrammingCost / qty;
 
@@ -768,12 +949,18 @@ export function calculateMilledCosts(
     { key: 'turning', name: 'Turning (on-axis)', driver: turnedVol > 0 ? `${r1(turnedVol)} cm³ on the spindle @ ${r1(turnMrr)} cm³/min — ${onAxis.map((f) => `${f.kind} ⌀${r1(f.diameterMm)}`).join(', ')} — ${secStr(turningSec)}` : '', value: opCost(turningSec), color: COLORS.turn },
     { key: 'rough', name: turnedVol > 0 ? 'Roughing (milled, off-axis)' : 'Roughing (hog-out)', driver: `${r1(milledVol)} cm³ removed @ ${r1(millMrr)} cm³/min — ${secStr(roughBaseSec)}`, value: opCost(roughBaseSec), color: COLORS.rough },
     { key: 'finish', name: 'Finishing (walls/floors)', driver: `${r1(finishAreaCm2)} cm²${finishSculpt > 1.05 ? ` contoured ×${r1(finishSculpt)} (small ball)` : ` @ ${r1(finishRate)} cm²/min`} — ${secStr(finishBaseSec)}`, value: opCost(finishBaseSec), color: COLORS.finish },
-    { key: 'drill', name: 'Drilling', driver: `${holes} hole${holes === 1 ? '' : 's'}${turnedBoreDias.length ? ` (${turnedBoreDias.length} on-axis bore${turnedBoreDias.length === 1 ? '' : 's'} turned, not drilled)` : ''} — ${secStr(drillSec)}`, value: opCost(drillSec), color: COLORS.drill },
-    { key: 'cross', name: 'Off-axis features (driven tool)', driver: crossSec > 0 ? `${extraCross.length} feature${extraCross.length === 1 ? '' : 's'} off the turning axis — ${extraCross.slice(0, 4).map((f) => `⌀${r1(f.diameterMm)}×${r1(f.lengthMm)}`).join(', ')}${extraCross.length > 4 ? ` +${extraCross.length - 4} more` : ''} — ${secStr(crossSec)}` : '', value: opCost(crossSec), color: COLORS.drill },
-    { key: 'tap', name: 'Tapping', driver: tapSec > 0 ? `${(p.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ')} — ${secStr(tapSec)}` : '', value: opCost(tapSec), color: COLORS.thread ?? COLORS.drill },
+    { key: 'drill', name: 'Drilling', driver: `${holes} hole${holes === 1 ? '' : 's'}${turnedBoreDias.length ? ` (${turnedBoreDias.length} on-axis bore${turnedBoreDias.length === 1 ? '' : 's'} turned, not drilled)` : ''} — ${secStr(drillSec + spotSec)} cutting + ${r1(holeIdleCharged)} s idle, spotting included`, value: opCost(drillSec + spotSec) + airCost(holeIdleCharged), color: COLORS.drill },
+    { key: 'cross', name: 'Off-axis features (driven tool)', driver: crossSec > 0 ? `${extraCross.length} feature${extraCross.length === 1 ? '' : 's'} off the turning axis — ${extraCross.slice(0, 4).map((f) => `⌀${r1(f.diameterMm)}×${r1(f.lengthMm)}`).join(', ')}${extraCross.length > 4 ? ` +${extraCross.length - 4} more` : ''} — ${secStr(crossSec)} cutting + ${r1(crossIdleCharged)} s idle (spindle index and positioning)` : '', value: opCost(crossSec) + airCost(crossIdleCharged), color: COLORS.drill },
+    { key: 'tap', name: 'Tapping', driver: tapSec > 0 ? `${(p.threads ?? []).map((t) => `${Math.max(1, t.count ?? 1)}x ${t.callout}`).join(', ')} — ${secStr(tapSec)} cutting + ${r1(tapIdleCharged)} s idle` : '', value: opCost(tapSec) + airCost(tapIdleCharged), color: COLORS.thread ?? COLORS.drill },
     { key: 'edge', name: 'Countersink / chamfer', driver: edgeSec > 0 ? `${countersinkCount ? `${countersinkCount} countersink${countersinkCount === 1 ? '' : 's'}` : ''}${countersinkCount && chamferCount ? ' + ' : ''}${chamferCount ? `${chamferCount} chamfer${chamferCount === 1 ? '' : 's'}` : ''} measured from the solid — ${secStr(edgeSec)}` : '', value: opCost(edgeSec), color: COLORS.facing },
     { key: 'deep', name: 'Feature-complexity (small tools)', driver: deepMult > 1.001 ? `${p.bossCount} boss / ${p.pocketCount} pocket${deep > 0 ? ` / ${deep} deep` : ''} / ${p.holeCount} holes → small-tool detail +${Math.round((deepMult - 1) * 100)}% — ${secStr(complexitySec)}` : '', value: opCost(complexitySec), color: COLORS.deep },
-    { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${toolChanges} tool changes × ${r1(toolChangeSec)}s, plus ${plannedOpCount} approaches × ${r1(approachSecPerOp)}s at ${Math.round(rapidMmPerMin / 1000)} m/min rapid (before efficiency)`, value: (airSec / eff) * ratePerSec, color: COLORS.noncut },
+    { key: 'barstop', name: 'Bar stop / feed', driver: barStopSec > 0 ? `${r1(barStopSec)} s per part to pull the bar to the stop and close the door — machine idle, so no efficiency is applied` : '', value: airCost(barStopSec), color: COLORS.noncut },
+    { key: 'idlefloor', name: 'Operation idle floor', driver: (plan.idleFloorSec ?? 0) > 0 ? `${r1(plan.idleFloorSec ?? 0)} s lifting each operation's idle to the shop's ${r1(idleFloorSec)} s minimum — machine idle, so no efficiency is applied` : '', value: airCost(plan.idleFloorSec ?? 0), color: COLORS.noncut },
+    { key: 'noncut', name: 'Tool changes / rapids', driver: `${toolCount} tools, ${toolChanges} tool changes × ${r1(toolChangeSec)}s, plus ${plannedOpCount} approaches × ${r1(approachSecPerOp)}s at ${Math.round(rapidMmPerMin / 1000)} m/min rapid — machine specifications, so no efficiency is applied`, value: airCost(airSec), color: COLORS.noncut },
+    { key: 'deburr', name: 'Deburring', driver: deburrSec > 0 ? `trace every edge a cutter left — ${deburrEdgeDias.length} hole and feature edge${deburrEdgeDias.length === 1 ? '' : 's'} plus the outline — ${secStr(deburrSec)} cutting + ${r1(deburrIdleSec)} s idle` : '', value: deburrSec > 0 ? opCost(deburrSec) + airCost(deburrIdleSec) : 0, color: COLORS.facing },
+    { key: 'partoff', name: 'Part-off', driver: partoffSec > 0 ? `cut the part off the ⌀${r1(partoffBarDiaMm)} bar — ${secStr(partoffSec)}` : '', value: opCost(partoffSec), color: COLORS.facing },
+    // Both numbers stated, the derate already inside the cutting rows above.
+    { key: 'realisation', name: 'Cutting conditions (already in the rows above)', driver: `book speeds → ×${real.multiplier.toFixed(2)} on cutting time. ${real.explanation}. ${real.applied.map((x) => `${x.name} ${x.value} (${x.why})`).join('; ')}`, seconds: 0, value: 0, color: COLORS.noncut },
     { key: 'setup', name: `Setup labour ÷ ${qty}`, driver: derivedSetup ? `${r1(setupTimeMin)} min preparation, excluding ${derivedProgrammingMin} min CAM billed separately. Full first-order breakdown: ${derivedSetup.explanation} — batch ${qty}` : `${r1(setupTimeMin)} min over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}`, value: setupLabourBilled / qty, color: COLORS.setup },
     { key: 'setupCharge', name: `Setup charge ÷ ${qty}`, driver: flatBilled > 0 ? `$${(cnc.flatSetupChargePerSetup ?? 0).toFixed(0)} × ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty}` : '', value: flatBilled / qty, color: COLORS.setup },
     { key: 'nre', name: `CAM programming (one-time) ÷ ${qty}`, driver: `${r1(programmingMin)} min NRE over ${setups} setup${setups > 1 ? 's' : ''}, batch of ${qty} — not billed again on reorder`, value: programmingPerUnit, color: COLORS.nre },
@@ -781,7 +968,8 @@ export function calculateMilledCosts(
     { key: 'tooling', name: 'Tooling / consumables', driver: `${toolCount} operations`, value: toolingCost, color: COLORS.tooling },
     ...(routeOps?.length && Math.abs(routeRuntimeAdjustment) > 0.005 ? [{ key: 'machine-rate', name: 'Multi-machine runtime rate', driver: routeOps.map((op) => `${op.machine.name}: ${op.machine.hourlyRate}/hr × ${Math.max(1, Math.round(op.setups))} holding${op.setups > 1 ? 's' : ''}`).join('; '), value: routeRuntimeAdjustment, color: COLORS.turn }] : []),
     ...secondaryOpsLineItems(input.secondaryOps, qty),
-  ].filter((li) => Math.abs(li.value) > 0);
+    // The realisation row explains the derate and carries no cost of its own.
+  ].filter((li) => Math.abs(li.value) > 0 || li.key === 'realisation');
 
   // --- Batch quantity curve (setup + NRE amortisation) ---------------------
   // First-order price carries the one-time NRE (programming + jaws); the repeat

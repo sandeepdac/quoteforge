@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectMachine, setupsOnMachine, MACHINE_CATALOG, REFERENCE_HOURLY_RATE, MachineId, buildRoute } from './machineSelection';
+import { selectMachine, setupsOnMachine, MACHINE_CATALOG, REFERENCE_HOURLY_RATE, MachineId, buildRoute, SMALL_PART_BAR_MAX_SECTION_MM } from './machineSelection';
 
 // These tests are written against Turncircuit's REAL plant list, so a failure
 // means "the shop could not actually make it that way", not "a heuristic moved".
@@ -477,7 +477,73 @@ describe('signals that decide the machine', () => {
     const explained = selectMachine({ ...base, discardedAreaShare: 0.05 });
     const mostlyNot = selectMachine({ ...base, discardedAreaShare: 0.55 });
     expect(explained.stockForm).toBe('bar');
-    expect(mostlyNot.stockForm).not.toBe('bar');
+    // It is still not ROUND-BAR TURNING work on a sliding head. A part this small
+    // is bought as bar of its own section and fed through a turn-mill (see the
+    // small-section rule), which is a different thing and is marked as such.
+    expect(MACHINE_CATALOG[mostlyNot.recommended].kind).not.toBe('sliding-head');
+    expect(explained.prismaticBar).toBeFalsy();
+    if (mostlyNot.stockForm === 'bar') expect(mostlyNot.prismaticBar).toBe(true);
+  });
+
+  describe('a small prismatic part is bar work, a larger one is a billet', () => {
+    // Lance's Hollow Arm: 9.5 mm square, "bar stop process" first and a cut-off
+    // last. HYPOTHESIS from one part; the 16 mm limit is not derived.
+    const arm = {
+      isTurned: false as const, setupCount: 2, axisAlignedSetups: 2,
+      partDimsMm: { x: 6.1, y: 6.9, z: 8.9 }, partVolumeCm3: 0.064,
+      onAxisTurnedFeatures: 3, discardedAreaShare: 0.55, smallestFeatureMm: 0.65,
+    };
+
+    it('is fed as bar of its own section and marked prismatic', () => {
+      const r = selectMachine(arm);
+      expect(r.stockForm).toBe('bar');
+      expect(r.route).toBe('mill-turn');
+      expect(r.prismaticBar).toBe(true);
+      expect(MACHINE_CATALOG[r.recommended].kind).toBe('turn-mill');
+    });
+
+    it('is cut off with a saw, so its back is a second operation on a mill, as on Lance\'s router', () => {
+      const r = selectMachine(arm);
+      expect(r.effectiveSetups).toBe(2);
+      expect(r.machineRoute!.ops).toHaveLength(2);
+      expect(r.machineRoute!.ops[0].machine).toBe(r.recommended);
+      expect(MACHINE_CATALOG[r.machineRoute!.ops[1].machine].kind).toBe('mill');
+    });
+
+    it('a round part bar-fed on a turn-mill is still turned round by the sub-spindle', () => {
+      const round = selectMachine({
+        isTurned: false as const, setupCount: 2, axisAlignedSetups: 2,
+        partDimsMm: { x: 6.1, y: 6.9, z: 8.9 }, partVolumeCm3: 0.064,
+        onAxisTurnedFeatures: 3, discardedAreaShare: 0.05,
+      });
+      expect(round.prismaticBar).toBeFalsy();
+      expect(round.machineRoute!.ops).toHaveLength(1);
+    });
+
+    it('a block over the limit is still sawn from billet', () => {
+      const block = selectMachine({
+        isTurned: false as const, setupCount: 4, axisAlignedSetups: 4,
+        partDimsMm: { x: 26.5, y: 25, z: 14.3 }, partVolumeCm3: 4.4,
+      });
+      expect(block.stockForm).not.toBe('bar');
+      expect(block.prismaticBar).toBeFalsy();
+    });
+
+    it('the limit is the section the part has to be held in, 16 mm', () => {
+      expect(SMALL_PART_BAR_MAX_SECTION_MM).toBe(16);
+    });
+  });
+
+  describe('the 5-axis chosen for fine features is not undone', () => {
+    it('a cheaper turn-mill does not undo the choice of the 5-axis (the Hollow Arm)', () => {
+      const arm = selectMachine({
+        isTurned: false as const, setupCount: 2, axisAlignedSetups: 2,
+        partDimsMm: { x: 6.1, y: 6.9, z: 8.9 }, partVolumeCm3: 0.064,
+        onAxisTurnedFeatures: 3, discardedAreaShare: 0.55, smallestFeatureMm: 0.65, quantity: 15,
+      });
+      expect(arm.recommended).toBe('ntx-1000');
+      expect(arm.reasons.join(' ')).not.toMatch(/routed to the Mori NL/);
+    });
   });
 
   it('sub-1.5 mm features send NON-BAR work to the 5-axis, and say it is a guess', () => {

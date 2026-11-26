@@ -42,7 +42,7 @@ from OCP.BRepGProp import BRepGProp
 from OCP.Bnd import Bnd_Box
 from OCP.BRepBndLib import BRepBndLib
 
-from .milling import analyze_milling
+from .milling import analyze_milling, _planar_normal, _face_centroid
 from .threads import (find_thread_callouts, match_threads_to_holes,
                       find_thread_candidates, thread_open_questions)
 
@@ -62,6 +62,60 @@ def _unit(v: np.ndarray) -> np.ndarray:
 def _dist_point_to_line(p: np.ndarray, origin: np.ndarray, direction: np.ndarray) -> float:
     w = p - origin
     return float(np.linalg.norm(w - np.dot(w, direction) * direction))
+
+
+def _polygon_bar(shape, origin: np.ndarray, axis_dir: np.ndarray) -> tuple:
+    """(flat count, across-flats) of a polygon bar about THIS turning axis.
+
+    The signature is the one the milling analysis uses — planar faces whose
+    normals are perpendicular to the axis, all the same distance from it — but
+    measured against the extractor's own turning axis. The milling analysis can
+    only test it once it has found an axis from circular faces, and a plain hex
+    part with nothing round inside may give it none.
+    """
+    dirs: List[tuple] = []
+    exp = TopExp_Explorer(shape, TopAbs_FACE)
+    while exp.More():
+        face = TopoDS.Face_s(exp.Current())
+        exp.Next()
+        n = _planar_normal(face)
+        if n is None or abs(float(np.dot(n, axis_dir))) > 0.10:
+            continue
+        d = abs(float(np.dot(n, _face_centroid(face) - origin)))
+        if d < 0.5:
+            continue
+        for n0, d0 in dirs:
+            if float(np.dot(n0, n)) > 0.98 and abs(d0 - d) < 0.15:
+                break
+        else:
+            dirs.append((n, d))
+    best: List[tuple] = []
+    for _, d in dirs:
+        grp = [x for x in dirs if abs(x[1] - d) < 0.15]
+        if len(grp) > len(best):
+            best = grp
+    if len(best) >= 3:
+        return len(best), round(2.0 * best[0][1], 3)
+    return 0, 0.0
+
+
+def _merge_touching_runs(faces: List[dict], gap_tol: float) -> List[tuple]:
+    """Axial runs of same-⌀ bore faces, merged only where they actually touch.
+
+    A hole normally arrives as two half-cylinders, and either half may be split
+    again where a groove or step interrupts it, so faces have to be merged into
+    one run. But only TOUCHING faces: spanning min to max across every same-⌀
+    face would read a blind hole in each end as one hole the whole length of the
+    part. Sort by start, walk, and break wherever solid material separates them.
+    """
+    runs: List[tuple] = []
+    for c in sorted(faces, key=lambda c: c["zStartMm"]):
+        lo, hi = c["zStartMm"], c["zEndMm"]
+        if runs and lo <= runs[-1][1] + gap_tol:
+            runs[-1] = (runs[-1][0], max(runs[-1][1], hi))
+        else:
+            runs.append((lo, hi))
+    return runs
 
 
 def read_step(path: str):
@@ -237,16 +291,107 @@ def extract(path: str) -> dict:
         # is the main bore. A small tolerance absorbs the seam between two halves
         # of the same cylinder.
         gap_tol = max(0.05, 0.01 * max(axis_length, 1.0))
-        runs: List[tuple] = []
-        for c in sorted(same, key=lambda c: c["zStartMm"]):
-            lo, hi = c["zStartMm"], c["zEndMm"]
-            if runs and lo <= runs[-1][1] + gap_tol:
-                runs[-1] = (runs[-1][0], max(runs[-1][1], hi))
-            else:
-                runs.append((lo, hi))
+        runs = _merge_touching_runs(same, gap_tol)
         bore_depth = round(max(hi - lo for lo, hi in runs), 3) if runs else 0.0
+        main_run = max(runs, key=lambda r: r[1] - r[0]) if runs else None
+        # HOW MANY ENDS CARRY THIS BORE. The VOC housing has a ⌀11.8 x 14 bore in
+        # each end, 42 mm apart; its sheet times the front one and the router has
+        # a second operation for the back. A run counts as an END's bore only if
+        # it sits on an end face of the part, so a bore that is merely interrupted
+        # by a cross hole in the middle is never read as two.
+        part_lo, part_hi = min(axial), max(axial)
+        end_tol = max(0.1, 0.01 * max(axis_length, 1.0))
+        bore_end_count = sum(1 for lo, hi in runs
+                             if hi - lo >= 0.5 and (lo <= part_lo + end_tol or hi >= part_hi - end_tol))
+        bore_end_count = max(1, bore_end_count)
     else:
         bore_depth = 0.0
+        main_run = None
+        bore_end_count = 0
+
+    # EVERY OTHER HOLE ON THE AXIS — which used to be thrown away.
+    #
+    # The main bore above is chosen as the WIDEST, and until now it was the only
+    # one reported: every narrower coaxial hole was dropped on the floor. On
+    # Lance's VOC housing that is the ⌀10 hole running through the part behind
+    # the ⌀11.8 mouth — the hole his cycle sheet drills twice ("pilot drill 40
+    # deep", "HSS drill 70 deep") for 72 seconds of the part's 313. The faces
+    # were found, classified as bore and then never used, so the quote drilled
+    # 14 mm of a part whose drilling IS the job.
+    #
+    # Same rule as the main bore: group faces by diameter, merge only faces that
+    # actually touch, and report each separate run as its own hole — a blind
+    # hole in each end is two holes, not one long one. The cost model drills
+    # these and spots them; it does not bore them, because only a dimensioned
+    # bore gets a boring bar.
+    additional_bores: List[dict] = []
+    pilot_hole = None
+    if main_bore:
+        gap_tol = max(0.05, 0.01 * max(axis_length, 1.0))
+        r_main = main_bore["radiusMm"]
+        others = [c for c in bore_cyls if abs(c["radiusMm"] - r_main) > max(0.05, 0.02 * r_main)]
+        groups: List[List[dict]] = []
+        for c in sorted(others, key=lambda c: -c["radiusMm"]):
+            for g in groups:
+                r = g[0]["radiusMm"]
+                if abs(c["radiusMm"] - r) <= max(0.05, 0.02 * r):
+                    g.append(c)
+                    break
+            else:
+                groups.append([c])
+        other_runs: List[dict] = []
+        for g in groups:
+            dia = round(2 * g[0]["radiusMm"], 3)
+            for lo, hi in _merge_touching_runs(g, gap_tol):
+                # A sliver this short is a relief, a seam or a modelling artefact,
+                # not a hole anybody drills.
+                if dia >= 0.3 and hi - lo >= 0.5:
+                    other_runs.append({"diameterMm": dia, "lo": lo, "hi": hi})
+
+        # A STEPPED BORE IS DRILLED THROUGH AT ITS SMALLEST AND BORED UP.
+        #
+        # When a narrower hole runs on from the main bore — the VOC housing's
+        # ⌀10 continuing behind its ⌀11.8 mouth — the shop does not drill a
+        # separate pilot for the mouth and then a second hole behind it. It
+        # drills the NARROW hole the whole way, through the mouth's position as
+        # well, and opens the mouth out from it with a boring bar. On the
+        # housing that drill is ⌀10 for the full 70 mm (14 + 41 + 14), which is
+        # the "10mm HSS drill (70mm deep)" on the shop's sheet and the reason
+        # its drilling row was twice ours.
+        #
+        # So: walk the chain of holes that TOUCH the main bore, end to end. Its
+        # narrowest diameter is the drill, its full extent is the drill depth,
+        # and the narrow runs it covers are not drilled again separately.
+        if main_run is not None:
+            chain_lo, chain_hi = main_run
+            chain = []
+            grew = True
+            while grew:
+                grew = False
+                for r in other_runs:
+                    if r in chain:
+                        continue
+                    if r["lo"] <= chain_hi + gap_tol and r["hi"] >= chain_lo - gap_tol:
+                        chain.append(r)
+                        # Main-⌀ runs beyond a narrow one extend the chain too:
+                        # the drill goes on through them.
+                        chain_lo, chain_hi = min(chain_lo, r["lo"]), max(chain_hi, r["hi"])
+                        for lo2, hi2 in runs:
+                            if lo2 <= chain_hi + gap_tol and hi2 >= chain_lo - gap_tol:
+                                chain_lo, chain_hi = min(chain_lo, lo2), max(chain_hi, hi2)
+                        grew = True
+            narrow = min((r["diameterMm"] for r in chain), default=None)
+            main_dia = 2 * r_main
+            # ONLY WHEN A BORING BAR CAN OPEN IT. Boring takes a few millimetres
+            # on diameter in a few passes; a ⌀5 mouth over a ⌀1.7 hole (029068)
+            # is drilled ⌀5 and then ⌀1.7, never bored up from ⌀1.7.
+            if (narrow is not None and narrow < main_dia - 0.05
+                    and main_dia - narrow <= max(3.0, 0.25 * main_dia)):
+                pilot_hole = {"diameterMm": narrow, "depthMm": round(chain_hi - chain_lo, 3)}
+                other_runs = [r for r in other_runs
+                              if not (r in chain and abs(r["diameterMm"] - narrow) < 0.05)]
+        additional_bores = [{"diameterMm": r["diameterMm"], "depthMm": round(r["hi"] - r["lo"], 3)}
+                            for r in other_runs]
 
     # Grooves: narrow outer reductions well below the OD.
     groove_count = 0
@@ -405,6 +550,85 @@ def extract(path: str) -> dict:
     # has a full picture and can choose the cheaper machining route / machine.
     milled = analyze_milling(shape)
 
+    # --- THE BAR IT IS CUT FROM, AND WHAT IS TURNED OUT OF IT -----------------
+    #
+    # The turned profile reported only the largest radius as "the OD", and the
+    # cost model took that as a diameter it turned from round bar. On Lance's
+    # VOC housing that radius is the CORNER of 25.4 A/F hex bar — the drawing
+    # says "hex bar" and the milling analysis below already counts six flats —
+    # so the quote roughed about fifty cubic centimetres of round bar that is not
+    # there and finish-turned 70 mm of a diameter nobody turns.
+    #
+    # A POLYGON BAR is recognised when the flats the milling analysis found, at
+    # their across-flats size, put their corners exactly at the measured OD.
+    stock = {"shape": "round"}
+    flats, af = _polygon_bar(shape, origin, axis_dir)
+    if not flats:
+        flats = int(milled.get("polygonFlatCount") or 0)
+        af = float(milled.get("acrossFlatsMm") or 0.0)
+    if flats in (4, 6, 8) and af > 0:
+        across_corners = af / math.cos(math.pi / flats)
+        if abs(across_corners - od) <= max(0.3, 0.02 * od):
+            stock = {"shape": "polygon", "flats": flats, "acrossFlatsMm": round(af, 3)}
+
+    # The TURNED REGIONS: every coaxial outside cylinder, merged per diameter
+    # into the runs that actually touch, in axial order. Each is classified by
+    # what stands either side of it on the way to the ends of the part:
+    #
+    #   a BOSS has nothing larger between it and an end, so an OD turning tool
+    #   coming in from that end reaches it;
+    #   a RECESS has something larger on BOTH sides — a bigger diameter, or
+    #   uncut bar — so no OD tool can get to it without cutting back behind a
+    #   shoulder. It is cut with a grooving insert, and that is a different
+    #   operation at a different rate. The housing's ⌀21 body between its two
+    #   hex collars is one; the shop's sheet calls it "rough and finish recess".
+    gap_tol = max(0.05, 0.01 * max(axis_length, 1.0))
+    z_lo, z_hi = min(axial), max(axial)
+    od_groups: List[List[dict]] = []
+    for c in sorted(outer_cyls, key=lambda c: -c["radiusMm"]):
+        for g in od_groups:
+            r = g[0]["radiusMm"]
+            if abs(c["radiusMm"] - r) <= max(0.05, 0.01 * r):
+                g.append(c)
+                break
+        else:
+            od_groups.append([c])
+    regions: List[dict] = []
+    for g in od_groups:
+        for lo, hi in _merge_touching_runs(g, gap_tol):
+            if hi - lo > gap_tol:
+                regions.append({"diameterMm": round(2 * g[0]["radiusMm"], 3),
+                                "zStartMm": round(lo, 3), "zEndMm": round(hi, 3)})
+    regions.sort(key=lambda r: r["zStartMm"])
+    stock_dia = od  # a polygon's corners, or the largest turned diameter
+
+    def _larger_toward(i: int, step: int) -> bool:
+        """Is there anything bigger than region i between it and that end?"""
+        me = regions[i]
+        edge = me["zStartMm"] if step < 0 else me["zEndMm"]
+        end = z_lo if step < 0 else z_hi
+        j = i + step
+        while 0 <= j < len(regions):
+            other = regions[j]
+            near = other["zEndMm"] if step < 0 else other["zStartMm"]
+            # Uncut POLYGON bar fills any real gap between turned regions.
+            if stock["shape"] == "polygon" and abs(near - edge) > gap_tol:
+                return True
+            if other["diameterMm"] > me["diameterMm"] + 0.05:
+                return True
+            edge = other["zStartMm"] if step < 0 else other["zEndMm"]
+            j += step
+        # Reached the last region: is there still bar between it and the end?
+        return stock["shape"] == "polygon" and abs(end - edge) > gap_tol
+
+    od_regions = []
+    for i, r in enumerate(regions):
+        if stock["shape"] == "round" and r["diameterMm"] >= stock_dia - 0.05:
+            kind = "boss"  # the bar's own outside, turned from the bar
+        else:
+            kind = "recess" if (_larger_toward(i, -1) and _larger_toward(i, +1)) else "boss"
+        od_regions.append({**r, "lengthMm": round(r["zEndMm"] - r["zStartMm"], 3), "kind": kind})
+
     # THREADS. Not measurable from faces — a tapped hole is modelled as a plain
     # cylinder at the tap-drill ⌀ — so the only signal in the file is the name the
     # CAD system wrote. Both real parts needing taps carried it: 'M3 Tapped
@@ -421,7 +645,8 @@ def extract(path: str) -> dict:
     # of the seven — so without this a threaded part quotes as though it has no
     # threads, silently, which is the failure this whole module exists to stop.
     milled["threadCandidates"] = find_thread_candidates(
-        milled.get("holeDiametersMm") or [], milled.get("holeDepthsMm") or []
+        milled.get("holeDiametersMm") or [], milled.get("holeDepthsMm") or [],
+        milled.get("holeClosed") or [],
     )
     # A question the FACES cannot answer, kept separate from face coverage so a
     # green ledger can never stand in for "every operation is costed". Built by
@@ -443,6 +668,15 @@ def extract(path: str) -> dict:
             "lengthMm": axis_length,
             "boreDiaMm": bore_dia,
             "boreDepthMm": bore_depth,
+            # Ends of the part that carry the main bore (0 none, 1 one, 2 both).
+            "boreEndCount": bore_end_count,
+            # Every other coaxial hole, each run separately. See above.
+            "additionalBores": additional_bores,
+            # The narrow hole a stepped bore is drilled through at, and how far.
+            "pilotHole": pilot_hole,
+            # The bar it is cut from, and the turned regions — see above.
+            "stock": stock,
+            "odRegions": od_regions,
             "grooveCount": groove_count,
             "threadCount": 0,  # threads come from the drawing callout, not geometry
             "faceCount": 2,

@@ -341,6 +341,7 @@ async function analyzeSolid(
       turningProfile = {
         odMm: p.odMm, lengthMm: p.lengthMm,
         boreDiaMm: p.boreDiaMm, boreDepthMm: p.boreDepthMm,
+        boreEndCount: p.boreEndCount,
         grooveCount: p.grooveCount, threadCount: p.threadCount,
         faceCount: p.faceCount || 2, crossFeatures: p.crossFeatures,
         // The service reports each off-axis feature as a 'cross' segment with a
@@ -354,12 +355,30 @@ async function analyzeSolid(
         // appears in it two or three times; these are the operations, and they
         // are what the cycle-time model costs.
         crossFeatureList: p.crossFeatureList,
+        // THE BAR AND WHAT IS TURNED OUT OF IT. A hex bar's corners are the
+        // "OD" and are never turned; the turned diameters are these regions.
+        stock: p.stock,
+        // A stepped bore: drilled through at the narrow ⌀, bored up at the mouth.
+        pilotHole: p.pilotHole ?? undefined,
+        odRegions: p.odRegions?.length ? p.odRegions : undefined,
         // EVERY OTHER ON-AXIS HOLE. The service reports them all; the profile
         // used to carry only `boreDiaMm`, so the VOC housing's ⌀10 through-hole
         // — a whole drilling operation on the shop's own cycle sheet — was
         // invisible to the time model. Paired with its depth, and the main bore
         // excluded so it is not timed twice.
         additionalBores: (() => {
+          // PREFER THE SERVICE'S OWN COAXIAL LIST. The fallback below reads the
+          // MILLED hole list, which contains every hole in every direction — so
+          // a cross hole on a turned part was charged twice: once as the
+          // driven-tool operation in crossFeatureList, and again as an imaginary
+          // on-axis hole drilled down the spindle. The extractor now reports
+          // coaxial bores only, merged per run, and that is what is used.
+          // The fallback stays for a service that predates the field — `npm
+          // run dev` reuses a geometry service that is already running.
+          if (Array.isArray(p.additionalBores)) {
+            const own = p.additionalBores.filter((b) => b.diameterMm > 0 && b.depthMm > 0);
+            return own.length ? own : undefined;
+          }
           const milled = svc?.milled as { holeDiametersMm?: number[]; holeDepthsMm?: number[] } | undefined;
           const dias = milled?.holeDiametersMm ?? [];
           const depths = milled?.holeDepthsMm ?? [];
@@ -412,7 +431,16 @@ async function analyzeSolid(
       && (svcMilled.threadCandidates ?? []).length > 0;
     // A TURNED part's threads live on its own profile. The milling analysis is
     // where the tap-drill holes were found, so the two have to be joined here.
-    if (turningProfile && dfmThreads.length) turningProfile.threads = dfmThreads;
+    // A thread in the main bore is cut at EVERY end the bore is at; the hole
+    // list reports a bore at each end as one entry, so the count is set here.
+    if (turningProfile && dfmThreads.length) {
+      const ends = Math.min(2, Math.max(1, Math.round(turningProfile.boreEndCount ?? 1)));
+      const boreDia = turningProfile.boreDiaMm;
+      turningProfile.threads = dfmThreads.map((t) =>
+        ends > 1 && Math.abs(t.tapDrillMm - boreDia) <= Math.max(0.15, 0.02 * boreDia)
+          ? { ...t, count: Math.max(t.count ?? 1, ends) }
+          : t);
+    }
 
     // Milled/prismatic profile (the 3 AAG rules: setups from access-direction
     // clustering, pockets/bosses from edge concavity, deep-pocket reach). Built
@@ -575,12 +603,28 @@ async function analyzeSolid(
       machineRecommendation.route === 'mill-turn' &&
       machineRecommendation.barDiameterMm
     ) {
-      milledProfile = toBarStockProfile(
-        milledProfile,
-        machineRecommendation.barDiameterMm,
-        machineRecommendation.effectiveSetups ?? 1,
-        DEFAULT_CNC_SETTINGS
-      );
+      milledProfile = machineRecommendation.prismaticBar
+        // A small prismatic part is bought as bar of its OWN section: keep the
+        // stock the profile already has and mark it bar-fed, so it is cut off
+        // rather than sawn — it is not hogged down from a round.
+        ? {
+            ...milledProfile,
+            fromBarStock: true,
+            // The cut-off goes across the section's diagonal, not a notional round.
+            barDiameterMm: Math.hypot(milledProfile.stockMm.x, milledProfile.stockMm.y),
+            // Its "turned" cylinders are fragments of a milled body (the router
+            // already refuses to bar-feed on them), so nothing is spindle-turned.
+            turningRoute: false,
+            turnedFeatures: [],
+            setupCount: Math.max(1, Math.round(machineRecommendation.effectiveSetups ?? 1)),
+            sparseBillet: false,
+          }
+        : toBarStockProfile(
+            milledProfile,
+            machineRecommendation.barDiameterMm,
+            machineRecommendation.effectiveSetups ?? 1,
+            DEFAULT_CNC_SETTINGS
+          );
       // Bar is the right stock now: setups collapse and the sparse-billet warning
       // (which only applied to hogging a solid block) no longer holds.
       setups = Math.max(1, milledProfile.setupCount);

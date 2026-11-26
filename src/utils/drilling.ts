@@ -46,6 +46,11 @@ export interface DrillConfig {
   clearanceMm: number;
   /** In-position settle / spindle dwell, seconds per hole. */
   settleSec: number;
+  /**
+   * What the drill is made of — see DRILL_SUBSTRATE_VC. Defaults to carbide,
+   * which is what the model always silently assumed.
+   */
+  substrate?: DrillSubstrate;
 }
 
 export const DEFAULT_DRILL_CONFIG: DrillConfig = {
@@ -54,6 +59,7 @@ export const DEFAULT_DRILL_CONFIG: DrillConfig = {
   positioningTravelMm: 90,
   clearanceMm: 2,
   settleSec: 0.3,
+  substrate: 'carbide',
 };
 
 /**
@@ -65,7 +71,17 @@ export const DEFAULT_DRILL_CONFIG: DrillConfig = {
  */
 export function drillFeedPerRev(diaMm: number, m: MaterialProps): number {
   const base = 0.015 * Math.max(0.1, diaMm);
-  return Math.max(0.002, base * Math.min(1.5, Math.max(0.3, m.machinability)));
+  // The material's effect on DRILL FEED is the square root of its machinability
+  // rating, not the rating itself. Lance's CAM program feeds a ⌀3.2 solid-carbide
+  // drill 0.033 mm/rev in 316 (4,476 rpm at 147 mm/min, 4 s for 10 mm); the linear
+  // law gave 0.0216 there (machinability 0.45) and so ran 1.5x slow, while the
+  // root gives 0.032. Handbook feeds agree in shape: stainless drills at roughly
+  // two-thirds the feed of mild steel, where machinability alone would say under
+  // half. The root applies BELOW 1 only, where that evidence is; at and above 1
+  // (steel, brass, aluminium) the factor is the machinability itself, capped at
+  // 1.5, exactly as before, so nothing above steel moves.
+  const mach = Math.min(1.5, Math.max(0.3, m.machinability));
+  return Math.max(0.002, base * (mach < 1 ? Math.sqrt(mach) : mach));
 }
 
 /**
@@ -86,6 +102,30 @@ export function peckDepthMm(diaMm: number, depthMm: number): number {
  * the turning speed, because the chip can only escape back up the flute."
  */
 export const DRILL_SPEED_FRACTION = 0.4;
+
+/**
+ * WHAT THE DRILL IS MADE OF, which decides how fast it can go.
+ *
+ * Every drill in the model ran at carbide speed. They are not interchangeable:
+ * HSS loses hardness above about 600 C and carbide holds past 1000, so the
+ * published speeds differ by well over a factor of two for the same hole in the
+ * same material — brass takes roughly 60-80 m/min on HSS and 150-250 on solid
+ * carbide. Running an HSS drill at carbide speed does not make the hole faster,
+ * it makes the drill blunt.
+ *
+ * A fraction rather than a second speed table, because the RATIO is what the
+ * published data agrees on across materials while the absolute figures vary by
+ * grade and coating.
+ *
+ * DEFAULT IS CARBIDE, so nothing moves unless the shop says otherwise: this is a
+ * property of the tool in the turret, and the tool library is where it is known.
+ */
+export type DrillSubstrate = 'hss' | 'cobalt' | 'carbide';
+export const DRILL_SUBSTRATE_VC: Record<DrillSubstrate, number> = {
+  hss: 0.4,
+  cobalt: 0.55, // HSS-Co: better hot hardness than plain HSS, short of carbide
+  carbide: 1,
+};
 
 /**
  * Drills a shop actually stocks, mm. Metric jobber sizes: 0.5 steps to 13, then
@@ -117,12 +157,41 @@ export function boringStockMm(boreDiaMm: number): number {
   return Math.min(3, Math.max(1, boreDiaMm * 0.1));
 }
 
+/**
+ * WHAT AN OPERATION SPENT CUTTING, AND WHAT IT SPENT NOT CUTTING.
+ *
+ * Turncircuit's cycle sheets give every operation two columns — cutting and
+ * idle — and add them separately at the bottom. That is not a formatting
+ * choice: they are different quantities with different causes. Cutting time is
+ * physics (speed, feed, depth, distance). Idle time is the machine (turret
+ * index, rapid rate, spindle settle) and hardly moves when the material does.
+ *
+ * Every operation here returns both, so the two can be compared against the
+ * sheet SEPARATELY. Rolled together they cannot: an operation that is 30% fast
+ * on cutting and 30% slow on idle reads as correct.
+ */
+export interface OpSplit {
+  cuttingSec: number;
+  idleSec: number;
+}
+
+export const splitTotal = (s: OpSplit) => s.cuttingSec + s.idleSec;
+
 /** Seconds to drill ONE hole, cutting plus peck retracts plus approach. */
 export function drillHoleSec(
   hole: HoleSpec,
   m: MaterialProps,
   cfg: DrillConfig = DEFAULT_DRILL_CONFIG
 ): number {
+  return splitTotal(drillHoleSplit(hole, m, cfg));
+}
+
+/** The same hole, with the metal-cutting seconds kept apart from the rest. */
+export function drillHoleSplit(
+  hole: HoleSpec,
+  m: MaterialProps,
+  cfg: DrillConfig = DEFAULT_DRILL_CONFIG
+): OpSplit {
   const d = Math.max(0.05, hole.diameterMm);
   const L = Math.max(0.1, hole.depthMm);
 
@@ -134,7 +203,11 @@ export function drillHoleSec(
   // 40% of the turning speed" for exactly that chip-evacuation reason, and the
   // same ratio is the usual rule across materials. At 0.5 the model was running
   // every drill about 25% fast.
-  const vc = Math.max(10, m.cuttingSpeedRough * DRILL_SPEED_FRACTION);
+  // The material sets the surface speed, DRILL_SPEED_FRACTION backs it off for
+  // chip evacuation, and the drill's own SUBSTRATE caps it: an HSS drill cannot
+  // be pushed to a carbide speed whatever the material allows.
+  const substrate = DRILL_SUBSTRATE_VC[cfg.substrate ?? 'carbide'] ?? 1;
+  const vc = Math.max(10, m.cuttingSpeedRough * DRILL_SPEED_FRACTION * substrate);
   const rpm = Math.min(cfg.maxRpm, (vc * 1000) / (Math.PI * d));
   const feedMmPerMin = Math.max(1, drillFeedPerRev(d, m) * rpm);
 
@@ -156,7 +229,15 @@ export function drillHoleSec(
   const positionMin = cfg.positioningTravelMm / cfg.rapidMmPerMin;
   const clearanceMin = cfg.clearanceMm / feedMmPerMin;
 
-  return (cutMin + peckMin + positionMin + clearanceMin) * 60 + cfg.settleSec;
+  // Only `cutMin` is metal. A peck retract pulls the drill right out of the
+  // hole; the positioning move and the settle happen with the tool in fresh
+  // air; the clearance gap is fed through but cuts nothing. On a deep hole the
+  // idle half is the larger of the two, which is exactly the kind of thing a
+  // single combined number hides.
+  return {
+    cuttingSec: cutMin * 60,
+    idleSec: (peckMin + positionMin + clearanceMin) * 60 + cfg.settleSec,
+  };
 }
 
 /**
@@ -184,6 +265,17 @@ export function spotDrillSec(
   // A cone deep enough to guide the drill: roughly a quarter of the hole ⌀.
   const depth = Math.max(0.4, holeDiaMm * 0.25);
   return drillHoleSec({ diameterMm: spotDia, depthMm: depth }, m, cfg);
+}
+
+/** The same spot, split. A spot is almost all idle — the cone itself is tiny. */
+export function spotDrillSplit(
+  holeDiaMm: number,
+  m: MaterialProps,
+  cfg: DrillConfig = DEFAULT_DRILL_CONFIG
+): OpSplit {
+  const spotDia = Math.min(12, Math.max(1.5, holeDiaMm * 0.5));
+  const depth = Math.max(0.4, holeDiaMm * 0.25);
+  return drillHoleSplit({ diameterMm: spotDia, depthMm: depth }, m, cfg);
 }
 
 /** Seconds to spot every hole in a list. */
@@ -246,23 +338,52 @@ export function crossFeatureSec(
   m: MaterialProps,
   cfg: CrossFeatureConfig = DEFAULT_CROSS_CONFIG
 ): number {
+  return splitTotal(crossFeatureSplit(f, m, cfg));
+}
+
+/**
+ * The same feature, split. Indexing the spindle round to the feature and
+ * locking it is pure idle — the largest single idle term on a driven-tool
+ * operation, and on a small cross hole it is most of the operation.
+ */
+export function crossFeatureSplit(
+  f: CrossFeature,
+  m: MaterialProps,
+  cfg: CrossFeatureConfig = DEFAULT_CROSS_CONFIG
+): OpSplit {
   const d = Math.max(0.05, f.diameterMm);
   const L = Math.max(0.1, f.lengthMm);
 
   if (d <= cfg.maxDrillDiaMm) {
-    return cfg.indexSec + drillHoleSec({ diameterMm: d, depthMm: L }, m, cfg);
+    const hole = drillHoleSplit({ diameterMm: d, depthMm: L }, m, cfg);
+    return { cuttingSec: hole.cuttingSec, idleSec: hole.idleSec + cfg.indexSec };
   }
 
   // Too wide to drill: pilot it, then helix the rest out with an end mill. The
   // cutter walks one lap per axial step, so path length grows with both the
   // circumference and the depth.
-  const pilot = drillHoleSec({ diameterMm: cfg.maxDrillDiaMm, depthMm: L }, m, cfg);
+  const pilot = drillHoleSplit({ diameterMm: cfg.maxDrillDiaMm, depthMm: L }, m, cfg);
   const toolDia = Math.max(3, Math.min(10, d / 3));
   const stepMm = Math.max(0.2, 0.25 * toolDia);
   const laps = Math.max(1, Math.ceil(L / stepMm));
   const pathMm = laps * Math.PI * Math.max(1, d - toolDia);
   const feed = cfg.interpolateFeedMmPerMin * Math.min(1.5, Math.max(0.3, m.machinability));
-  return cfg.indexSec + pilot + (pathMm / feed) * 60;
+  return {
+    cuttingSec: pilot.cuttingSec + (pathMm / feed) * 60,
+    idleSec: pilot.idleSec + cfg.indexSec,
+  };
+}
+
+/** Cutting and idle across a list of off-axis features. */
+export function crossFeaturesSplit(
+  features: CrossFeature[] | undefined,
+  m: MaterialProps,
+  cfg: CrossFeatureConfig = DEFAULT_CROSS_CONFIG
+): OpSplit {
+  return (features ?? []).reduce<OpSplit>((a, f) => {
+    const s = crossFeatureSplit(f, m, cfg);
+    return { cuttingSec: a.cuttingSec + s.cuttingSec, idleSec: a.idleSec + s.idleSec };
+  }, { cuttingSec: 0, idleSec: 0 });
 }
 
 /** Seconds for a list of off-axis features. */
@@ -371,6 +492,38 @@ export function tapThreadSec(
   const outMin = inMin / Math.max(1, cfg.retractSpeedFactor);
 
   return (inMin + outMin) * 60 + cfg.cycleOverheadSec;
+}
+
+/**
+ * The same thread, split. Only the way IN cuts: reversing the tap back out
+ * removes nothing, and the cycle overhead is approach and spindle reversal.
+ */
+export function tapThreadSplit(
+  t: ThreadSpec,
+  m: MaterialProps,
+  cfg: TapConfig = DEFAULT_TAP_CONFIG
+): OpSplit {
+  const d = Math.max(0.1, t.tapDrillMm);
+  const pitch = Math.max(0.05, t.pitchMm);
+  const depth = Math.max(0.2, t.depthMm);
+  const vc = cfg.vcMPerMin * tapSpeedDerate(d) * Math.min(1.4, Math.max(0.4, m.machinability));
+  const rpm = Math.max(20, (vc * 1000) / (Math.PI * d));
+  const inMin = depth / (pitch * rpm);
+  const outMin = inMin / Math.max(1, cfg.retractSpeedFactor);
+  return { cuttingSec: inMin * 60, idleSec: outMin * 60 + cfg.cycleOverheadSec };
+}
+
+/** Cutting and idle across a list of threads, honouring each entry's count. */
+export function tapThreadsSplit(
+  threads: ThreadSpec[] | undefined,
+  m: MaterialProps,
+  cfg: TapConfig = DEFAULT_TAP_CONFIG
+): OpSplit {
+  return (threads ?? []).reduce<OpSplit>((a, t) => {
+    const s = tapThreadSplit(t, m, cfg);
+    const n = Math.max(1, Math.round(t.count ?? 1));
+    return { cuttingSec: a.cuttingSec + s.cuttingSec * n, idleSec: a.idleSec + s.idleSec * n };
+  }, { cuttingSec: 0, idleSec: 0 });
 }
 
 /** Seconds for a list of threads, honouring each entry's count. */

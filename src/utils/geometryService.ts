@@ -14,12 +14,26 @@ export interface GeometryProfile {
   lengthMm: number;
   boreDiaMm: number;
   boreDepthMm: number;
+  /** Ends of the part that carry the main bore (0 none, 1 one, 2 both). */
+  boreEndCount?: number;
   grooveCount: number;
   threadCount: number;
   faceCount: number;
   crossFeatures: boolean;
   /** Off-axis features grouped into operations, each with the tool's travel. */
   crossFeatureList?: Array<{ diameterMm: number; lengthMm: number; isBore?: boolean }>;
+  /**
+   * Every COAXIAL hole other than the main bore, one entry per separate run.
+   * Coaxial only — off-axis holes are in crossFeatureList. Absent from a
+   * service that predates it.
+   */
+  additionalBores?: Array<{ diameterMm: number; depthMm: number }>;
+  /** The narrow hole a stepped bore is drilled through at, and how deep. */
+  pilotHole?: { diameterMm: number; depthMm: number } | null;
+  /** The bar: round, or a polygon (hex, square) whose corners are the OD. */
+  stock?: { shape: 'round' } | { shape: 'polygon'; flats: number; acrossFlatsMm: number };
+  /** Turned diameters along the axis, each a boss (open to an end) or a recess. */
+  odRegions?: Array<{ diameterMm: number; zStartMm: number; zEndMm: number; lengthMm: number; kind: 'boss' | 'recess' }>;
 }
 
 /** Milled/prismatic analysis (the 3 AAG rules) — present alongside the turned verdict. */
