@@ -9,9 +9,9 @@ STEP files dropped in this folder are picked up automatically by:
 - `src/utils/calibration/allParts.test.ts`: runs each part through the app's pipeline
   against Lance's data (`QF_ALL_PARTS=1`, with the geometry service running).
 
-Two parts the comparison scores against Lance's CAM reports are **not here yet**:
-`OLY014_02062-A.step` (316 stainless hinge) and the aluminium base block
-`S17604_00415-A` (`SOLIDWORKS-MID_LIMIT-S17604-00415.STEP`). Add them to this folder, run
-`python -m tests.baseline --update`, and commit the updated `baseline.json`.
+The two parts the comparison scores against Lance's CAM reports are here:
+`OLY014_02062-A.step` (316 stainless hinge) and `SOLIDWORKS-MID_LIMIT-S17604-00415.STEP`
+(aluminium base block). Add new parts the same way, then run
+`python -m tests.baseline --update` and commit the updated `baseline.json`.
 
-Customer parts: confirm you may commit a file before adding it.
+These are customer parts: confirm you may commit a file before adding it.
