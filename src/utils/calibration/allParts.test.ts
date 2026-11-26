@@ -23,10 +23,9 @@ import { PROGRAMMED_PARTS, programmedTotalSec } from './programmedCuts';
  *   (cd services/geometry && .venv/bin/uvicorn main:app --port 8000) &
  *   QF_ALL_PARTS=1 npx vitest run src/utils/calibration/allParts.test.ts
  *
- * The STEP files are found in the repo (test-fixtures/corpus, then the root). The two
- * CAM-timed parts (OLY014_02062-A and S17604_00415-A) are not in the repo yet, so those
- * rows are reported as missing until they are added; QF_STEP_DIR / QF_EXTRA_STEP_DIR
- * point at other folders and QF_GEOMETRY_URL overrides http://127.0.0.1:8000.
+ * The STEP files are found in the repo (test-fixtures/corpus, then the root), so all eight
+ * parts run with no setup. QF_STEP_DIR / QF_EXTRA_STEP_DIR point at other folders and
+ * QF_GEOMETRY_URL overrides http://127.0.0.1:8000.
  */
 const RUN = process.env.QF_ALL_PARTS === '1';
 // Searched in order: QF_STEP_DIR, the repo's test-fixtures/corpus, the repo root (where

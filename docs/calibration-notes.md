@@ -100,5 +100,5 @@ Each of these is flagged in the code. The next quote that disagrees disproves it
 | NAUT_01695-C | | | 0.81 |
 
 Re-run it with the all-parts comparison test (header of
-`src/utils/calibration/allParts.test.ts` says how; it needs the geometry service and the
-STEP files).
+`src/utils/calibration/allParts.test.ts` says how; it needs the geometry service; all eight STEP files are in
+`test-fixtures/corpus/`).
