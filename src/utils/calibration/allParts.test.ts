@@ -21,15 +21,19 @@ import { PROGRAMMED_PARTS, programmedTotalSec } from './programmedCuts';
  * ordinary `npm test` skips it. To run it:
  *
  *   (cd services/geometry && .venv/bin/uvicorn main:app --port 8000) &
- *   git archive origin/main -- '*.STEP' '*.step' | tar -x -C /tmp/qf-steps
- *   QF_ALL_PARTS=1 QF_STEP_DIR=/tmp/qf-steps npx vitest run src/utils/calibration/allParts.test.ts
+ *   QF_ALL_PARTS=1 npx vitest run src/utils/calibration/allParts.test.ts
  *
- * QF_EXTRA_STEP_DIR names a second folder (the two CAM-timed parts, which are
- * not in the repo); QF_GEOMETRY_URL overrides http://127.0.0.1:8000.
+ * The STEP files are found in the repo (test-fixtures/corpus, then the root). The two
+ * CAM-timed parts (OLY014_02062-A and S17604_00415-A) are not in the repo yet, so those
+ * rows are reported as missing until they are added; QF_STEP_DIR / QF_EXTRA_STEP_DIR
+ * point at other folders and QF_GEOMETRY_URL overrides http://127.0.0.1:8000.
  */
 const RUN = process.env.QF_ALL_PARTS === '1';
-const STEP_DIR = process.env.QF_STEP_DIR ?? process.cwd();
+// Searched in order: QF_STEP_DIR, the repo's test-fixtures/corpus, the repo root (where
+// the first customer parts were uploaded), then QF_EXTRA_STEP_DIR.
+const STEP_DIR = process.env.QF_STEP_DIR;
 const EXTRA_DIR = process.env.QF_EXTRA_STEP_DIR;
+const REPO_DIRS = [path.join(process.cwd(), 'test-fixtures', 'corpus'), process.cwd()];
 const GEOMETRY_URL = process.env.QF_GEOMETRY_URL ?? 'http://127.0.0.1:8000';
 
 interface Case {
@@ -64,7 +68,7 @@ const CASES: Case[] = [
 ];
 
 const find = (match: string): string | undefined => {
-  for (const dir of [STEP_DIR, EXTRA_DIR].filter(Boolean) as string[]) {
+  for (const dir of [STEP_DIR, ...REPO_DIRS, EXTRA_DIR].filter(Boolean) as string[]) {
     if (!fs.existsSync(dir)) continue;
     const f = fs.readdirSync(dir).find((x) => x.includes(match) && /\.ste?p$/i.test(x));
     if (f) return path.join(dir, f);
