@@ -12,9 +12,12 @@ This pins the numbers. `python -m tests.baseline --update` rewrites
 change that moves a price is then a visible, reviewable line in a commit rather
 than something a reader has to take on trust.
 
-The corpus itself is not in the repo (customer parts, ~40 MB), so the harness
-reads it from QF_CORPUS_DIR and skips cleanly when it is absent. The BASELINE is
-committed, so the numbers stay reviewable in git either way.
+The full corpus is not in the repo (customer parts and NIST benchmarks, ~40 MB), but
+the parts that ARE in it (the repo root and test-fixtures/corpus) are found without
+any setup, so the brake runs on a clean checkout. QF_CORPUS_DIR (several folders may
+be joined with the OS path separator) adds more, and the harness skips cleanly when
+no corpus is found. Only parts present in both the corpus and the baseline are
+compared. The BASELINE is committed, so the numbers stay reviewable in git either way.
 """
 from __future__ import annotations
 
@@ -25,7 +28,10 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASELINE_PATH = os.path.join(HERE, "baseline.json")
-DEFAULT_CORPUS = "/root/.claude/uploads/7cf6da52-9462-5706-9569-ec9852d252bd"
+REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+# Where STEP files live inside the repo: the root (customer parts were uploaded
+# there) and test-fixtures/corpus (where new ones should go).
+REPO_CORPUS_DIRS = [REPO_ROOT, os.path.join(REPO_ROOT, "test-fixtures", "corpus")]
 
 # The fields that decide a price. Deliberately narrow: adding a diagnostic field
 # should not churn the baseline, but anything here moving is a real change to
@@ -49,21 +55,35 @@ TRACKED = [
 ]
 
 
+def corpus_dirs() -> list:
+    env = os.environ.get("QF_CORPUS_DIR")
+    extra = [d for d in env.split(os.pathsep) if d] if env else []
+    return extra + REPO_CORPUS_DIRS
+
+
 def corpus_dir() -> str:
-    return os.environ.get("QF_CORPUS_DIR", DEFAULT_CORPUS)
+    """For messages: the folders searched."""
+    return os.pathsep.join(corpus_dirs())
 
 
 def corpus_files() -> list:
-    d = corpus_dir()
-    if not os.path.isdir(d):
-        return []
-    return sorted(glob.glob(os.path.join(d, "*.[Ss][Tt][EePp]*")))
+    seen = {}
+    for d in corpus_dirs():
+        if not os.path.isdir(d):
+            continue
+        for f in sorted(glob.glob(os.path.join(d, "*.[Ss][Tt][EePp]*"))):
+            seen.setdefault(_key(f), f)   # the first folder holding a part wins
+    return sorted(seen.values())
 
 
 def _key(path: str) -> str:
-    """Stable name for a part: the filename minus any upload-id prefix."""
+    """Stable name for a part: the filename minus any upload-id prefix, in the form
+    the baseline has always used (no hyphens or ampersands, underscores for spaces),
+    so '031169-A.STEP' in the repo and '031169A.STEP' from an upload are one part."""
     base = os.path.basename(path)
-    return base[9:] if len(base) > 9 and base[8] == "-" else base
+    if len(base) > 9 and base[8] == "-":
+        base = base[9:]
+    return base.replace("&", "").replace("-", "").replace(" ", "_")
 
 
 def measure_one(path: str) -> dict:
